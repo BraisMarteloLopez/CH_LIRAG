@@ -1,6 +1,8 @@
-# RAG_P v3.2
+# RAG_P v4.0
 
 Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de pipelines de recuperacion y generacion sobre datasets MTEB/BeIR (HotpotQA actualmente) con infraestructura NVIDIA NIM.
+
+Soporta 3 estrategias de retrieval: busqueda vectorial pura, hibrida BM25+Vector con entity cross-linking, y **LightRAG** (Vector + Knowledge Graph dual-level con extraccion de tripletas via LLM).
 
 ## Arquitectura
 
@@ -19,6 +21,9 @@ RAG_P/
 │       ├── core.py                  # BaseRetriever, SimpleVectorRetriever, RetrievalConfig
 │       ├── hybrid_retriever.py      # BM25 + Vector + RRF
 │       ├── hybrid_plus_retriever.py # BM25+Vector+RRF + NER cross-linking
+│       ├── lightrag_retriever.py    # Vector + Knowledge Graph dual-level (LIGHT_RAG)
+│       ├── knowledge_graph.py       # KG in-memory (NetworkX): entidades, relaciones, traversal
+│       ├── triplet_extractor.py     # Extraccion tripletas y query keywords via LLM
 │       ├── entity_linker.py         # NER (spaCy) + indice invertido + cross-refs
 │       ├── reranker.py              # CrossEncoderReranker (NVIDIARerank)
 │       └── tantivy_index.py         # BM25 via Tantivy (Rust, fallback rank-bm25)
@@ -46,8 +51,32 @@ RAG_P/
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
 | `HYBRID_PLUS` | NER cross-refs + Embedding + BM25 | BM25 (Tantivy) + Vector + RRF | Opcional |
+| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + Graph traversal + Fusion | Opcional |
 
-`HYBRID_PLUS`: durante indexacion, spaCy NER extrae entidades, construye indice invertido in-memory, y genera cross-references textuales entre documentos que comparten entidades. BM25 captura terminos puente entre documentos, mejorando retrieval en bridge questions multi-hop. Sin dependencia de NIM para indexacion. Sin spaCy, se comporta como BM25+Vector+RRF puro (warning en log).
+### HYBRID_PLUS
+
+Durante indexacion, spaCy NER extrae entidades, construye indice invertido in-memory, y genera cross-references textuales entre documentos que comparten entidades. BM25 captura terminos puente entre documentos, mejorando retrieval en bridge questions multi-hop. Sin dependencia de NIM para indexacion. Sin spaCy, se comporta como BM25+Vector+RRF puro (warning en log).
+
+### LIGHT_RAG
+
+Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM, sin BM25 — el grafo reemplaza la funcion de bridging lexical.
+
+**Indexacion:**
+1. Extrae tripletas (entidad, relacion, entidad) de cada documento via LLM (`TripletExtractor`)
+2. Construye un `KnowledgeGraph` in-memory (NetworkX) con entidades, relaciones e indices invertidos
+3. Indexa contenido original en ChromaDB para vector search
+
+**Retrieval:**
+1. Vector search (ChromaDB) → top_k candidatos con cosine similarity
+2. Query analysis via LLM → extrae keywords de bajo nivel (entidades especificas) y alto nivel (temas abstractos)
+3. Graph traversal dual-level:
+   - **Low-level**: BFS desde entidades de la query, scoring inversamente proporcional a hops (`1/(1+depth)`)
+   - **High-level**: substring matching en nombres de entidad y descripciones de relaciones
+4. Fusion: `vector_weight * vector_score + graph_weight * graph_score` (scores normalizados a [0,1])
+
+**Fallback:** Sin `networkx` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
+
+**Optimizacion:** `pre_extract_query_keywords()` permite pre-extraer keywords de todas las queries en batch antes del loop de retrieval, analogo al pre-embed de vectores.
 
 ## Pipeline de evaluacion
 
@@ -55,9 +84,11 @@ RAG_P/
 .env -> MTEBConfig -> MinIO/cache(Parquet) -> LoadedDataset
      -> shuffle(seed) -> slice(max_corpus)
      -> [NER + cross-linking (spaCy) si HYBRID_PLUS]
+     -> [LLM triplet extraction + KG construction si LIGHT_RAG]
      -> index(ChromaDB [+ Tantivy si HYBRID_PLUS])
      -> pre-embed queries (batch REST NIM)
-     -> retrieve(local ChromaDB [+ BM25 + RRF si HYBRID_PLUS], sync)
+     -> [pre-extract query keywords (batch LLM) si LIGHT_RAG]
+     -> retrieve(local ChromaDB [+ BM25 + RRF si HYBRID_PLUS] [+ Graph traversal + Fusion si LIGHT_RAG], sync)
      -> [rerank(cross-encoder) si habilitado]
      -> generate + metrics (async)
      -> EvaluationRun -> JSON + CSV
@@ -104,6 +135,14 @@ pip install spacy
 python -m spacy download en_core_web_sm
 ```
 
+Para `LIGHT_RAG` (knowledge graph):
+
+```bash
+pip install networkx
+```
+
+> **Nota:** LIGHT_RAG requiere un LLM service activo (NIM) tanto para indexacion (extraccion de tripletas) como para retrieval (analisis de queries). Sin `networkx` o sin LLM, degrada a vector search puro.
+
 ```bash
 python -m sandbox_mteb.run                  # Run con .env
 python -m sandbox_mteb.run --dry-run        # Solo validar config
@@ -129,12 +168,18 @@ NIM_MAX_CONCURRENT_REQUESTS=32
 NIM_REQUEST_TIMEOUT=120
 
 # Retrieval
-RETRIEVAL_STRATEGY=SIMPLE_VECTOR      # SIMPLE_VECTOR | HYBRID_PLUS
+RETRIEVAL_STRATEGY=SIMPLE_VECTOR      # SIMPLE_VECTOR | HYBRID_PLUS | LIGHT_RAG
 RETRIEVAL_K=20
 RETRIEVAL_PRE_FUSION_K=150
 RETRIEVAL_RRF_K=60
 RETRIEVAL_BM25_WEIGHT=0.5
 RETRIEVAL_VECTOR_WEIGHT=0.5
+
+# Knowledge Graph (solo LIGHT_RAG)
+KG_MAX_HOPS=2                         # Profundidad maxima BFS en graph traversal
+KG_MAX_TEXT_CHARS=3000                 # Max chars de documento enviados al LLM para extraccion
+KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
+KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -158,6 +203,9 @@ DEV_CORPUS_SIZE=4000
 ENTITY_MAX_CROSS_REFS=3
 ENTITY_MIN_SHARED=1
 ENTITY_MAX_DOC_FRACTION=0.05
+
+# Graph expansion cap (HYBRID_PLUS / LIGHT_RAG). 0 = sin limite.
+MAX_GRAPH_EXPANSION=30
 
 # MinIO
 MINIO_ENDPOINT=http://<minio-host>:9000
@@ -184,5 +232,5 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-14 | Duplicacion contenido en memoria: `retrieved_contents` + `generation_contents` (~1.5GB con 7K queries). | Baja |
 | DTm-15 | ETL HotpotQA no asigna `answer_type="label"` a queries comparison (yes/no). Sin impacto numerico (F1=Accuracy para tokens unicos). | Baja |
 | DTm-16 | Nemotron-3-nano responde "yes" a preguntas extractivas (~10%). System prompt causa sobregeneralizacion. | Media |
-| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. | Baja |
+| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja |
 | DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja |
