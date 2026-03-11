@@ -316,3 +316,88 @@ def test_add_entity_metadata_unknown_entity():
     kg = KnowledgeGraph()
     kg.add_entity_metadata("Ghost", "PERSON", "Does not exist")
     assert kg.num_entities == 0  # sin cambios
+
+
+# =============================================================================
+# KG16: max_entities cap (DTm-21)
+# =============================================================================
+
+def test_max_entities_cap():
+    """Entidades nuevas se rechazan al alcanzar el cap."""
+    kg = KnowledgeGraph(max_entities=3)
+    # A, B -> 2 entidades
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    assert kg.num_entities == 2
+
+    # C, D -> C se acepta (3ra), D se rechaza (4ta > cap)
+    # La tripleta entera se salta porque D no puede crearse
+    added = kg.add_triplets("doc2", [_rel("C", "D", "r")])
+    assert kg.num_entities == 3
+    assert added == 0  # tripleta descartada porque D no cabe
+    assert kg._entities_dropped > 0
+
+
+def test_max_entities_existing_entities_still_updated():
+    """Entidades existentes se actualizan aunque el cap este lleno."""
+    kg = KnowledgeGraph(max_entities=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    assert kg.num_entities == 2
+
+    # A y B ya existen, se actualizan sin problemas
+    added = kg.add_triplets("doc2", [_rel("A", "B", "collaborates")])
+    assert added == 1
+    assert kg.num_entities == 2  # sin entidades nuevas
+
+
+# =============================================================================
+# KG17: dedup de relaciones en aristas (DTm-21)
+# =============================================================================
+
+def test_relation_dedup_same_doc():
+    """Misma relacion del mismo doc no se duplica en la arista."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows", doc_id="doc1"),
+        _rel("A", "B", "knows", doc_id="doc1"),  # duplicado exacto
+    ])
+
+    edge_data = kg._graph["a"]["b"]
+    assert len(edge_data["relations"]) == 1
+
+
+def test_relation_dedup_different_doc():
+    """Misma relacion de diferente doc SI se anade."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows", doc_id="doc1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "knows", doc_id="doc2")])
+
+    edge_data = kg._graph["a"]["b"]
+    assert len(edge_data["relations"]) == 2
+
+
+def test_relation_dedup_different_relation():
+    """Diferente tipo de relacion del mismo doc SI se anade."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows", doc_id="doc1"),
+        _rel("A", "B", "works with", doc_id="doc1"),
+    ])
+
+    edge_data = kg._graph["a"]["b"]
+    assert len(edge_data["relations"]) == 2
+
+
+# =============================================================================
+# KG18: get_stats incluye memoria y cap info (DTm-21)
+# =============================================================================
+
+def test_get_stats_includes_memory_and_cap():
+    """Stats incluyen approx_memory_mb, entities_dropped, max_entities."""
+    kg = KnowledgeGraph(max_entities=100)
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    stats = kg.get_stats()
+
+    assert "approx_memory_mb" in stats
+    assert stats["approx_memory_mb"] >= 0
+    assert stats["entities_dropped"] == 0
+    assert stats["max_entities"] == 100

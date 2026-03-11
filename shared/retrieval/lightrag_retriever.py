@@ -67,12 +67,14 @@ class LightRAGRetriever(BaseRetriever):
         embedding_batch_size: int = 0,
         kg_max_hops: int = 2,
         kg_max_text_chars: int = 3000,
+        kg_max_entities: int = 0,
         graph_weight: float = 0.3,
         vector_weight: float = 0.7,
     ):
         super().__init__(config)
         self._llm_service = llm_service
         self._kg_max_hops = kg_max_hops
+        self._kg_max_entities = kg_max_entities
         self._graph_weight = graph_weight
         self._vector_weight = vector_weight
 
@@ -88,7 +90,7 @@ class LightRAGRetriever(BaseRetriever):
         self._has_graph = False
 
         if llm_service and HAS_NETWORKX:
-            self._kg = KnowledgeGraph()
+            self._kg = KnowledgeGraph(max_entities=kg_max_entities)
             self._extractor = TripletExtractor(
                 llm_service, max_text_chars=kg_max_text_chars,
             )
@@ -417,7 +419,7 @@ class LightRAGRetriever(BaseRetriever):
     def clear_index(self) -> None:
         self._vector_retriever.clear_index()
         if self._kg:
-            self._kg = KnowledgeGraph()
+            self._kg = KnowledgeGraph(max_entities=self._kg_max_entities)
         self._has_graph = False
         self._query_keywords_cache.clear()
         self._is_indexed = False

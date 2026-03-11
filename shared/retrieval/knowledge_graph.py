@@ -13,6 +13,7 @@ durante retrieval para complementar busqueda vectorial.
 from __future__ import annotations
 
 import logging
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -68,12 +69,16 @@ class KnowledgeGraph:
       - get_subgraph_context(): generar texto de contexto del subgrafo
     """
 
-    def __init__(self) -> None:
+    # Cap por defecto de entidades. 0 = sin limite.
+    _DEFAULT_MAX_ENTITIES = 50_000
+
+    def __init__(self, max_entities: int = 0) -> None:
         if not HAS_NETWORKX:
             raise ImportError(
                 "networkx no instalado. Instalar: pip install networkx"
             )
         self._graph: nx.Graph = nx.Graph()
+        self._max_entities = max_entities or self._DEFAULT_MAX_ENTITIES
         # Indices invertidos
         self._entity_to_docs: Dict[str, Set[str]] = defaultdict(set)
         self._doc_to_entities: Dict[str, Set[str]] = defaultdict(set)
@@ -81,6 +86,8 @@ class KnowledgeGraph:
         self._entities: Dict[str, KGEntity] = {}
         # Relaciones por doc
         self._doc_to_relations: Dict[str, List[KGRelation]] = defaultdict(list)
+        # Contador de entidades nuevas rechazadas por cap
+        self._entities_dropped = 0
 
     @property
     def num_entities(self) -> int:
@@ -119,9 +126,14 @@ class KnowledgeGraph:
             if not src_name or not tgt_name:
                 continue
 
-            # Registrar/actualizar entidades
+            # Registrar/actualizar entidades (con cap DTm-21)
+            skip_triplet = False
             for name in (src_name, tgt_name):
                 if name not in self._entities:
+                    if len(self._entities) >= self._max_entities:
+                        self._entities_dropped += 1
+                        skip_triplet = True
+                        break
                     self._entities[name] = KGEntity(
                         name=name,
                         entity_type="UNKNOWN",
@@ -132,31 +144,41 @@ class KnowledgeGraph:
                 self._entity_to_docs[name].add(doc_id)
                 self._doc_to_entities[doc_id].add(name)
 
+            if skip_triplet:
+                continue
+
             # Anadir nodos y arista al grafo
             self._graph.add_node(src_name, entity_type=self._entities[src_name].entity_type)
             self._graph.add_node(tgt_name, entity_type=self._entities[tgt_name].entity_type)
 
-            # Si ya existe arista, acumular relaciones
+            # Si ya existe arista, acumular relaciones (con dedup DTm-21)
+            new_rel = {
+                "relation": triplet.relation,
+                "description": triplet.description,
+                "doc_id": doc_id,
+            }
             if self._graph.has_edge(src_name, tgt_name):
                 existing = self._graph[src_name][tgt_name].get("relations", [])
-                existing.append({
-                    "relation": triplet.relation,
-                    "description": triplet.description,
-                    "doc_id": doc_id,
-                })
-                self._graph[src_name][tgt_name]["relations"] = existing
-            else:
-                self._graph.add_edge(
-                    src_name, tgt_name,
-                    relations=[{
-                        "relation": triplet.relation,
-                        "description": triplet.description,
-                        "doc_id": doc_id,
-                    }],
+                # Dedup: skip si misma relacion del mismo doc ya existe
+                is_dup = any(
+                    r.get("relation") == triplet.relation
+                    and r.get("doc_id") == doc_id
+                    for r in existing
                 )
+                if not is_dup:
+                    existing.append(new_rel)
+                    self._graph[src_name][tgt_name]["relations"] = existing
+            else:
+                self._graph.add_edge(src_name, tgt_name, relations=[new_rel])
 
             self._doc_to_relations[doc_id].append(triplet)
             added += 1
+
+        if self._entities_dropped > 0:
+            logger.warning(
+                f"KnowledgeGraph: {self._entities_dropped} entidades nuevas "
+                f"rechazadas (cap={self._max_entities})"
+            )
 
         return added
 
@@ -316,8 +338,21 @@ class KnowledgeGraph:
 
         return ". ".join(lines) + "." if lines else ""
 
+    def _estimate_memory_bytes(self) -> int:
+        """Estimacion aproximada del uso de memoria del grafo."""
+        size = sys.getsizeof(self._graph)
+        size += sys.getsizeof(self._entities)
+        for e in self._entities.values():
+            size += sys.getsizeof(e.name) + sys.getsizeof(e.description)
+            size += sys.getsizeof(e.source_doc_ids)
+        size += sys.getsizeof(self._entity_to_docs)
+        size += sys.getsizeof(self._doc_to_entities)
+        size += sys.getsizeof(self._doc_to_relations)
+        return size
+
     def get_stats(self) -> Dict[str, Any]:
         """Estadisticas del grafo para logging."""
+        mem_bytes = self._estimate_memory_bytes()
         return {
             "num_entities": self.num_entities,
             "num_relations": self.num_relations,
@@ -332,6 +367,9 @@ class KnowledgeGraph:
                 if self._graph.number_of_nodes() > 0
                 else 0
             ),
+            "entities_dropped": self._entities_dropped,
+            "max_entities": self._max_entities,
+            "approx_memory_mb": round(mem_bytes / (1024 * 1024), 2),
         }
 
 
