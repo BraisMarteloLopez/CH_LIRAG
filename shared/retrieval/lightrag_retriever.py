@@ -22,8 +22,11 @@ Flujo:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.llm import AsyncLLMService, run_sync
@@ -70,6 +73,7 @@ class LightRAGRetriever(BaseRetriever):
         kg_max_entities: int = 0,
         graph_weight: float = 0.3,
         vector_weight: float = 0.7,
+        kg_cache_dir: str = "",
     ):
         super().__init__(config)
         self._llm_service = llm_service
@@ -77,6 +81,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_max_entities = kg_max_entities
         self._graph_weight = graph_weight
         self._vector_weight = vector_weight
+        self._kg_cache_dir = Path(kg_cache_dir) if kg_cache_dir else None
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -139,7 +144,17 @@ class LightRAGRetriever(BaseRetriever):
         # Paso 2: Knowledge graph (si disponible)
         if self._kg and self._extractor:
             try:
-                self._build_knowledge_graph(documents)
+                cache_path = self._resolve_cache_path(documents)
+                if cache_path and cache_path.exists():
+                    self._kg = KnowledgeGraph.load(cache_path)
+                    logger.info(
+                        f"LightRAGRetriever: KG cargado desde cache "
+                        f"({self._kg.num_entities} entidades)"
+                    )
+                else:
+                    self._build_knowledge_graph(documents)
+                    if cache_path:
+                        self._kg.save(cache_path)
                 self._has_graph = True
             except Exception as e:
                 logger.error(
@@ -188,6 +203,27 @@ class LightRAGRetriever(BaseRetriever):
             f"LightRAGRetriever: KG construido en {elapsed_ms:.0f}ms. "
             f"{total_triplets} tripletas de {len(documents)} docs."
         )
+
+    @staticmethod
+    def _corpus_fingerprint(documents: List[Dict[str, Any]]) -> str:
+        """Hash determinista del corpus para invalidar cache si cambia."""
+        h = hashlib.sha256()
+        for doc in sorted(documents, key=lambda d: d.get("doc_id", "")):
+            h.update(doc.get("doc_id", "").encode())
+            content = doc.get("content", "")
+            # Solo primeros 200 chars por doc para que el hash sea rapido
+            h.update(content[:200].encode())
+        h.update(str(len(documents)).encode())
+        return h.hexdigest()[:16]
+
+    def _resolve_cache_path(
+        self, documents: List[Dict[str, Any]],
+    ) -> Optional[Path]:
+        """Determina la ruta del cache del KG, o None si no hay cache dir."""
+        if not self._kg_cache_dir:
+            return None
+        fingerprint = self._corpus_fingerprint(documents)
+        return self._kg_cache_dir / f"kg_cache_{fingerprint}.json"
 
     def retrieve(
         self,

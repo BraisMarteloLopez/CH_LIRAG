@@ -188,6 +188,7 @@ KG_MAX_TEXT_CHARS=3000                 # Max chars de documento enviados al LLM 
 KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
 KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
 KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 50K)
+KG_CACHE_DIR=./data/kg_cache          # Directorio para persistir KG entre runs (vacio = sin cache)
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -255,5 +256,5 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-31 | Corpus duplicado en memoria en HYBRID_PLUS: `HybridPlusRetriever._original_contents` y `HybridRetriever._doc_map` mantienen copias independientes del contenido completo. Analogamente a DTm-14 pero en otra capa. | Baja | Abierto |
 | DTm-32 | `random.seed()` global en `evaluator.py:run()`: muta estado global del modulo `random`. DEV_MODE usa `random.Random(seed)` (instancia aislada) correctamente, pero el flujo estandar no. Contamina RNG de librerias de terceros. | Baja | Abierto |
 | DTm-33 | Fallos silenciosos en extraccion de tripletas: `extract_from_doc_async()` (`triplet_extractor.py`) devuelve `([], [])` en excepcion con solo un `logger.warning`. `get_stats()` no reporta cuantos documentos fallaron. Fraccion del corpus puede quedar sin representacion en KG sin visibilidad. | Media | Abierto |
-| DTm-34 | Sin persistencia del Knowledge Graph entre runs. El KG se reconstruye desde cero en cada ejecucion (~69 min para corpus completo de 66K docs). Imposibilita iteracion de hiperparametros (`kg_graph_weight`, `kg_vector_weight`, `kg_max_hops`) sin repetir indexacion completa. | Alta | Abierto |
+| DTm-34 | Persistencia del Knowledge Graph entre runs via `KG_CACHE_DIR`. Serializa/deserializa el grafo completo (entidades, relaciones, indices, NetworkX) como JSON. Cache invalidado automaticamente por fingerprint del corpus. | Alta | **Resuelto** |
 | DTm-35 | `pre_fusion_k` reutilizado con semantica incorrecta para el reranker en `evaluator.py:_execute_retrieval()`. El parametro define candidatos pre-RRF por canal, pero se usa como total de candidatos para el reranker — semantica distinta. Relacionado con DTm-24 (naming ambiguo) pero con impacto funcional directo. | Media | Abierto |

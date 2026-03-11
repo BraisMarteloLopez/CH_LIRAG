@@ -12,10 +12,12 @@ durante retrieval para complementar busqueda vectorial.
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -337,6 +339,117 @@ class KnowledgeGraph:
                 break
 
         return ". ".join(lines) + "." if lines else ""
+
+    # =================================================================
+    # SERIALIZACION (DTm-34)
+    # =================================================================
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializa el estado completo del KG a un dict JSON-compatible."""
+        entities_ser = {
+            name: {
+                "name": e.name,
+                "entity_type": e.entity_type,
+                "description": e.description,
+                "source_doc_ids": sorted(e.source_doc_ids),
+            }
+            for name, e in self._entities.items()
+        }
+
+        relations_ser: Dict[str, List[Dict[str, str]]] = {
+            doc_id: [
+                {
+                    "source": r.source,
+                    "target": r.target,
+                    "relation": r.relation,
+                    "description": r.description,
+                    "source_doc_id": r.source_doc_id,
+                }
+                for r in rels
+            ]
+            for doc_id, rels in self._doc_to_relations.items()
+        }
+
+        graph_data = nx.node_link_data(self._graph)
+
+        return {
+            "version": 1,
+            "max_entities": self._max_entities,
+            "entities_dropped": self._entities_dropped,
+            "entities": entities_ser,
+            "doc_to_relations": relations_ser,
+            "entity_to_docs": {
+                k: sorted(v) for k, v in self._entity_to_docs.items()
+            },
+            "doc_to_entities": {
+                k: sorted(v) for k, v in self._doc_to_entities.items()
+            },
+            "graph": graph_data,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeGraph":
+        """Reconstruye un KnowledgeGraph desde un dict serializado."""
+        kg = cls(max_entities=data.get("max_entities", 0))
+        kg._entities_dropped = data.get("entities_dropped", 0)
+
+        # Reconstruir entidades
+        for name, e_data in data.get("entities", {}).items():
+            kg._entities[name] = KGEntity(
+                name=e_data["name"],
+                entity_type=e_data["entity_type"],
+                description=e_data.get("description", ""),
+                source_doc_ids=set(e_data.get("source_doc_ids", [])),
+            )
+
+        # Reconstruir indices
+        for name, doc_ids in data.get("entity_to_docs", {}).items():
+            kg._entity_to_docs[name] = set(doc_ids)
+        for doc_id, entity_names in data.get("doc_to_entities", {}).items():
+            kg._doc_to_entities[doc_id] = set(entity_names)
+
+        # Reconstruir relaciones por doc
+        for doc_id, rels_data in data.get("doc_to_relations", {}).items():
+            kg._doc_to_relations[doc_id] = [
+                KGRelation(
+                    source=r["source"],
+                    target=r["target"],
+                    relation=r["relation"],
+                    description=r.get("description", ""),
+                    source_doc_id=r.get("source_doc_id", ""),
+                )
+                for r in rels_data
+            ]
+
+        # Reconstruir grafo NetworkX
+        graph_data = data.get("graph")
+        if graph_data:
+            kg._graph = nx.node_link_graph(graph_data)
+
+        return kg
+
+    def save(self, path: Path) -> None:
+        """Persiste el KG a un archivo JSON."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = self.to_dict()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        logger.info(
+            f"KnowledgeGraph persistido en {path} "
+            f"({self.num_entities} entidades, {self.num_relations} relaciones)"
+        )
+
+    @classmethod
+    def load(cls, path: Path) -> "KnowledgeGraph":
+        """Carga un KG desde un archivo JSON."""
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        kg = cls.from_dict(data)
+        logger.info(
+            f"KnowledgeGraph cargado desde {path} "
+            f"({kg.num_entities} entidades, {kg.num_relations} relaciones)"
+        )
+        return kg
 
     def _estimate_memory_bytes(self) -> int:
         """Estimacion aproximada del uso de memoria del grafo."""

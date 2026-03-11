@@ -256,3 +256,41 @@ def test_fuse_high_level_only():
     result = r._fuse_with_graph("query", vr, top_k=5)
     assert "d1" in result.doc_ids
     r._kg.query_by_keywords.assert_called_once()
+
+
+# =============================================================================
+# F9-F10: Corpus fingerprint y cache path (DTm-34)
+# =============================================================================
+
+def test_corpus_fingerprint_deterministic():
+    """Mismo corpus produce mismo fingerprint."""
+    docs = [
+        {"doc_id": "d1", "content": "hello world"},
+        {"doc_id": "d2", "content": "foo bar"},
+    ]
+    fp1 = LightRAGRetriever._corpus_fingerprint(docs)
+    fp2 = LightRAGRetriever._corpus_fingerprint(docs)
+    assert fp1 == fp2
+    assert len(fp1) == 16
+
+
+def test_corpus_fingerprint_order_independent():
+    """Fingerprint no depende del orden de documentos."""
+    docs_a = [
+        {"doc_id": "d1", "content": "aaa"},
+        {"doc_id": "d2", "content": "bbb"},
+    ]
+    docs_b = [
+        {"doc_id": "d2", "content": "bbb"},
+        {"doc_id": "d1", "content": "aaa"},
+    ]
+    assert LightRAGRetriever._corpus_fingerprint(docs_a) == \
+           LightRAGRetriever._corpus_fingerprint(docs_b)
+
+
+def test_corpus_fingerprint_changes_with_content():
+    """Fingerprint cambia si contenido del corpus cambia."""
+    docs_v1 = [{"doc_id": "d1", "content": "version 1"}]
+    docs_v2 = [{"doc_id": "d1", "content": "version 2"}]
+    assert LightRAGRetriever._corpus_fingerprint(docs_v1) != \
+           LightRAGRetriever._corpus_fingerprint(docs_v2)

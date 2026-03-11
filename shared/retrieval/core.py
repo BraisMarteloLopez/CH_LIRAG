@@ -73,6 +73,7 @@ class RetrievalConfig:
     kg_max_entities: int = 0
     kg_graph_weight: float = 0.3
     kg_vector_weight: float = 0.7
+    kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -95,6 +96,7 @@ class RetrievalConfig:
             kg_max_entities=_env_int("KG_MAX_ENTITIES", 0),
             kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),
             kg_vector_weight=_env_float("KG_VECTOR_WEIGHT", 0.7),
+            kg_cache_dir=_env("KG_CACHE_DIR", ""),
         )
 
 

@@ -492,15 +492,23 @@ class MTEBEvaluator:
 
         n_docs = len(documents)
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
-            concurrent = self.config.infra.nim_max_concurrent
-            avg_latency_s = 2.0  # Estimacion conservadora por llamada LLM
-            est_minutes = (n_docs / max(concurrent, 1)) * avg_latency_s / 60
-            logger.warning(
-                f"  LIGHT_RAG: indexacion hara ~{n_docs} llamadas LLM "
-                f"para extraccion de tripletas. "
-                f"Estimacion: ~{est_minutes:.0f} min "
-                f"({n_docs} docs, {concurrent} concurrentes, ~{avg_latency_s:.0f}s/llamada)"
-            )
+            kg_cache = self.config.retrieval.kg_cache_dir
+            if kg_cache:
+                logger.info(
+                    f"  LIGHT_RAG: KG cache habilitado en '{kg_cache}'. "
+                    f"Se reutilizara el grafo si el corpus coincide."
+                )
+            else:
+                concurrent = self.config.infra.nim_max_concurrent
+                avg_latency_s = 2.0  # Estimacion conservadora por llamada LLM
+                est_minutes = (n_docs / max(concurrent, 1)) * avg_latency_s / 60
+                logger.warning(
+                    f"  LIGHT_RAG: indexacion hara ~{n_docs} llamadas LLM "
+                    f"para extraccion de tripletas. "
+                    f"Estimacion: ~{est_minutes:.0f} min "
+                    f"({n_docs} docs, {concurrent} concurrentes, ~{avg_latency_s:.0f}s/llamada). "
+                    f"Tip: configura KG_CACHE_DIR para persistir el grafo entre runs."
+                )
         logger.info(f"  Indexando {n_docs} documentos...")
         success = self._retriever.index_documents(
             documents, collection_name=collection_name

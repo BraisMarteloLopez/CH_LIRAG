@@ -19,6 +19,9 @@ Cobertura:
   KG15. add_entity_metadata — actualiza type y description.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from shared.retrieval.knowledge_graph import KGEntity, KGRelation, KnowledgeGraph
@@ -401,3 +404,104 @@ def test_get_stats_includes_memory_and_cap():
     assert stats["approx_memory_mb"] >= 0
     assert stats["entities_dropped"] == 0
     assert stats["max_entities"] == 100
+
+
+# =============================================================================
+# KG19-KG23: Persistencia (DTm-34)
+# =============================================================================
+
+def test_to_dict_from_dict_roundtrip():
+    """to_dict -> from_dict preserva estado completo."""
+    kg = KnowledgeGraph(max_entities=1000)
+    kg.add_triplets("doc1", [
+        _rel("Alice", "Bob", "knows", desc="friends", doc_id="doc1"),
+        _rel("Bob", "Acme", "works at", desc="employee", doc_id="doc1"),
+    ])
+    kg.add_triplets("doc2", [
+        _rel("Alice", "Charlie", "manages", doc_id="doc2"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "A researcher")
+    kg.add_entity_metadata("Acme", "ORG", "A company")
+
+    data = kg.to_dict()
+    kg2 = KnowledgeGraph.from_dict(data)
+
+    assert kg2.num_entities == kg.num_entities
+    assert kg2.num_relations == kg.num_relations
+    assert kg2.num_docs == kg.num_docs
+    assert kg2._max_entities == 1000
+
+    # Entidades preservadas con metadata
+    alice = kg2._entities["alice"]
+    assert alice.entity_type == "PERSON"
+    assert alice.description == "A researcher"
+    assert "doc1" in alice.source_doc_ids
+    assert "doc2" in alice.source_doc_ids
+
+    # Indices invertidos preservados
+    assert "doc1" in kg2._entity_to_docs["alice"]
+    assert "alice" in kg2._doc_to_entities["doc1"]
+
+    # Relaciones por doc preservadas
+    assert len(kg2._doc_to_relations["doc1"]) == 2
+    assert len(kg2._doc_to_relations["doc2"]) == 1
+
+    # Grafo funcional — queries producen mismos resultados
+    orig_results = kg.query_entities(["Alice"], max_hops=2)
+    loaded_results = kg2.query_entities(["Alice"], max_hops=2)
+    assert dict(orig_results) == dict(loaded_results)
+
+
+def test_to_dict_version_field():
+    """to_dict incluye campo version."""
+    kg = KnowledgeGraph()
+    data = kg.to_dict()
+    assert data["version"] == 1
+
+
+def test_save_load_file(tmp_path):
+    """save() y load() persisten y restauran desde archivo JSON."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("X", "Y", "related", desc="test relation", doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("X", "CONCEPT", "concept X")
+
+    path = tmp_path / "subdir" / "kg.json"
+    kg.save(path)
+
+    assert path.exists()
+    # Verificar que es JSON valido
+    with open(path) as f:
+        data = json.load(f)
+    assert data["version"] == 1
+
+    # Load y verificar
+    kg2 = KnowledgeGraph.load(path)
+    assert kg2.num_entities == 2
+    assert kg2.num_relations == 1
+    assert kg2._entities["x"].entity_type == "CONCEPT"
+
+
+def test_from_dict_empty_graph():
+    """from_dict con datos minimos produce grafo vacio funcional."""
+    kg = KnowledgeGraph.from_dict({"version": 1})
+    assert kg.num_entities == 0
+    assert kg.num_relations == 0
+    assert kg.query_entities(["anything"]) == []
+
+
+def test_roundtrip_preserves_edge_relations():
+    """Roundtrip preserva relaciones en aristas del grafo NetworkX."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows", doc_id="doc1"),
+        _rel("A", "B", "works with", doc_id="doc1"),
+    ])
+
+    kg2 = KnowledgeGraph.from_dict(kg.to_dict())
+
+    edge = kg2._graph["a"]["b"]
+    assert len(edge["relations"]) == 2
+    rel_types = {r["relation"] for r in edge["relations"]}
+    assert rel_types == {"knows", "works with"}
