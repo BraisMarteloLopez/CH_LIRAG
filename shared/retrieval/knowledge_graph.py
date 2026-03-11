@@ -90,6 +90,11 @@ class KnowledgeGraph:
         self._doc_to_relations: Dict[str, List[KGRelation]] = defaultdict(list)
         # Contador de entidades nuevas rechazadas por cap
         self._entities_dropped = 0
+        # Indices invertidos para query_by_keywords (DTm-30)
+        # token -> set de entity names que contienen ese token
+        self._kw_entity_index: Dict[str, Set[str]] = defaultdict(set)
+        # token -> set de (src, tgt, doc_id) para relaciones
+        self._kw_relation_index: Dict[str, Set[Tuple[str, str, str]]] = defaultdict(set)
 
     @property
     def num_entities(self) -> int:
@@ -106,6 +111,32 @@ class KnowledgeGraph:
     def _normalize_name(self, name: str) -> str:
         """Normalizacion simple de nombres de entidad."""
         return name.lower().strip()
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        """Tokeniza texto en palabras lowercase para el indice invertido (DTm-30)."""
+        return text.lower().split()
+
+    def _index_entity_tokens(self, entity_name: str) -> None:
+        """Indexa tokens de nombre y descripcion de una entidad (DTm-30)."""
+        entity = self._entities.get(entity_name)
+        if not entity:
+            return
+        tokens = self._tokenize(entity_name)
+        if entity.description:
+            tokens.extend(self._tokenize(entity.description))
+        for token in tokens:
+            self._kw_entity_index[token].add(entity_name)
+
+    def _index_relation_tokens(
+        self, src: str, tgt: str, rel_info: Dict[str, str]
+    ) -> None:
+        """Indexa tokens de una relacion (DTm-30)."""
+        rel_text = (rel_info.get("relation", "") + " " + rel_info.get("description", ""))
+        doc_id = rel_info.get("doc_id", "")
+        entry = (src, tgt, doc_id)
+        for token in self._tokenize(rel_text):
+            self._kw_relation_index[token].add(entry)
 
     def add_triplets(self, doc_id: str, triplets: List[KGRelation]) -> int:
         """Anade tripletas al grafo desde un documento.
@@ -149,6 +180,10 @@ class KnowledgeGraph:
             if skip_triplet:
                 continue
 
+            # Indexar tokens de entidades (DTm-30)
+            self._index_entity_tokens(src_name)
+            self._index_entity_tokens(tgt_name)
+
             # Anadir nodos y arista al grafo
             self._graph.add_node(src_name, entity_type=self._entities[src_name].entity_type)
             self._graph.add_node(tgt_name, entity_type=self._entities[tgt_name].entity_type)
@@ -172,6 +207,9 @@ class KnowledgeGraph:
                     self._graph[src_name][tgt_name]["relations"] = existing
             else:
                 self._graph.add_edge(src_name, tgt_name, relations=[new_rel])
+
+            # Indexar tokens de relacion (DTm-30)
+            self._index_relation_tokens(src_name, tgt_name, new_rel)
 
             self._doc_to_relations[doc_id].append(triplet)
             added += 1
@@ -197,6 +235,8 @@ class KnowledgeGraph:
             # Actualizar atributo del nodo
             if self._graph.has_node(norm):
                 self._graph.nodes[norm]["entity_type"] = self._entities[norm].entity_type
+            # Re-indexar tokens con nueva descripcion (DTm-30)
+            self._index_entity_tokens(norm)
 
     def query_entities(
         self,
@@ -260,7 +300,8 @@ class KnowledgeGraph:
         """High-level retrieval: busca docs por keywords en nombres de entidad
         y descripciones de relaciones.
 
-        Matching simple por substring en entidades y relaciones.
+        Usa indice invertido por token (DTm-30) en lugar de scan completo.
+        Complejidad: O(tokens_keyword × matches) en vez de O(entidades × keywords).
 
         Args:
             keywords: Temas/keywords de alto nivel.
@@ -275,25 +316,30 @@ class KnowledgeGraph:
         if not keywords_lower:
             return []
 
-        # Buscar en nombres de entidad
-        for entity_name, entity in self._entities.items():
-            for kw in keywords_lower:
-                if kw in entity_name or kw in entity.description.lower():
-                    for doc_id in entity.source_doc_ids:
-                        doc_scores[doc_id] += 1.0
+        # Buscar entidades via indice invertido (DTm-30)
+        matched_entities: Set[str] = set()
+        for kw in keywords_lower:
+            kw_tokens = self._tokenize(kw)
+            for token in kw_tokens:
+                matched_entities.update(self._kw_entity_index.get(token, set()))
 
-        # Buscar en descripciones de relaciones
-        for _src, _tgt, edge_data in self._graph.edges(data=True):
-            for rel_info in edge_data.get("relations", []):
-                rel_text = (
-                    rel_info.get("relation", "") + " " +
-                    rel_info.get("description", "")
-                ).lower()
-                for kw in keywords_lower:
-                    if kw in rel_text:
-                        doc_id = rel_info.get("doc_id", "")
-                        if doc_id:
-                            doc_scores[doc_id] += 0.5
+        for entity_name in matched_entities:
+            entity = self._entities.get(entity_name)
+            if not entity:
+                continue
+            for doc_id in entity.source_doc_ids:
+                doc_scores[doc_id] += 1.0
+
+        # Buscar relaciones via indice invertido (DTm-30)
+        matched_relations: Set[Tuple[str, str, str]] = set()
+        for kw in keywords_lower:
+            kw_tokens = self._tokenize(kw)
+            for token in kw_tokens:
+                matched_relations.update(self._kw_relation_index.get(token, set()))
+
+        for _src, _tgt, doc_id in matched_relations:
+            if doc_id:
+                doc_scores[doc_id] += 0.5
 
         return doc_scores.most_common(max_docs)
 
@@ -426,7 +472,22 @@ class KnowledgeGraph:
         if graph_data:
             kg._graph = nx.node_link_graph(graph_data)
 
+        # Reconstruir indices invertidos de keywords (DTm-30)
+        kg._rebuild_keyword_indices()
+
         return kg
+
+    def _rebuild_keyword_indices(self) -> None:
+        """Reconstruye _kw_entity_index y _kw_relation_index desde el estado actual (DTm-30)."""
+        self._kw_entity_index = defaultdict(set)
+        self._kw_relation_index = defaultdict(set)
+
+        for entity_name in self._entities:
+            self._index_entity_tokens(entity_name)
+
+        for src, tgt, edge_data in self._graph.edges(data=True):
+            for rel_info in edge_data.get("relations", []):
+                self._index_relation_tokens(src, tgt, rel_info)
 
     def save(self, path: Path) -> None:
         """Persiste el KG a un archivo JSON."""

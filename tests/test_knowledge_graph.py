@@ -505,3 +505,90 @@ def test_roundtrip_preserves_edge_relations():
     assert len(edge["relations"]) == 2
     rel_types = {r["relation"] for r in edge["relations"]}
     assert rel_types == {"knows", "works with"}
+
+
+# =============================================================================
+# KG24-KG28: Indice invertido para query_by_keywords (DTm-30)
+# =============================================================================
+
+
+def test_keyword_index_populated_on_add():
+    """KG24: _kw_entity_index se puebla al anadir tripletas (DTm-30)."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "studied")])
+    # Tokens de entity names deben estar en el indice
+    assert "albert" in kg._kw_entity_index
+    assert "einstein" in kg._kw_entity_index
+    assert "physics" in kg._kw_entity_index
+    # Deben apuntar a entidades correctas
+    assert "albert einstein" in kg._kw_entity_index["albert"]
+    assert "physics" in kg._kw_entity_index["physics"]
+
+
+def test_keyword_index_relations():
+    """KG25: _kw_relation_index se puebla con tokens de relacion (DTm-30)."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="MIT", relation="works at",
+                   description="employed since 2020", source_doc_id="doc1"),
+    ])
+    assert "works" in kg._kw_relation_index
+    assert "employed" in kg._kw_relation_index
+    # La entrada debe contener el doc_id
+    entries = kg._kw_relation_index["works"]
+    assert any(doc_id == "doc1" for _, _, doc_id in entries)
+
+
+def test_keyword_index_metadata_update():
+    """KG26: Re-indexa tokens al actualizar metadata de entidad (DTm-30)."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Quantum", "Physics", "branch of")])
+    # Antes de metadata, "mechanics" no esta indexado
+    assert "mechanics" not in kg._kw_entity_index
+    # Actualizar con descripcion que contiene "mechanics"
+    kg.add_entity_metadata("Quantum", "CONCEPT", "quantum mechanics theory")
+    assert "mechanics" in kg._kw_entity_index
+    assert "quantum" in kg._kw_entity_index["mechanics"]
+
+
+def test_keyword_index_from_dict_roundtrip():
+    """KG27: Indices se reconstruyen tras from_dict (DTm-30)."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Newton", "Gravity", "discovered")])
+    kg.add_entity_metadata("Newton", "PERSON", "physicist and mathematician")
+
+    kg2 = KnowledgeGraph.from_dict(kg.to_dict())
+
+    # El indice debe estar reconstruido
+    assert "newton" in kg2._kw_entity_index
+    assert "gravity" in kg2._kw_entity_index
+    assert "mathematician" in kg2._kw_entity_index
+    # query_by_keywords debe funcionar
+    results = kg2.query_by_keywords(["gravity"])
+    assert len(results) > 0
+    assert results[0][0] == "doc1"
+
+
+def test_keyword_query_uses_index():
+    """KG28: query_by_keywords produce mismos resultados con indice (DTm-30)."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Einstein", target="Relativity",
+                   relation="developed theory",
+                   description="general relativity", source_doc_id="doc1"),
+    ])
+    kg.add_triplets("doc2", [
+        KGRelation(source="Newton", target="Gravity",
+                   relation="discovered law",
+                   description="gravitational force", source_doc_id="doc2"),
+    ])
+
+    # Keyword "relativity" debe encontrar doc1
+    results = kg.query_by_keywords(["relativity"])
+    doc_ids = [d for d, _ in results]
+    assert "doc1" in doc_ids
+
+    # Keyword "gravity" debe encontrar doc2
+    results = kg.query_by_keywords(["gravity"])
+    doc_ids = [d for d, _ in results]
+    assert "doc2" in doc_ids
