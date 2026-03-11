@@ -246,3 +246,7 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-22 | Batching de coroutines en `extract_batch_async()`: chunks de 500 docs para limitar presion de memoria. | Baja | **Resuelto** |
 | DTm-23 | Tests LIGHT_RAG: 63 tests unitarios cubriendo `KnowledgeGraph`, `TripletExtractor`, `_fuse_with_graph`, validacion y hardening. | Alta | **Resuelto** |
 | DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja | Abierto |
+| DTm-25 | Batch size de extraccion (500) sobredimensionado vs semaforo HTTP (32). Con 500 coroutines y semaforo de 32, 468 esperan en memoria. Batch de 64-128 (2-4x semaforo) seria mas eficiente. | Baja | Abierto |
+| DTm-26 | `kg_max_entities` descarta entidades nuevas silenciosamente al llegar al cap. Las ultimas queries del corpus tendran KG incompleto. Considerar politica LRU o al menos counter de entidades descartadas para visibilidad. | Media | Abierto |
+| DTm-27 | Filtro `len(name) < 2` en validacion de entidades rechaza entidades legitimas de 1 caracter (nombres chinos, siglas). Filtrar solo `name.strip() == ""`. | Baja | Abierto |
+| DTm-28 | Sin dependencias pinneadas. `requirements.txt` sin versiones exactas. Un update de `networkx` o `chromadb` puede cambiar resultados silenciosamente entre runs. Necesita `pip freeze` versionado. | Media | Abierto |
