@@ -74,7 +74,14 @@ class TripletExtractor:
       2. extract_query_keywords(): keywords de una query (retrieval)
 
     Batch processing con semaphore para concurrencia controlada.
+    Coroutines se crean en chunks para evitar presion de memoria
+    con corpus grandes (DTm-22).
     """
+
+    # Maximo de coroutines creadas simultaneamente en extract_batch_async.
+    # El semaphore del LLM limita HTTP concurrente, pero las coroutines
+    # en si retienen referencias a doc content mientras esperan turno.
+    _COROUTINE_BATCH_SIZE = 500
 
     def __init__(
         self,
@@ -182,9 +189,14 @@ class TripletExtractor:
             entities, relations = await self.extract_from_doc_async(doc_id, content)
             results[doc_id] = (entities, relations)
 
-        # Ejecutar en paralelo (el semaphore del LLM service controla concurrencia)
-        tasks = [_extract_one(doc) for doc in documents]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Procesar en chunks para limitar coroutines vivas en memoria
+        # (DTm-22). El semaphore del LLM controla HTTP, pero cada
+        # coroutine retiene su doc content mientras espera turno.
+        batch_sz = self._COROUTINE_BATCH_SIZE
+        for start in range(0, len(documents), batch_sz):
+            chunk = documents[start:start + batch_sz]
+            tasks = [_extract_one(doc) for doc in chunk]
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         total_entities = sum(len(e) for e, _ in results.values())
@@ -271,8 +283,13 @@ class TripletExtractor:
             low, high = await self.extract_query_keywords_async(query)
             results[idx] = (low, high)
 
-        tasks = [_extract_one(i, q) for i, q in enumerate(queries)]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        batch_sz = self._COROUTINE_BATCH_SIZE
+        for start in range(0, len(queries), batch_sz):
+            chunk_tasks = [
+                _extract_one(i, q)
+                for i, q in enumerate(queries[start:start + batch_sz], start=start)
+            ]
+            await asyncio.gather(*chunk_tasks, return_exceptions=True)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
