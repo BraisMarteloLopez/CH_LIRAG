@@ -1,0 +1,258 @@
+"""
+Tests unitarios para LightRAGRetriever._fuse_with_graph (DTm-23, Fase 1.3).
+
+Cobertura:
+  F1. Sin graph docs -> retorna vector_result sin cambios.
+  F2. Graph-only docs se recuperan via lookup.
+  F3. Normalizacion de scores a [0,1].
+  F4. All graph scores 0.0 -> no division by zero.
+  F5. Fusion respeta vector_weight / graph_weight.
+  F6. Docs del grafo sin contenido -> excluidos del resultado.
+  F7. Sin keywords extraidos -> retorna vector_result sin cambios.
+  F8. Solo high-level keywords (sin low-level).
+"""
+
+from unittest.mock import MagicMock, patch, PropertyMock
+
+import pytest
+
+from shared.retrieval.core import (
+    RetrievalConfig,
+    RetrievalResult,
+    RetrievalStrategy,
+)
+from shared.retrieval.knowledge_graph import KnowledgeGraph
+from shared.retrieval.lightrag_retriever import LightRAGRetriever
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+def _make_lightrag(
+    graph_weight=0.3,
+    vector_weight=0.7,
+    kg=None,
+    extractor=None,
+    vector_retriever=None,
+):
+    """Crea LightRAGRetriever con dependencias mockeadas."""
+    retriever = object.__new__(LightRAGRetriever)
+    retriever.config = RetrievalConfig()
+    retriever._graph_weight = graph_weight
+    retriever._vector_weight = vector_weight
+    retriever._kg_max_hops = 2
+    retriever._GRAPH_OVERFETCH_FACTOR = 2
+    retriever._kg = kg or MagicMock(spec=KnowledgeGraph)
+    retriever._extractor = extractor or MagicMock()
+    retriever._has_graph = True
+    retriever._query_keywords_cache = {}
+    retriever._vector_retriever = vector_retriever or MagicMock()
+    return retriever
+
+
+def _make_vector_result(doc_ids, contents, scores):
+    return RetrievalResult(
+        doc_ids=doc_ids,
+        contents=contents,
+        scores=scores,
+        vector_scores=scores[:],
+        strategy_used=RetrievalStrategy.SIMPLE_VECTOR,
+        metadata={},
+    )
+
+
+# =============================================================================
+# F1: Sin graph docs
+# =============================================================================
+
+def test_fuse_no_graph_docs():
+    """Sin graph docs -> retorna vector_result sin cambios."""
+    r = _make_lightrag()
+    # KG queries return empty
+    r._kg.query_entities.return_value = []
+    r._kg.query_by_keywords.return_value = []
+    # Keywords extraction returns something
+    r._extractor.extract_query_keywords.return_value = (["alice"], ["research"])
+
+    vr = _make_vector_result(
+        ["d1", "d2"], ["c1", "c2"], [0.9, 0.8]
+    )
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+    assert result.doc_ids == ["d1", "d2"]
+    assert result.metadata["graph_docs_added"] == 0
+
+
+# =============================================================================
+# F2: Graph-only docs recovered via lookup
+# =============================================================================
+
+def test_fuse_graph_only_docs_lookup():
+    """Docs solo del grafo se recuperan via get_documents_by_ids."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    # Graph returns a doc not in vector results
+    r._kg.query_entities.return_value = [("d1", 1.0), ("d_graph", 0.8)]
+    r._kg.query_by_keywords.return_value = []
+
+    # Vector result only has d1
+    vr = _make_vector_result(["d1"], ["content_d1"], [0.9])
+
+    # Lookup returns d_graph content
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d_graph": "content_graph"
+    }
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    # Both docs should be in result
+    assert "d1" in result.doc_ids
+    assert "d_graph" in result.doc_ids
+    assert result.metadata["graph_resolved"] == 1
+
+
+# =============================================================================
+# F3: Normalizacion de scores
+# =============================================================================
+
+def test_fuse_normalization():
+    """Scores se normalizan a [0,1]."""
+    r = _make_lightrag(graph_weight=0.5, vector_weight=0.5)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    # Graph: d1=2.0, d2=1.0 -> normalized: d1=1.0, d2=0.5
+    r._kg.query_entities.return_value = [("d1", 2.0), ("d2", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    # Vector: d1=0.6, d2=0.3 -> normalized: d1=1.0, d2=0.5
+    vr = _make_vector_result(["d1", "d2"], ["c1", "c2"], [0.6, 0.3])
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    # d1: 0.5*1.0 + 0.5*1.0 = 1.0
+    # d2: 0.5*0.5 + 0.5*0.5 = 0.5
+    assert result.scores[0] == pytest.approx(1.0)
+    assert result.scores[1] == pytest.approx(0.5)
+    assert result.doc_ids[0] == "d1"
+
+
+# =============================================================================
+# F4: All graph scores 0.0
+# =============================================================================
+
+def test_fuse_all_graph_scores_zero():
+    """Graph scores todos 0.0 -> no division by zero, vector domina."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d1", 0.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+
+    # Should not raise
+    result = r._fuse_with_graph("query", vr, top_k=5)
+    assert len(result.doc_ids) >= 1
+
+
+# =============================================================================
+# F5: Weights applied correctly
+# =============================================================================
+
+def test_fuse_weights():
+    """Fusion respeta vector_weight / graph_weight."""
+    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    # Only d1 in both graph and vector
+    r._kg.query_entities.return_value = [("d1", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1"], ["c1"], [1.0])
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    # d1: 0.7 * 1.0 + 0.3 * 1.0 = 1.0
+    assert result.scores[0] == pytest.approx(1.0)
+
+
+def test_fuse_weights_graph_only_doc():
+    """Doc solo del grafo: v_score=0.0, fused = graph_weight * g_score."""
+    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d_graph", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result([], [], [])
+
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d_graph": "content"
+    }
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    assert "d_graph" in result.doc_ids
+    idx = result.doc_ids.index("d_graph")
+    # fused = 0.7 * 0.0 + 0.3 * 1.0 = 0.3
+    assert result.scores[idx] == pytest.approx(0.3)
+
+
+# =============================================================================
+# F6: Unresolved docs excluded
+# =============================================================================
+
+def test_fuse_unresolved_docs_excluded():
+    """Docs del grafo sin contenido -> excluidos del resultado final."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d_ghost", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result([], [], [])
+
+    # Lookup fails to find d_ghost
+    r._vector_retriever.get_documents_by_ids.return_value = {}
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    assert "d_ghost" not in result.doc_ids
+    assert result.metadata["graph_unresolved"] == 1
+
+
+# =============================================================================
+# F7: Sin keywords
+# =============================================================================
+
+def test_fuse_no_keywords():
+    """Sin keywords extraidos -> retorna vector_result sin cambios."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = ([], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+    assert result.doc_ids == ["d1"]
+    assert result.metadata["query_keywords"] == {"low": [], "high": []}
+
+
+# =============================================================================
+# F8: Solo high-level keywords
+# =============================================================================
+
+def test_fuse_high_level_only():
+    """Solo high-level keywords -> query_by_keywords se invoca."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = ([], ["machine learning"])
+
+    r._kg.query_entities.return_value = []  # no se llama con low=[]
+    r._kg.query_by_keywords.return_value = [("d1", 1.0)]
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+    assert "d1" in result.doc_ids
+    r._kg.query_by_keywords.assert_called_once()
