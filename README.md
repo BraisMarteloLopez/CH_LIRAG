@@ -71,7 +71,7 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 2. Query analysis via LLM → extrae keywords de bajo nivel (entidades especificas) y alto nivel (temas abstractos)
 3. Graph traversal dual-level:
    - **Low-level**: BFS desde entidades de la query, scoring inversamente proporcional a hops (`1/(1+depth)`)
-   - **High-level**: substring matching en nombres de entidad y descripciones de relaciones
+   - **High-level**: token matching en nombres de entidad y descripciones de relaciones (indice invertido por token, DTm-30)
 4. Fusion: `vector_weight * vector_score + graph_weight * graph_score` (scores normalizados a [0,1])
 
 **Fallback:** Sin `networkx` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
