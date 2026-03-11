@@ -139,6 +139,7 @@ class MTEBConfig:
         VALID_STRATEGIES = (
             RetrievalStrategy.SIMPLE_VECTOR,
             RetrievalStrategy.HYBRID_PLUS,
+            RetrievalStrategy.LIGHT_RAG,
         )
         if self.retrieval.strategy not in VALID_STRATEGIES:
             valid_names = ", ".join(s.name for s in VALID_STRATEGIES)
@@ -147,12 +148,17 @@ class MTEBConfig:
                 f"en sandbox_mteb. Valores validos: {valid_names}"
             )
 
-        # LLM requerido solo si generacion activa
-        if self.generation_enabled:
+        # LLM requerido si generacion activa O si LIGHT_RAG
+        _needs_llm = (
+            self.generation_enabled
+            or self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG
+        )
+        if _needs_llm:
+            _reason = "LIGHT_RAG" if self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG else "GENERATION_ENABLED=true"
             if not self.infra.llm_base_url:
-                errors.append("LLM_BASE_URL requerido (GENERATION_ENABLED=true)")
+                errors.append(f"LLM_BASE_URL requerido ({_reason})")
             if not self.infra.llm_model_name:
-                errors.append("LLM_MODEL_NAME requerido")
+                errors.append(f"LLM_MODEL_NAME requerido ({_reason})")
 
         if self.max_queries < 0:
             errors.append(f"EVAL_MAX_QUERIES={self.max_queries} debe ser >= 0 (0=all)")
