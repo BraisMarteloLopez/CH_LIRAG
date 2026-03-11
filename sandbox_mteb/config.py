@@ -194,6 +194,13 @@ class MTEBConfig:
         else:
             lines.append(f"  Queries:    {self.max_queries if self.max_queries > 0 else 'ALL'}")
             lines.append(f"  Corpus:     {self.max_corpus if self.max_corpus > 0 else 'ALL'}")
+        from shared.retrieval.core import RetrievalStrategy
+        if self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
+            lines.extend([
+                f"  KG weights: graph={self.retrieval.kg_graph_weight}, vector={self.retrieval.kg_vector_weight}",
+                f"  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento "
+                f"para construir el knowledge graph (concurrencia={self.infra.nim_max_concurrent})",
+            ])
         lines.extend([
             f"  Shuffle:    seed={self.corpus_shuffle_seed}" if self.corpus_shuffle_seed is not None else "  Shuffle:    OFF (WARNING: ordering bias risk)",
             f"  MinIO:      {self.storage.minio_endpoint}/{self.storage.minio_bucket}",

@@ -196,15 +196,16 @@ class RunExporter:
             fieldnames.append(f"sec_{sk}")
         # LIGHT_RAG graph diagnostics
         has_lightrag = any(
-            qr.metadata.get("retrieval_meta", {}).get("graph_candidates")
+            qr.retrieval.retrieval_metadata.get("graph_candidates")
             for qr in run.query_results
-            if qr.metadata
         )
         if has_lightrag:
             fieldnames.extend([
                 "graph_candidates",
                 "vector_candidates",
                 "graph_only_candidates",
+                "graph_resolved",
+                "query_keywords",
             ])
         fieldnames.extend([
             "expected_response",
@@ -261,10 +262,15 @@ class RunExporter:
                         qr.secondary_metrics.get(sk, 0.0), 4
                     )
                 if has_lightrag:
-                    ret_meta = qr.metadata.get("retrieval_meta", {}) if qr.metadata else {}
+                    ret_meta = qr.retrieval.retrieval_metadata
                     row["graph_candidates"] = ret_meta.get("graph_candidates", "")
                     row["vector_candidates"] = ret_meta.get("vector_candidates", "")
                     row["graph_only_candidates"] = ret_meta.get("graph_only_candidates", "")
+                    row["graph_resolved"] = ret_meta.get("graph_resolved", "")
+                    kw = ret_meta.get("query_keywords", {})
+                    row["query_keywords"] = (
+                        json.dumps(kw, ensure_ascii=False) if kw else ""
+                    )
                 row["expected_response"] = (
                     (qr.expected_response or "")[:200]
                 )

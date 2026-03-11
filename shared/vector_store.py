@@ -187,6 +187,43 @@ class ChromaVectorStore:
             for doc, _ in self.similarity_search_with_score(query, k, filter)
         ]
 
+    def get_documents_by_ids(
+        self,
+        doc_ids: List[str],
+    ) -> Dict[str, str]:
+        """
+        Recupera contenido de documentos por sus doc_id (metadata).
+
+        Usa la API nativa de ChromaDB (collection.get con filtro where).
+        Retorna {doc_id: page_content} solo para docs encontrados.
+        """
+        if not doc_ids:
+            return {}
+
+        try:
+            collection = self._client.get_collection(self.collection_name)
+
+            # ChromaDB $in filter sobre metadata
+            results = collection.get(
+                where={"doc_id": {"$in": doc_ids}},
+                include=["documents", "metadatas"],
+            )
+
+            output: Dict[str, str] = {}
+            if results and results["ids"]:
+                for i, _chroma_id in enumerate(results["ids"]):
+                    metadata = results["metadatas"][i] if results["metadatas"] else {}
+                    content = results["documents"][i] if results["documents"] else ""
+                    did = metadata.get("doc_id", "")
+                    if did and content:
+                        output[did] = content
+
+            return output
+
+        except Exception as e:
+            logger.error(f"Error en get_documents_by_ids: {e}")
+            return {}
+
     def delete_all_documents(self) -> None:
         """
         Limpia la coleccion eliminandola y recreandola.

@@ -492,9 +492,14 @@ class MTEBEvaluator:
 
         n_docs = len(documents)
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
-            logger.info(
+            concurrent = self.config.infra.nim_max_concurrent
+            avg_latency_s = 2.0  # Estimacion conservadora por llamada LLM
+            est_minutes = (n_docs / max(concurrent, 1)) * avg_latency_s / 60
+            logger.warning(
                 f"  LIGHT_RAG: indexacion hara ~{n_docs} llamadas LLM "
-                f"para extraccion de tripletas (concurrencia={self.config.infra.nim_max_concurrent})"
+                f"para extraccion de tripletas. "
+                f"Estimacion: ~{est_minutes:.0f} min "
+                f"({n_docs} docs, {concurrent} concurrentes, ~{avg_latency_s:.0f}s/llamada)"
             )
         logger.info(f"  Indexando {n_docs} documentos...")
         success = self._retriever.index_documents(
@@ -647,16 +652,14 @@ class MTEBEvaluator:
         t0 = time.time()
         retrievals: List[QueryRetrievalDetail] = []
         rerank_statuses: List[Optional[bool]] = []
-        retrieval_metadatas: List[Dict[str, Any]] = []
         for i, query in enumerate(queries):
             vector = query_vectors[i] if use_preembed else None
-            detail, reranked_ok, ret_meta = self._execute_retrieval(
+            detail, reranked_ok = self._execute_retrieval(
                 query.query_text, query.relevant_doc_ids,
                 query_vector=vector,
             )
             retrievals.append(detail)
             rerank_statuses.append(reranked_ok)
-            retrieval_metadatas.append(ret_meta)
         logger.info(f"  Retrieval completado en {time.time() - t0:.1f}s")
         if self._reranker:
             if self._rerank_failures > 0:
@@ -702,9 +705,8 @@ class MTEBEvaluator:
 
         # --- Ensamblar resultados ---
         results: List[QueryEvaluationResult] = []
-        for query, retrieval, gm, reranked_status, ret_meta in zip(
+        for query, retrieval, gm, reranked_status in zip(
             queries, retrievals, gen_metrics_results, rerank_statuses,
-            retrieval_metadatas,
         ):
             # FIX DT-7: propagar estado de rerank al metadata para diagnostico
             qr_metadata: Dict[str, Any] = {}
@@ -714,9 +716,6 @@ class MTEBEvaluator:
             qt = query.metadata.get("question_type", "")
             if qt:
                 qr_metadata["question_type"] = qt
-            # Propagar metadata de retrieval (LIGHT_RAG: graph stats, keywords)
-            if ret_meta:
-                qr_metadata["retrieval_meta"] = ret_meta
 
             if gm is not None:
                 results.append(QueryEvaluationResult(
@@ -830,7 +829,7 @@ class MTEBEvaluator:
     def _execute_retrieval(
         self, query_text: str, expected_doc_ids: List[str],
         query_vector: Optional[List[float]] = None,
-    ) -> Tuple[QueryRetrievalDetail, Optional[bool], Dict[str, Any]]:
+    ) -> Tuple[QueryRetrievalDetail, Optional[bool]]:
         """
         Ejecuta retrieval + reranking opcional.
 
@@ -846,16 +845,16 @@ class MTEBEvaluator:
         Sin reranker: ambos flujos usan los mismos docs (RETRIEVAL_K).
 
         Returns:
-            Tupla (QueryRetrievalDetail, reranked_status, retrieval_metadata):
+            Tupla (QueryRetrievalDetail, reranked_status):
               - reranked_status: None si no hay reranker, True si rerank OK,
                 False si fallback sin rerank.
-              - retrieval_metadata: metadata del RetrievalResult (LIGHT_RAG info, etc.)
+              Retrieval metadata viaja en QueryRetrievalDetail.retrieval_metadata.
         """
         if self._retriever is None:
             return QueryRetrievalDetail(
                 retrieved_doc_ids=[], retrieved_contents=[],
                 retrieval_scores=[], expected_doc_ids=expected_doc_ids,
-            ), None, {}
+            ), None
 
         try:
             retrieval_k = self.config.retrieval.retrieval_k
@@ -905,7 +904,8 @@ class MTEBEvaluator:
                     # FIX DT-5: almacenar IDs de todos los candidatos pre-rerank
                     # para trazabilidad post-hoc (solo IDs, ~3KB/query)
                     pre_rerank_candidate_ids=full_result.doc_ids,
-                ), reranked_ok, full_result.metadata
+                    retrieval_metadata=full_result.metadata,
+                ), reranked_ok
             else:
                 # Sin reranker: retrieval_k docs para metricas y generacion
                 result = _do_retrieve(retrieval_k)
@@ -916,14 +916,15 @@ class MTEBEvaluator:
                     retrieval_scores=result.scores,
                     expected_doc_ids=expected_doc_ids,
                     retrieval_time_ms=result.retrieval_time_ms,
-                ), None, result.metadata
+                    retrieval_metadata=result.metadata,
+                ), None
 
         except Exception as e:
             logger.warning(f"Error retrieval: {e}")
             return QueryRetrievalDetail(
                 retrieved_doc_ids=[], retrieved_contents=[],
                 retrieval_scores=[], expected_doc_ids=expected_doc_ids,
-            ), None, {}
+            ), None
 
     # -----------------------------------------------------------------
     # GENERACION (async)

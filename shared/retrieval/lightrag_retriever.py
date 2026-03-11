@@ -302,7 +302,28 @@ class LightRAGRetriever(BaseRetriever):
                 vector_docs[doc_id] = score / max_vector_score
                 vector_contents[doc_id] = content
 
-        # Paso 5: Fusion — merge todos los doc_ids
+        # Paso 5: Recuperar contenido de graph-only docs desde ChromaDB.
+        # El grafo puede descubrir docs que el vector search no retorno.
+        # En vez de descartarlos, hacemos lookup de su contenido real.
+        graph_only_ids = [
+            did for did in graph_docs if did not in vector_contents
+        ]
+        graph_resolved = 0
+        graph_unresolved = 0
+        if graph_only_ids and self._vector_retriever._vector_store:
+            looked_up = (
+                self._vector_retriever._vector_store.get_documents_by_ids(
+                    graph_only_ids
+                )
+            )
+            for did, content in looked_up.items():
+                vector_contents[did] = content
+                graph_resolved += 1
+            graph_unresolved = len(graph_only_ids) - graph_resolved
+        else:
+            graph_unresolved = len(graph_only_ids)
+
+        # Paso 6: Fusion — merge todos los doc_ids que tienen contenido
         all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
         fused_scores: List[Tuple[str, float]] = []
 
@@ -312,25 +333,18 @@ class LightRAGRetriever(BaseRetriever):
             fused = self._vector_weight * v_score + self._graph_weight * g_score
             fused_scores.append((doc_id, fused))
 
-        # Ordenar por score fusionado
         fused_scores.sort(key=lambda x: x[1], reverse=True)
 
-        # Paso 6: Construir resultado
-        # Solo incluir docs que tienen contenido real (del vector store).
-        # Docs graph-only (sin contenido) se usan solo para boost de score
-        # de docs que SI estan en vector_contents via score fusion.
+        # Paso 7: Construir resultado (solo docs con contenido)
         final_ids = []
         final_contents = []
         final_scores = []
-        graph_only_count = 0
 
         for doc_id, score in fused_scores:
             if doc_id in vector_contents:
                 final_ids.append(doc_id)
                 final_contents.append(vector_contents[doc_id])
                 final_scores.append(score)
-            else:
-                graph_only_count += 1
 
             if len(final_ids) >= top_k:
                 break
@@ -343,7 +357,9 @@ class LightRAGRetriever(BaseRetriever):
             retrieval_time_ms=0.0,  # Se actualiza en el caller
             strategy_used=RetrievalStrategy.LIGHT_RAG,
             metadata={
-                "graph_only_candidates": graph_only_count,
+                "graph_only_candidates": len(graph_only_ids),
+                "graph_resolved": graph_resolved,
+                "graph_unresolved": graph_unresolved,
                 "query_keywords": {
                     "low": low_level,
                     "high": high_level,
@@ -353,11 +369,12 @@ class LightRAGRetriever(BaseRetriever):
             },
         )
 
-        if graph_only_count > 0:
+        if graph_only_ids:
             logger.debug(
-                f"LightRAG fusion: {graph_only_count} graph-only docs "
-                f"(sin contenido, excluidos del resultado). "
-                f"Retornando {len(final_ids)} docs con contenido."
+                f"LightRAG fusion: {len(graph_only_ids)} graph-only docs, "
+                f"{graph_resolved} recuperados via lookup, "
+                f"{graph_unresolved} sin contenido (excluidos). "
+                f"Retornando {len(final_ids)} docs."
             )
 
         return result
