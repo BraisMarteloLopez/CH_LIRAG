@@ -1222,6 +1222,7 @@ class MTEBEvaluator:
             config_snapshot["kg_graph_weight"] = self.config.retrieval.kg_graph_weight
             config_snapshot["kg_vector_weight"] = self.config.retrieval.kg_vector_weight
             config_snapshot["max_graph_expansion"] = self.config.retrieval.max_graph_expansion
+            config_snapshot["kg_cache_dir"] = self.config.retrieval.kg_cache_dir or None
 
         return EvaluationRun(
             run_id=run_id,

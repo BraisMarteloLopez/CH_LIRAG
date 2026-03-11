@@ -303,6 +303,11 @@ class KnowledgeGraph:
         Usa indice invertido por token (DTm-30) en lugar de scan completo.
         Complejidad: O(tokens_keyword × matches) en vez de O(entidades × keywords).
 
+        Nota: La busqueda es por token (word-level), no por substring.
+        El keyword "new york" se tokeniza en ["new", "york"] y cada token
+        se busca independientemente. Esto difiere del substring matching
+        original y puede afectar recall en nombres compuestos.
+
         Args:
             keywords: Temas/keywords de alto nivel.
             max_docs: Numero maximo de doc_ids a devolver.
@@ -495,10 +500,17 @@ class KnowledgeGraph:
         data = self.to_dict()
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
+        size_mb = path.stat().st_size / (1024 * 1024)
         logger.info(
             f"KnowledgeGraph persistido en {path} "
-            f"({self.num_entities} entidades, {self.num_relations} relaciones)"
+            f"({self.num_entities} entidades, {self.num_relations} relaciones, "
+            f"{size_mb:.1f} MB)"
         )
+        if size_mb > 100:
+            logger.warning(
+                f"KG cache file grande: {size_mb:.1f} MB. "
+                f"Considerar reducir kg_max_entities o el corpus."
+            )
 
     @classmethod
     def load(cls, path: Path) -> "KnowledgeGraph":

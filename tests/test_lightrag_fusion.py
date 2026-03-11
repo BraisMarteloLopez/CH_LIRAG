@@ -294,3 +294,15 @@ def test_corpus_fingerprint_changes_with_content():
     docs_v2 = [{"doc_id": "d1", "content": "version 2"}]
     assert LightRAGRetriever._corpus_fingerprint(docs_v1) != \
            LightRAGRetriever._corpus_fingerprint(docs_v2)
+
+
+def test_corpus_fingerprint_changes_with_max_text_chars():
+    """Fingerprint cambia si max_text_chars difiere (DTm-34 caveat)."""
+    docs = [{"doc_id": "d1", "content": "some content"}]
+    fp_default = LightRAGRetriever._corpus_fingerprint(docs)
+    fp_3000 = LightRAGRetriever._corpus_fingerprint(docs, max_text_chars=3000)
+    fp_5000 = LightRAGRetriever._corpus_fingerprint(docs, max_text_chars=5000)
+    # Con max_text_chars=0 (default) vs con valor explícito deben diferir
+    assert fp_default != fp_3000
+    # Distintos valores deben producir fingerprints distintos
+    assert fp_3000 != fp_5000

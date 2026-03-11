@@ -78,6 +78,7 @@ class LightRAGRetriever(BaseRetriever):
         super().__init__(config)
         self._llm_service = llm_service
         self._kg_max_hops = kg_max_hops
+        self._kg_max_text_chars = kg_max_text_chars
         self._kg_max_entities = kg_max_entities
         self._graph_weight = graph_weight
         self._vector_weight = vector_weight
@@ -205,8 +206,15 @@ class LightRAGRetriever(BaseRetriever):
         )
 
     @staticmethod
-    def _corpus_fingerprint(documents: List[Dict[str, Any]]) -> str:
-        """Hash determinista del corpus para invalidar cache si cambia."""
+    def _corpus_fingerprint(
+        documents: List[Dict[str, Any]],
+        max_text_chars: int = 0,
+    ) -> str:
+        """Hash determinista del corpus para invalidar cache si cambia.
+
+        Incluye max_text_chars en el hash para que cambios en
+        KG_MAX_TEXT_CHARS invaliden el cache (el KG resultante difiere).
+        """
         h = hashlib.sha256()
         for doc in sorted(documents, key=lambda d: d.get("doc_id", "")):
             h.update(doc.get("doc_id", "").encode())
@@ -214,6 +222,9 @@ class LightRAGRetriever(BaseRetriever):
             # Solo primeros 200 chars por doc para que el hash sea rapido
             h.update(content[:200].encode())
         h.update(str(len(documents)).encode())
+        # max_text_chars afecta cuanto texto ve el LLM para extraccion
+        if max_text_chars:
+            h.update(f"mtc={max_text_chars}".encode())
         return h.hexdigest()[:16]
 
     def _resolve_cache_path(
@@ -222,7 +233,9 @@ class LightRAGRetriever(BaseRetriever):
         """Determina la ruta del cache del KG, o None si no hay cache dir."""
         if not self._kg_cache_dir:
             return None
-        fingerprint = self._corpus_fingerprint(documents)
+        fingerprint = self._corpus_fingerprint(
+            documents, max_text_chars=self._kg_max_text_chars,
+        )
         return self._kg_cache_dir / f"kg_cache_{fingerprint}.json"
 
     def retrieve(
