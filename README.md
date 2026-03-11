@@ -195,6 +195,7 @@ RERANKER_ENABLED=false
 RERANKER_BASE_URL=http://<nim-reranker-host>:9000/v1
 RERANKER_MODEL_NAME=nvidia/llama-3.2-nv-rerankqa-1b-v2
 RERANKER_TOP_N=5
+RERANKER_FETCH_K=0                    # Candidatos para reranker (0 = top_n * 3)
 
 # Dataset
 MTEB_DATASET_NAME=hotpotqa
@@ -257,4 +258,4 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-32 | `random.seed()` global en `evaluator.py:run()`: muta estado global del modulo `random`. DEV_MODE usa `random.Random(seed)` (instancia aislada) correctamente, pero el flujo estandar no. Contamina RNG de librerias de terceros. | Baja | Abierto |
 | DTm-33 | Fallos silenciosos en extraccion de tripletas: `extract_from_doc_async()` (`triplet_extractor.py`) devuelve `([], [])` en excepcion con solo un `logger.warning`. `get_stats()` no reporta cuantos documentos fallaron. Fraccion del corpus puede quedar sin representacion en KG sin visibilidad. | Media | Abierto |
 | DTm-34 | Persistencia del Knowledge Graph entre runs via `KG_CACHE_DIR`. Serializa/deserializa el grafo completo (entidades, relaciones, indices, NetworkX) como JSON. Cache invalidado automaticamente por fingerprint del corpus. | Alta | **Resuelto** |
-| DTm-35 | `pre_fusion_k` reutilizado con semantica incorrecta para el reranker en `evaluator.py:_execute_retrieval()`. El parametro define candidatos pre-RRF por canal, pero se usa como total de candidatos para el reranker — semantica distinta. Relacionado con DTm-24 (naming ambiguo) pero con impacto funcional directo. | Media | Abierto |
+| DTm-35 | `pre_fusion_k` reutilizado con semantica incorrecta para el reranker en `evaluator.py:_execute_retrieval()`. El parametro define candidatos pre-RRF por canal, pero se usa como total de candidatos para el reranker — semantica distinta. Relacionado con DTm-24 (naming ambiguo) pero con impacto funcional directo. | Media | **Resuelto** |
