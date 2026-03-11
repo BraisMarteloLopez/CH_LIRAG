@@ -356,6 +356,7 @@ class HybridRetriever(BaseRetriever):
                         break
             contents.append(content)
 
+            # 0.0 para docs que solo aparecen en el otro canal (BM25/vector).
             per_doc_vector.append(vector_scores_map.get(doc_id, 0.0))
             per_doc_bm25.append(bm25_scores_map.get(doc_id, 0.0))
 

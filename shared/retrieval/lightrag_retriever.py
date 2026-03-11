@@ -348,6 +348,7 @@ class LightRAGRetriever(BaseRetriever):
             doc_ids=final_ids,
             contents=final_contents,
             scores=final_scores,
+            # 0.0 para docs que provienen solo del grafo (sin similarity score).
             vector_scores=[vector_docs.get(d, 0.0) for d in final_ids],
             retrieval_time_ms=0.0,  # Se actualiza en el caller
             strategy_used=RetrievalStrategy.LIGHT_RAG,

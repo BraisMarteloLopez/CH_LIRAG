@@ -261,6 +261,7 @@ class HybridPlusRetriever(BaseRetriever):
         result.contents.extend(expanded_contents)
         result.scores.extend(expanded_scores)
 
+        # Docs expandidos via entity linking no tienen score original -> 0.0.
         if result.vector_scores:
             result.vector_scores.extend([0.0] * len(expanded_ids))
         if result.bm25_scores:

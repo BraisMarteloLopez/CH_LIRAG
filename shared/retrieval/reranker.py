@@ -116,6 +116,7 @@ class CrossEncoderReranker:
                 new_scores.append(
                     doc.metadata.get("relevance_score", 0.0)
                 )
+                # 0.0 si el doc no tenia vector_score original (e.g. graph-only).
                 new_vector_scores.append(orig_vector_scores.get(did, 0.0))
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
