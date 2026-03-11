@@ -54,6 +54,10 @@ class LightRAGRetriever(BaseRetriever):
     Sin NetworkX: fallback a SimpleVectorRetriever puro.
     """
 
+    # Factor de over-fetch para graph traversal: pedimos N * top_k
+    # candidatos al grafo para tener margen tras la fusion con vector.
+    _GRAPH_OVERFETCH_FACTOR = 2
+
     def __init__(
         self,
         config: RetrievalConfig,
@@ -263,7 +267,7 @@ class LightRAGRetriever(BaseRetriever):
             entity_results = self._kg.query_entities(
                 low_level,
                 max_hops=self._kg_max_hops,
-                max_docs=top_k * 2,
+                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
             )
             for doc_id, score in entity_results:
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
@@ -272,7 +276,7 @@ class LightRAGRetriever(BaseRetriever):
         if high_level:
             theme_results = self._kg.query_by_keywords(
                 high_level,
-                max_docs=top_k * 2,
+                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
             )
             for doc_id, score in theme_results:
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
