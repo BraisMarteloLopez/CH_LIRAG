@@ -70,6 +70,7 @@ class RetrievalConfig:
     # Knowledge graph (LIGHT_RAG)
     kg_max_hops: int = 2
     kg_max_text_chars: int = 3000
+    kg_max_entities: int = 0
     kg_graph_weight: float = 0.3
     kg_vector_weight: float = 0.7
 
@@ -91,6 +92,7 @@ class RetrievalConfig:
             max_graph_expansion=_env_int("MAX_GRAPH_EXPANSION", 30),
             kg_max_hops=_env_int("KG_MAX_HOPS", 2),
             kg_max_text_chars=_env_int("KG_MAX_TEXT_CHARS", 3000),
+            kg_max_entities=_env_int("KG_MAX_ENTITIES", 0),
             kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),
             kg_vector_weight=_env_float("KG_VECTOR_WEIGHT", 0.7),
         )

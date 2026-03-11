@@ -1210,6 +1210,7 @@ class MTEBEvaluator:
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
             config_snapshot["kg_max_hops"] = self.config.retrieval.kg_max_hops
             config_snapshot["kg_max_text_chars"] = self.config.retrieval.kg_max_text_chars
+            config_snapshot["kg_max_entities"] = self.config.retrieval.kg_max_entities
             config_snapshot["kg_graph_weight"] = self.config.retrieval.kg_graph_weight
             config_snapshot["kg_vector_weight"] = self.config.retrieval.kg_vector_weight
             config_snapshot["max_graph_expansion"] = self.config.retrieval.max_graph_expansion

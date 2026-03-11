@@ -78,6 +78,7 @@ def get_retriever(
             embedding_batch_size=embedding_batch_size,
             kg_max_hops=config.kg_max_hops,
             kg_max_text_chars=config.kg_max_text_chars,
+            kg_max_entities=config.kg_max_entities,
             graph_weight=config.kg_graph_weight,
             vector_weight=config.kg_vector_weight,
         )

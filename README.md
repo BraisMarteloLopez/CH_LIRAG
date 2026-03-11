@@ -76,6 +76,13 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 
 **Fallback:** Sin `networkx` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
 
+**Hardening (produccion):**
+- Batching de coroutines en chunks de 500 docs para evitar presion de memoria en `extract_batch_async()` (DTm-22)
+- Cap de entidades configurable (`KG_MAX_ENTITIES`, default 50K) para limitar crecimiento del grafo (DTm-21)
+- Deduplicacion de relaciones en aristas (misma relacion + mismo doc no se duplica)
+- Validacion post-parse del output LLM: entity types normalizados a enum (`PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER`), nombres >= 2 chars, descriptions truncadas a 200 chars (DTm-16)
+- Estimacion de memoria en `get_stats()` para observabilidad
+
 **Optimizacion:** `pre_extract_query_keywords()` permite pre-extraer keywords de todas las queries en batch antes del loop de retrieval, analogo al pre-embed de vectores.
 
 ## Pipeline de evaluacion
@@ -180,6 +187,7 @@ KG_MAX_HOPS=2                         # Profundidad maxima BFS en graph traversa
 KG_MAX_TEXT_CHARS=3000                 # Max chars de documento enviados al LLM para extraccion
 KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
 KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
+KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 50K)
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -225,16 +233,16 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 
 ## Deuda tecnica abierta
 
-| ID | Descripcion | Prioridad |
-|---|---|---|
-| DTm-12 | Sesgo LLM-judge en faithfulness para respuestas cortas (score 0.0-0.2 con F1=1.0). F1 es primaria; faithfulness solo informativa. | Baja |
-| DTm-13 | No-determinismo HNSW: ChromaDB no soporta `hnsw:random_seed`. Recall@K varia +/-0.02 entre runs. | Baja |
-| DTm-14 | Duplicacion contenido en memoria: `retrieved_contents` + `generation_contents` (~1.5GB con 7K queries). | Baja |
-| DTm-15 | ETL HotpotQA no asigna `answer_type="label"` a queries comparison (yes/no). Sin impacto numerico (F1=Accuracy para tokens unicos). | Baja |
-| DTm-16 | Nemotron-3-nano responde "yes" a preguntas extractivas (~10%). System prompt causa sobregeneralizacion. | Media |
-| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja |
-| DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja |
-| DTm-21 | KG in-memory sin cap de memoria. NetworkX + indices invertidos crecen sin limite. Con corpus completo (~66K docs) puede estresar maquinas <32GB RAM. Considerar pruning o spill-to-disk. | Media |
-| DTm-22 | `extract_batch_async()` crea todos los coroutines a la vez (`asyncio.gather(*tasks)` para N docs). El semaforo solo limita HTTP, no la creacion de coroutines. Con corpus grande, presion de memoria adicional. | Baja |
-| DTm-23 | Tests LIGHT_RAG parciales: `test_group_a_b_review.py` cubre `get_documents_by_ids` y propagacion de `vector_scores` en reranker. Faltan tests unitarios para `KnowledgeGraph`, `TripletExtractor` y `_fuse_with_graph`. | Alta |
-| DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja |
+| ID | Descripcion | Prioridad | Estado |
+|---|---|---|---|
+| DTm-12 | Sesgo LLM-judge en faithfulness para respuestas cortas (score 0.0-0.2 con F1=1.0). F1 es primaria; faithfulness solo informativa. | Baja | Abierto |
+| DTm-13 | No-determinismo HNSW: ChromaDB no soporta `hnsw:random_seed`. Recall@K varia +/-0.02 entre runs. | Baja | Abierto |
+| DTm-14 | Duplicacion contenido en memoria: `retrieved_contents` + `generation_contents` (~1.5GB con 7K queries). | Baja | Abierto |
+| DTm-15 | ETL HotpotQA no asigna `answer_type="label"` a queries comparison (yes/no). Sin impacto numerico (F1=Accuracy para tokens unicos). | Baja | Abierto |
+| DTm-16 | Validacion output LLM en triplet extraction: entity types normalizados a enum, nombres >= 2 chars, descriptions truncadas a 200 chars. | Media | **Resuelto** |
+| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja | Abierto |
+| DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja | Abierto |
+| DTm-21 | KG cap de memoria: `max_entities` configurable (default 50K), dedup de relaciones, estimacion de memoria en `get_stats()`. | Media | **Resuelto** |
+| DTm-22 | Batching de coroutines en `extract_batch_async()`: chunks de 500 docs para limitar presion de memoria. | Baja | **Resuelto** |
+| DTm-23 | Tests LIGHT_RAG: 63 tests unitarios cubriendo `KnowledgeGraph`, `TripletExtractor`, `_fuse_with_graph`, validacion y hardening. | Alta | **Resuelto** |
+| DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja | Abierto |
