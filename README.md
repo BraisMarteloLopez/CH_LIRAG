@@ -1,4 +1,4 @@
-# RAG_P v4.0
+# CH_LIRAG
 
 Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de pipelines de recuperacion y generacion sobre datasets MTEB/BeIR (HotpotQA actualmente) con infraestructura NVIDIA NIM.
 
@@ -7,7 +7,7 @@ Soporta 3 estrategias de retrieval: busqueda vectorial pura, hibrida BM25+Vector
 ## Arquitectura
 
 ```
-RAG_P/
+CH_LIRAG/
 ├── shared/                          # Libreria compartida
 │   ├── types.py                     # NormalizedQuery, LoadedDataset, EvaluationRun, Protocols
 │   ├── metrics.py                   # F1, ExactMatch, Accuracy, Faithfulness (LLM-judge)
@@ -172,8 +172,8 @@ RETRIEVAL_STRATEGY=SIMPLE_VECTOR      # SIMPLE_VECTOR | HYBRID_PLUS | LIGHT_RAG
 RETRIEVAL_K=20
 RETRIEVAL_PRE_FUSION_K=150
 RETRIEVAL_RRF_K=60
-RETRIEVAL_BM25_WEIGHT=0.5
-RETRIEVAL_VECTOR_WEIGHT=0.5
+RETRIEVAL_BM25_WEIGHT=0.3
+RETRIEVAL_VECTOR_WEIGHT=0.7
 
 # Knowledge Graph (solo LIGHT_RAG)
 KG_MAX_HOPS=2                         # Profundidad maxima BFS en graph traversal
@@ -236,5 +236,5 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja |
 | DTm-21 | KG in-memory sin cap de memoria. NetworkX + indices invertidos crecen sin limite. Con corpus completo (~66K docs) puede estresar maquinas <32GB RAM. Considerar pruning o spill-to-disk. | Media |
 | DTm-22 | `extract_batch_async()` crea todos los coroutines a la vez (`asyncio.gather(*tasks)` para N docs). El semaforo solo limita HTTP, no la creacion de coroutines. Con corpus grande, presion de memoria adicional. | Baja |
-| DTm-23 | Zero tests para LIGHT_RAG: no existen tests para `LightRAGRetriever`, `KnowledgeGraph`, ni `TripletExtractor`. | Alta |
+| DTm-23 | Tests LIGHT_RAG parciales: `test_group_a_b_review.py` cubre `get_documents_by_ids` y propagacion de `vector_scores` en reranker. Faltan tests unitarios para `KnowledgeGraph`, `TripletExtractor` y `_fuse_with_graph`. | Alta |
 | DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja |
