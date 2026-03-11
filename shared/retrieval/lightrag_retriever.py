@@ -309,19 +309,14 @@ class LightRAGRetriever(BaseRetriever):
             did for did in graph_docs if did not in vector_contents
         ]
         graph_resolved = 0
-        graph_unresolved = 0
-        if graph_only_ids and self._vector_retriever._vector_store:
-            looked_up = (
-                self._vector_retriever._vector_store.get_documents_by_ids(
-                    graph_only_ids
-                )
+        if graph_only_ids:
+            looked_up = self._vector_retriever.get_documents_by_ids(
+                graph_only_ids
             )
             for did, content in looked_up.items():
                 vector_contents[did] = content
                 graph_resolved += 1
-            graph_unresolved = len(graph_only_ids) - graph_resolved
-        else:
-            graph_unresolved = len(graph_only_ids)
+        graph_unresolved = len(graph_only_ids) - graph_resolved
 
         # Paso 6: Fusion — merge todos los doc_ids que tienen contenido
         all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())

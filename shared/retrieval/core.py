@@ -328,6 +328,15 @@ class SimpleVectorRetriever(BaseRetriever):
                 metadata={"error": str(e)},
             )
 
+    def get_documents_by_ids(self, doc_ids: List[str]) -> Dict[str, str]:
+        """Recupera contenido de docs por doc_id desde el vector store.
+
+        Retorna {doc_id: content}. Vacio si store no inicializado.
+        """
+        if not self._vector_store or not doc_ids:
+            return {}
+        return self._vector_store.get_documents_by_ids(doc_ids)
+
     def clear_index(self) -> None:
         if self._vector_store:
             self._vector_store.delete_all_documents()
