@@ -234,3 +234,7 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-16 | Nemotron-3-nano responde "yes" a preguntas extractivas (~10%). System prompt causa sobregeneralizacion. | Media |
 | DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja |
 | DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja |
+| DTm-21 | KG in-memory sin cap de memoria. NetworkX + indices invertidos crecen sin limite. Con corpus completo (~66K docs) puede estresar maquinas <32GB RAM. Considerar pruning o spill-to-disk. | Media |
+| DTm-22 | `extract_batch_async()` crea todos los coroutines a la vez (`asyncio.gather(*tasks)` para N docs). El semaforo solo limita HTTP, no la creacion de coroutines. Con corpus grande, presion de memoria adicional. | Baja |
+| DTm-23 | Zero tests para LIGHT_RAG: no existen tests para `LightRAGRetriever`, `KnowledgeGraph`, ni `TripletExtractor`. | Alta |
+| DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja |

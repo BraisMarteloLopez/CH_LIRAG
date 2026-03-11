@@ -490,7 +490,13 @@ class MTEBEvaluator:
             for doc_id, doc in corpus.items()
         ]
 
-        logger.info(f"  Indexando {len(documents)} documentos...")
+        n_docs = len(documents)
+        if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
+            logger.info(
+                f"  LIGHT_RAG: indexacion hara ~{n_docs} llamadas LLM "
+                f"para extraccion de tripletas (concurrencia={self.config.infra.nim_max_concurrent})"
+            )
+        logger.info(f"  Indexando {n_docs} documentos...")
         success = self._retriever.index_documents(
             documents, collection_name=collection_name
         )
@@ -619,6 +625,19 @@ class MTEBEvaluator:
                 "Usando retrieval con embedding por query (lento)."
             )
 
+        # --- Fase 0b: Pre-extract query keywords (LIGHT_RAG) ---
+        if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
+            from shared.retrieval.lightrag_retriever import LightRAGRetriever
+            if isinstance(self._retriever, LightRAGRetriever):
+                logger.info(
+                    f"  Pre-extrayendo keywords de {n} queries (batch LLM)..."
+                )
+                t_kw = time.time()
+                self._retriever.pre_extract_query_keywords(query_texts)
+                logger.info(
+                    f"  Keywords pre-extraidas en {time.time() - t_kw:.1f}s"
+                )
+
         # --- Fase 1: Retrieval (sync, local con pre-embed) ---
         mode_label = "pre-embed" if use_preembed else "per-query"
         logger.info(
@@ -628,14 +647,16 @@ class MTEBEvaluator:
         t0 = time.time()
         retrievals: List[QueryRetrievalDetail] = []
         rerank_statuses: List[Optional[bool]] = []
+        retrieval_metadatas: List[Dict[str, Any]] = []
         for i, query in enumerate(queries):
             vector = query_vectors[i] if use_preembed else None
-            detail, reranked_ok = self._execute_retrieval(
+            detail, reranked_ok, ret_meta = self._execute_retrieval(
                 query.query_text, query.relevant_doc_ids,
                 query_vector=vector,
             )
             retrievals.append(detail)
             rerank_statuses.append(reranked_ok)
+            retrieval_metadatas.append(ret_meta)
         logger.info(f"  Retrieval completado en {time.time() - t0:.1f}s")
         if self._reranker:
             if self._rerank_failures > 0:
@@ -681,8 +702,9 @@ class MTEBEvaluator:
 
         # --- Ensamblar resultados ---
         results: List[QueryEvaluationResult] = []
-        for query, retrieval, gm, reranked_status in zip(
-            queries, retrievals, gen_metrics_results, rerank_statuses
+        for query, retrieval, gm, reranked_status, ret_meta in zip(
+            queries, retrievals, gen_metrics_results, rerank_statuses,
+            retrieval_metadatas,
         ):
             # FIX DT-7: propagar estado de rerank al metadata para diagnostico
             qr_metadata: Dict[str, Any] = {}
@@ -692,6 +714,9 @@ class MTEBEvaluator:
             qt = query.metadata.get("question_type", "")
             if qt:
                 qr_metadata["question_type"] = qt
+            # Propagar metadata de retrieval (LIGHT_RAG: graph stats, keywords)
+            if ret_meta:
+                qr_metadata["retrieval_meta"] = ret_meta
 
             if gm is not None:
                 results.append(QueryEvaluationResult(
@@ -805,7 +830,7 @@ class MTEBEvaluator:
     def _execute_retrieval(
         self, query_text: str, expected_doc_ids: List[str],
         query_vector: Optional[List[float]] = None,
-    ) -> Tuple[QueryRetrievalDetail, Optional[bool]]:
+    ) -> Tuple[QueryRetrievalDetail, Optional[bool], Dict[str, Any]]:
         """
         Ejecuta retrieval + reranking opcional.
 
@@ -821,15 +846,16 @@ class MTEBEvaluator:
         Sin reranker: ambos flujos usan los mismos docs (RETRIEVAL_K).
 
         Returns:
-            Tupla (QueryRetrievalDetail, reranked_status):
+            Tupla (QueryRetrievalDetail, reranked_status, retrieval_metadata):
               - reranked_status: None si no hay reranker, True si rerank OK,
                 False si fallback sin rerank.
+              - retrieval_metadata: metadata del RetrievalResult (LIGHT_RAG info, etc.)
         """
         if self._retriever is None:
             return QueryRetrievalDetail(
                 retrieved_doc_ids=[], retrieved_contents=[],
                 retrieval_scores=[], expected_doc_ids=expected_doc_ids,
-            ), None
+            ), None, {}
 
         try:
             retrieval_k = self.config.retrieval.retrieval_k
@@ -879,7 +905,7 @@ class MTEBEvaluator:
                     # FIX DT-5: almacenar IDs de todos los candidatos pre-rerank
                     # para trazabilidad post-hoc (solo IDs, ~3KB/query)
                     pre_rerank_candidate_ids=full_result.doc_ids,
-                ), reranked_ok
+                ), reranked_ok, full_result.metadata
             else:
                 # Sin reranker: retrieval_k docs para metricas y generacion
                 result = _do_retrieve(retrieval_k)
@@ -890,14 +916,14 @@ class MTEBEvaluator:
                     retrieval_scores=result.scores,
                     expected_doc_ids=expected_doc_ids,
                     retrieval_time_ms=result.retrieval_time_ms,
-                ), None
+                ), None, result.metadata
 
         except Exception as e:
             logger.warning(f"Error retrieval: {e}")
             return QueryRetrievalDetail(
                 retrieved_doc_ids=[], retrieved_contents=[],
                 retrieval_scores=[], expected_doc_ids=expected_doc_ids,
-            ), None
+            ), None, {}
 
     # -----------------------------------------------------------------
     # GENERACION (async)
@@ -1180,6 +1206,12 @@ class MTEBEvaluator:
         if self.config.dev_mode:
             config_snapshot["dev_queries"] = self.config.dev_queries
             config_snapshot["dev_corpus_size"] = self.config.dev_corpus_size
+        if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
+            config_snapshot["kg_max_hops"] = self.config.retrieval.kg_max_hops
+            config_snapshot["kg_max_text_chars"] = self.config.retrieval.kg_max_text_chars
+            config_snapshot["kg_graph_weight"] = self.config.retrieval.kg_graph_weight
+            config_snapshot["kg_vector_weight"] = self.config.retrieval.kg_vector_weight
+            config_snapshot["max_graph_expansion"] = self.config.retrieval.max_graph_expansion
 
         return EvaluationRun(
             run_id=run_id,

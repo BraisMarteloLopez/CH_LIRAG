@@ -194,6 +194,18 @@ class RunExporter:
         # Secondary metric columns
         for sk in sorted_secondary_keys:
             fieldnames.append(f"sec_{sk}")
+        # LIGHT_RAG graph diagnostics
+        has_lightrag = any(
+            qr.metadata.get("retrieval_meta", {}).get("graph_candidates")
+            for qr in run.query_results
+            if qr.metadata
+        )
+        if has_lightrag:
+            fieldnames.extend([
+                "graph_candidates",
+                "vector_candidates",
+                "graph_only_candidates",
+            ])
         fieldnames.extend([
             "expected_response",
             "generated_response",
@@ -248,6 +260,11 @@ class RunExporter:
                     row[f"sec_{sk}"] = round(
                         qr.secondary_metrics.get(sk, 0.0), 4
                     )
+                if has_lightrag:
+                    ret_meta = qr.metadata.get("retrieval_meta", {}) if qr.metadata else {}
+                    row["graph_candidates"] = ret_meta.get("graph_candidates", "")
+                    row["vector_candidates"] = ret_meta.get("vector_candidates", "")
+                    row["graph_only_candidates"] = ret_meta.get("graph_only_candidates", "")
                 row["expected_response"] = (
                     (qr.expected_response or "")[:200]
                 )
