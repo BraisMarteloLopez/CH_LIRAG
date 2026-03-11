@@ -101,13 +101,22 @@ class CrossEncoderReranker:
             new_doc_ids = []
             new_contents = []
             new_scores = []
+            new_vector_scores = []
+
+            # Mapear vector_scores originales por doc_id
+            orig_vector_scores: Dict[str, float] = {}
+            if retrieval_result.vector_scores:
+                for i, did in enumerate(retrieval_result.doc_ids):
+                    orig_vector_scores[did] = retrieval_result.vector_scores[i]
 
             for doc in reranked_docs[:top_n]:
-                new_doc_ids.append(doc.metadata["doc_id"])
+                did = doc.metadata["doc_id"]
+                new_doc_ids.append(did)
                 new_contents.append(doc.page_content)
                 new_scores.append(
                     doc.metadata.get("relevance_score", 0.0)
                 )
+                new_vector_scores.append(orig_vector_scores.get(did, 0.0))
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -120,6 +129,7 @@ class CrossEncoderReranker:
                 doc_ids=new_doc_ids,
                 contents=new_contents,
                 scores=new_scores,
+                vector_scores=new_vector_scores if orig_vector_scores else None,
                 retrieval_time_ms=(
                     retrieval_result.retrieval_time_ms + elapsed_ms
                 ),
@@ -141,6 +151,11 @@ class CrossEncoderReranker:
                 doc_ids=retrieval_result.doc_ids[:top_n],
                 contents=retrieval_result.contents[:top_n],
                 scores=retrieval_result.scores[:top_n],
+                vector_scores=(
+                    retrieval_result.vector_scores[:top_n]
+                    if retrieval_result.vector_scores
+                    else None
+                ),
                 retrieval_time_ms=retrieval_result.retrieval_time_ms,
                 strategy_used=retrieval_result.strategy_used,
                 metadata={
