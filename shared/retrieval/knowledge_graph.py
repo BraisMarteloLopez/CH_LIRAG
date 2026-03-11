@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -224,13 +224,13 @@ class KnowledgeGraph:
             if norm not in self._entities or not self._graph.has_node(norm):
                 continue
 
-            # BFS con distancia
+            # BFS con distancia (DTm-29: deque.popleft() en lugar de list.pop(0))
             visited: Set[str] = set()
-            queue: List[Tuple[str, int]] = [(norm, 0)]
+            queue: deque[Tuple[str, int]] = deque([(norm, 0)])
             visited.add(norm)
 
             while queue:
-                current, depth = queue.pop(0)
+                current, depth = queue.popleft()
                 if depth > max_hops:
                     continue
 
