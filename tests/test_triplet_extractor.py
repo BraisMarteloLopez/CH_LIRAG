@@ -1,17 +1,23 @@
 """
-Tests unitarios para TripletExtractor (DTm-23, Fase 1.2).
+Tests unitarios para TripletExtractor (DTm-23, Fase 1.2 + DTm-16, Fase 4).
 
 Cobertura:
   TE1. _parse_extraction_json con JSON valido.
   TE2. _parse_extraction_json con markdown code block.
   TE3. _parse_extraction_json con JSON malformado -> ([], []).
   TE4. _parse_extraction_json con campos faltantes.
-  TE5. _parse_extraction_json con entity type invalido (se acepta).
+  TE5. Entity type invalido -> normalizado a OTHER (DTm-16).
   TE6. Truncation: doc > max_text_chars se trunca.
   TE7. extract_from_doc_async: LLM lanza exception -> ([], []).
   TE8. extract_from_doc_async: texto vacio -> ([], []).
   TE9. _parse_keywords_json con JSON valido.
   TE10. _parse_keywords_json con JSON malformado -> ([], []).
+  TE11. Entity name < 2 chars rechazada (DTm-16).
+  TE12. Entity name vacio rechazada (DTm-16).
+  TE13. Entity description truncada a MAX_DESCRIPTION_CHARS (DTm-16).
+  TE14. Relation description truncada a MAX_DESCRIPTION_CHARS (DTm-16).
+  TE15. Todos los VALID_ENTITY_TYPES aceptados (DTm-16).
+  TE16. Entity type case-insensitive (DTm-16).
 """
 
 import asyncio
@@ -147,13 +153,13 @@ def test_parse_relation_without_source():
 # TE5: Entity type no-enum
 # =============================================================================
 
-def test_parse_invalid_entity_type_accepted():
-    """Entity con type arbitrario se acepta (sin constraint en parser)."""
+def test_parse_invalid_entity_type_normalized_to_other():
+    """Entity con type invalido se normaliza a OTHER (DTm-16)."""
     ext = _make_extractor()
-    raw = '{"entities": [{"name": "X", "type": "CUSTOM_TYPE"}], "relations": []}'
+    raw = '{"entities": [{"name": "SomeThing", "type": "CUSTOM_TYPE"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
-    assert entities[0].entity_type == "CUSTOM_TYPE"
+    assert entities[0].entity_type == "OTHER"
 
 
 # =============================================================================
@@ -261,3 +267,62 @@ def test_parse_keywords_malformed():
     low, high = ext._parse_keywords_json("not json")
     assert low == []
     assert high == []
+
+
+# =============================================================================
+# TE11-TE16: Validacion post-parse (DTm-16)
+# =============================================================================
+
+def test_entity_name_too_short_rejected():
+    """Entity con nombre < 2 chars se rechaza (DTm-16)."""
+    ext = _make_extractor()
+    raw = '{"entities": [{"name": "A", "type": "PERSON"}, {"name": "Bob", "type": "PERSON"}], "relations": []}'
+    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    assert len(entities) == 1
+    assert entities[0].name == "Bob"
+
+
+def test_entity_empty_name_rejected():
+    """Entity con nombre vacio se rechaza (DTm-16)."""
+    ext = _make_extractor()
+    raw = '{"entities": [{"name": "", "type": "PERSON"}, {"name": "  ", "type": "PERSON"}], "relations": []}'
+    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    assert len(entities) == 0
+
+
+def test_entity_description_truncated():
+    """Description > MAX_DESCRIPTION_CHARS se trunca (DTm-16)."""
+    ext = _make_extractor()
+    long_desc = "x" * 500
+    raw = f'{{"entities": [{{"name": "Alice", "type": "PERSON", "description": "{long_desc}"}}], "relations": []}}'
+    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    assert len(entities) == 1
+    assert len(entities[0].description) == 200
+
+
+def test_relation_description_truncated():
+    """Relation description > MAX_DESCRIPTION_CHARS se trunca (DTm-16)."""
+    ext = _make_extractor()
+    long_desc = "y" * 500
+    raw = f'{{"entities": [], "relations": [{{"source": "AA", "target": "BB", "relation": "knows", "description": "{long_desc}"}}]}}'
+    _, relations = ext._parse_extraction_json(raw, "doc1")
+    assert len(relations) == 1
+    assert len(relations[0].description) == 200
+
+
+def test_valid_entity_types_accepted():
+    """Todos los VALID_ENTITY_TYPES se aceptan sin modificar (DTm-16)."""
+    ext = _make_extractor()
+    from shared.retrieval.triplet_extractor import VALID_ENTITY_TYPES
+    for etype in VALID_ENTITY_TYPES:
+        raw = f'{{"entities": [{{"name": "Test Entity", "type": "{etype}"}}], "relations": []}}'
+        entities, _ = ext._parse_extraction_json(raw, "doc1")
+        assert entities[0].entity_type == etype
+
+
+def test_entity_type_case_insensitive():
+    """Entity type se normaliza a uppercase (DTm-16)."""
+    ext = _make_extractor()
+    raw = '{"entities": [{"name": "Alice", "type": "person"}], "relations": []}'
+    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    assert entities[0].entity_type == "PERSON"

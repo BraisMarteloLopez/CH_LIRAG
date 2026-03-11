@@ -23,6 +23,14 @@ from .knowledge_graph import KGEntity, KGRelation
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# CONSTANTES DE VALIDACION (DTm-16)
+# =============================================================================
+
+VALID_ENTITY_TYPES = {"PERSON", "ORG", "PLACE", "CONCEPT", "EVENT", "OTHER"}
+MAX_DESCRIPTION_CHARS = 200
+MIN_ENTITY_NAME_LEN = 2
+
 
 # =============================================================================
 # PROMPTS
@@ -109,22 +117,38 @@ class TripletExtractor:
 
             data = json.loads(text)
 
+            rejected = 0
             for e in data.get("entities", []):
-                if isinstance(e, dict) and e.get("name"):
-                    entities.append(KGEntity(
-                        name=e["name"],
-                        entity_type=e.get("type", "OTHER"),
-                        description=e.get("description", ""),
-                        source_doc_ids={doc_id},
-                    ))
+                if not isinstance(e, dict):
+                    continue
+                name = (e.get("name") or "").strip()
+                if not name or len(name) < MIN_ENTITY_NAME_LEN:
+                    rejected += 1
+                    continue
+                etype = (e.get("type") or "OTHER").upper()
+                if etype not in VALID_ENTITY_TYPES:
+                    etype = "OTHER"
+                desc = (e.get("description") or "")[:MAX_DESCRIPTION_CHARS]
+                entities.append(KGEntity(
+                    name=name,
+                    entity_type=etype,
+                    description=desc,
+                    source_doc_ids={doc_id},
+                ))
+
+            if rejected:
+                logger.debug(
+                    f"Doc {doc_id}: {rejected} entidades rechazadas por validacion"
+                )
 
             for r in data.get("relations", []):
                 if isinstance(r, dict) and r.get("source") and r.get("target"):
+                    rel_desc = (r.get("description") or "")[:MAX_DESCRIPTION_CHARS]
                     relations.append(KGRelation(
                         source=r["source"],
                         target=r["target"],
                         relation=r.get("relation", "related to"),
-                        description=r.get("description", ""),
+                        description=rel_desc,
                         source_doc_id=doc_id,
                     ))
 
