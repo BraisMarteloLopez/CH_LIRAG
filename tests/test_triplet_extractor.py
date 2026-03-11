@@ -39,6 +39,11 @@ def _make_extractor(mock_llm=None, max_text_chars=3000):
     ext = object.__new__(TripletExtractor)
     ext._llm = llm
     ext._max_text_chars = max_text_chars
+    ext._stats = {
+        "docs_processed": 0, "docs_success": 0, "docs_failed": 0,
+        "docs_empty_input": 0, "docs_empty_result": 0,
+        "total_entities": 0, "total_relations": 0,
+    }
     return ext
 
 
@@ -326,3 +331,71 @@ def test_entity_type_case_insensitive():
     raw = '{"entities": [{"name": "Alice", "type": "person"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
     assert entities[0].entity_type == "PERSON"
+
+
+# =============================================================================
+# TE17-TE21: Estadisticas de extraccion (DTm-33)
+# =============================================================================
+
+def test_stats_initial_zero():
+    """TE17: get_stats() devuelve contadores a cero al iniciar (DTm-33)."""
+    ext = _make_extractor()
+    stats = ext.get_stats()
+    assert all(v == 0 for v in stats.values())
+    assert "docs_failed" in stats
+    assert "docs_empty_input" in stats
+
+
+def test_stats_success_counted():
+    """TE18: Extraccion exitosa incrementa docs_success y totales (DTm-33)."""
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value='{"entities": [{"name": "Alice", "type": "PERSON"}], "relations": []}')
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    asyncio.run(ext.extract_from_doc_async("doc1", "Alice is a researcher."))
+
+    stats = ext.get_stats()
+    assert stats["docs_processed"] == 1
+    assert stats["docs_success"] == 1
+    assert stats["docs_failed"] == 0
+    assert stats["total_entities"] == 1
+
+
+def test_stats_failure_counted():
+    """TE19: Excepcion en LLM incrementa docs_failed (DTm-33)."""
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("LLM down"))
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    asyncio.run(ext.extract_from_doc_async("doc1", "Some text"))
+
+    stats = ext.get_stats()
+    assert stats["docs_processed"] == 1
+    assert stats["docs_failed"] == 1
+    assert stats["docs_success"] == 0
+
+
+def test_stats_empty_input_counted():
+    """TE20: Texto vacio incrementa docs_empty_input (DTm-33)."""
+    ext = _make_extractor()
+
+    asyncio.run(ext.extract_from_doc_async("doc1", "   "))
+
+    stats = ext.get_stats()
+    assert stats["docs_processed"] == 1
+    assert stats["docs_empty_input"] == 1
+    assert stats["docs_success"] == 0
+
+
+def test_stats_reset():
+    """TE21: reset_stats() pone todos los contadores a cero (DTm-33)."""
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value='{"entities": [{"name": "Bob", "type": "PERSON"}], "relations": []}')
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    asyncio.run(ext.extract_from_doc_async("doc1", "Bob works here."))
+    assert ext.get_stats()["docs_success"] == 1
+
+    ext.reset_stats()
+    stats = ext.get_stats()
+    assert all(v == 0 for v in stats.values())

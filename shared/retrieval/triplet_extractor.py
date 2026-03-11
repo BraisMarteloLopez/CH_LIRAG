@@ -84,6 +84,8 @@ class TripletExtractor:
     Batch processing con semaphore para concurrencia controlada.
     Coroutines se crean en chunks para evitar presion de memoria
     con corpus grandes (DTm-22).
+
+    Estadisticas de extraccion accesibles via get_stats() (DTm-33).
     """
 
     # Maximo de coroutines creadas simultaneamente en extract_batch_async.
@@ -98,6 +100,25 @@ class TripletExtractor:
     ) -> None:
         self._llm = llm_service
         self._max_text_chars = max_text_chars
+        # Estadisticas de extraccion (DTm-33)
+        self._stats: Dict[str, int] = {
+            "docs_processed": 0,
+            "docs_success": 0,
+            "docs_failed": 0,
+            "docs_empty_input": 0,
+            "docs_empty_result": 0,
+            "total_entities": 0,
+            "total_relations": 0,
+        }
+
+    def get_stats(self) -> Dict[str, int]:
+        """Devuelve estadisticas acumuladas de extraccion (DTm-33)."""
+        return dict(self._stats)
+
+    def reset_stats(self) -> None:
+        """Reinicia contadores de extraccion."""
+        for k in self._stats:
+            self._stats[k] = 0
 
     def _parse_extraction_json(
         self, raw: str, doc_id: str
@@ -169,7 +190,10 @@ class TripletExtractor:
         Returns:
             Tupla (entidades, relaciones).
         """
+        self._stats["docs_processed"] += 1
+
         if not text.strip():
+            self._stats["docs_empty_input"] += 1
             return [], []
 
         truncated = text[:self._max_text_chars]
@@ -181,8 +205,15 @@ class TripletExtractor:
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
                 max_tokens=1024,
             )
-            return self._parse_extraction_json(raw, doc_id)
+            entities, relations = self._parse_extraction_json(raw, doc_id)
+            self._stats["docs_success"] += 1
+            self._stats["total_entities"] += len(entities)
+            self._stats["total_relations"] += len(relations)
+            if not entities and not relations:
+                self._stats["docs_empty_result"] += 1
+            return entities, relations
         except Exception as e:
+            self._stats["docs_failed"] += 1
             logger.warning(f"Error extrayendo tripletas de {doc_id}: {e}")
             return [], []
 
@@ -225,10 +256,27 @@ class TripletExtractor:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         total_entities = sum(len(e) for e, _ in results.values())
         total_relations = sum(len(r) for _, r in results.values())
+        # DTm-33: reportar fallos en el log del batch
+        stats = self.get_stats()
+        failed = stats["docs_failed"]
+        empty_input = stats["docs_empty_input"]
+        empty_result = stats["docs_empty_result"]
+        fail_info = ""
+        if failed or empty_input or empty_result:
+            fail_info = (
+                f" | {failed} fallidos, {empty_input} input vacio, "
+                f"{empty_result} resultado vacio"
+            )
         logger.info(
             f"TripletExtractor: batch {len(documents)} docs en {elapsed_ms:.0f}ms. "
             f"{total_entities} entidades, {total_relations} relaciones extraidas."
+            f"{fail_info}"
         )
+        if failed:
+            logger.warning(
+                f"TripletExtractor: {failed}/{len(documents)} documentos "
+                f"fallaron en extraccion de tripletas."
+            )
 
         return results
 
