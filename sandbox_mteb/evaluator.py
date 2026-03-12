@@ -89,6 +89,7 @@ class MTEBEvaluator:
         self._metrics_calculator: Optional[MetricsCalculator] = None
         self._max_context_chars: int = 4000  # fallback por defecto
         self._rerank_failures: int = 0
+        self._strategy_mismatches: int = 0
 
     # -----------------------------------------------------------------
     # CONTEXT WINDOW DETECTION
@@ -241,8 +242,9 @@ class MTEBEvaluator:
                 corpus_ids = list(dataset.corpus.keys())
                 corpus_seed = self.config.corpus_shuffle_seed
                 if corpus_seed is not None:
-                    random.seed(corpus_seed)
-                    random.shuffle(corpus_ids)
+                    # Instancia aislada para no contaminar RNG global (DTm-32)
+                    rng_corpus = random.Random(corpus_seed)
+                    rng_corpus.shuffle(corpus_ids)
                     logger.info(f"  Corpus shuffled con seed={corpus_seed}")
                 else:
                     logger.warning(
@@ -669,6 +671,13 @@ class MTEBEvaluator:
             retrievals.append(detail)
             rerank_statuses.append(reranked_ok)
         logger.info(f"  Retrieval completado en {time.time() - t0:.1f}s")
+        if self._strategy_mismatches > 0:
+            logger.error(
+                f"  STRATEGY MISMATCH en {self._strategy_mismatches}/{n} queries: "
+                f"configurado={self.config.retrieval.strategy.name}, "
+                f"ejecutado distinto. Resultados NO representan la estrategia configurada."
+            )
+
         if self._reranker:
             if self._rerank_failures > 0:
                 logger.warning(
@@ -867,6 +876,8 @@ class MTEBEvaluator:
         try:
             retrieval_k = self.config.retrieval.retrieval_k
 
+            configured_strategy = self.config.retrieval.strategy
+
             # Seleccionar metodo de retrieval
             def _do_retrieve(top_k: int) -> "RetrievalResult":
                 if query_vector is not None:
@@ -875,12 +886,30 @@ class MTEBEvaluator:
                     )
                 return self._retriever.retrieve(query_text, top_k=top_k)
 
+            def _check_strategy(result: "RetrievalResult") -> None:
+                """Detecta discrepancia entre estrategia configurada y ejecutada (DTm-38)."""
+                actual = result.strategy_used.name
+                expected = configured_strategy.name
+                if actual != expected:
+                    self._strategy_mismatches += 1
+                    if self._strategy_mismatches == 1:
+                        logger.error(
+                            f"STRATEGY MISMATCH: configurado={expected}, "
+                            f"ejecutado={actual}. Los resultados no representan "
+                            f"la estrategia configurada."
+                        )
+
             if self._reranker:
                 fetch_k = self.config.reranker.fetch_k or (self.config.reranker.top_n * 3)
                 # Garantizar que fetch_k >= retrieval_k para que las metricas
                 # pre-rerank tengan suficientes candidatos (DTm-35).
                 fetch_k = max(fetch_k, retrieval_k)
+                logger.debug(
+                    f"  fetch_k={fetch_k} (retrieval_k={retrieval_k}, "
+                    f"reranker.top_n={self.config.reranker.top_n})"
+                )
                 full_result = _do_retrieve(fetch_k)
+                _check_strategy(full_result)
 
                 # Metricas de retrieval: top RETRIEVAL_K del retriever (pre-rerank)
                 metric_doc_ids = full_result.doc_ids[:retrieval_k]
@@ -920,6 +949,7 @@ class MTEBEvaluator:
             else:
                 # Sin reranker: retrieval_k docs para metricas y generacion
                 result = _do_retrieve(retrieval_k)
+                _check_strategy(result)
 
                 return QueryRetrievalDetail(
                     retrieved_doc_ids=result.doc_ids,
@@ -1209,11 +1239,18 @@ class MTEBEvaluator:
             "reranker_enabled": self.config.reranker.enabled,
             "reranker_top_n": self.config.reranker.top_n if self.config.reranker.enabled else None,
             "rerank_failures": self._rerank_failures if self.config.reranker.enabled else None,
+            "strategy_mismatches": self._strategy_mismatches,
             "corpus_total_available": len(dataset.corpus),
             "corpus_indexed": indexed_corpus_size,
             "gen_zero_count": gen_zero_count,
             "gen_nonzero_count": gen_nonzero_count,
             "dev_mode": self.config.dev_mode,
+            # DTm-38: estrategia real vs configurada
+            "strategy_actual": (
+                self.config.retrieval.strategy.name
+                if self._strategy_mismatches == 0
+                else "FALLBACK_SIMPLE_VECTOR"
+            ),
         }
         if self.config.dev_mode:
             config_snapshot["dev_queries"] = self.config.dev_queries

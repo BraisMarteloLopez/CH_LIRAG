@@ -257,7 +257,11 @@ class LightRAGRetriever(BaseRetriever):
             result = vector_result
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
-        result.strategy_used = RetrievalStrategy.LIGHT_RAG
+        result.strategy_used = (
+            RetrievalStrategy.LIGHT_RAG if self._has_graph
+            else RetrievalStrategy.SIMPLE_VECTOR
+        )
+        result.metadata["graph_active"] = self._has_graph
         return result
 
     def retrieve_by_vector(
@@ -282,7 +286,11 @@ class LightRAGRetriever(BaseRetriever):
             result = vector_result
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
-        result.strategy_used = RetrievalStrategy.LIGHT_RAG
+        result.strategy_used = (
+            RetrievalStrategy.LIGHT_RAG if self._has_graph
+            else RetrievalStrategy.SIMPLE_VECTOR
+        )
+        result.metadata["graph_active"] = self._has_graph
         return result
 
     def _fuse_with_graph(
