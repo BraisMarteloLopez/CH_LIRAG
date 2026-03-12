@@ -217,7 +217,9 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
     "hotpotqa": {
         "system": (
             "You are a helpful assistant. Use the provided context to answer the question. "
-            "Be concise and direct. For yes/no questions, start with yes or no."
+            "Answer in as few words as possible — ideally a single entity, name, date, or number. "
+            "For yes/no questions, answer only 'yes' or 'no'. "
+            "Do not explain, elaborate, or add extra context."
         ),
         "user_template": "CONTEXT:\n{context}\n\nQUESTION: {query}\n\nANSWER:",
     },

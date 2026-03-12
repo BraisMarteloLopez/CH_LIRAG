@@ -26,6 +26,9 @@ python-dotenv>=1.0.0,<2.0
 # Modelo: python -m spacy download en_core_web_sm
 spacy>=3.7.0,<4.0
 
+# --- Knowledge Graph (LIGHT_RAG) ---
+networkx>=3.0,<4.0
+
 # --- Hybrid Retrieval: BM25 ---
 tantivy>=0.22.0
 # rank-bm25 mantenido como fallback si Tantivy no compila en el entorno

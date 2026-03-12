@@ -876,7 +876,10 @@ class MTEBEvaluator:
                 return self._retriever.retrieve(query_text, top_k=top_k)
 
             if self._reranker:
-                fetch_k = self.config.reranker.fetch_k or (self.config.reranker.top_n * 3)  # DTm-35
+                fetch_k = self.config.reranker.fetch_k or (self.config.reranker.top_n * 3)
+                # Garantizar que fetch_k >= retrieval_k para que las metricas
+                # pre-rerank tengan suficientes candidatos (DTm-35).
+                fetch_k = max(fetch_k, retrieval_k)
                 full_result = _do_retrieve(fetch_k)
 
                 # Metricas de retrieval: top RETRIEVAL_K del retriever (pre-rerank)
