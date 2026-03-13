@@ -172,6 +172,23 @@ class LightRAGRetriever(BaseRetriever):
             f"LightRAGRetriever: indexacion {elapsed_ms:.0f}ms. "
             f"Graph: {self._has_graph}. KG stats: {kg_stats}"
         )
+
+        # DTm-26: alerta si el cap de entidades descarto un porcentaje significativo
+        if kg_stats:
+            dropped = kg_stats.get("entities_dropped", 0)
+            kept = kg_stats.get("num_entities", 0)
+            total_seen = kept + dropped
+            if dropped > 0 and total_seen > 0:
+                pct = dropped / total_seen * 100
+                msg = (
+                    f"KG entity cap activo: {dropped}/{total_seen} entidades "
+                    f"descartadas ({pct:.1f}%). cap={kg_stats.get('max_entities')}. "
+                    f"Documentos indexados tarde tendran KG incompleto."
+                )
+                if pct > 10:
+                    logger.error(f"DTm-26 ALERT: {msg}")
+                else:
+                    logger.warning(f"DTm-26: {msg}")
         return True
 
     def _build_knowledge_graph(

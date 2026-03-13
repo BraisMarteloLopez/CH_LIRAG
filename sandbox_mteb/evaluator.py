@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import logging
 import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from shared.types import (
     EvaluationRun,
@@ -180,15 +182,20 @@ class MTEBEvaluator:
         logger.info(f"  Context chars: {fallback} (fallback por defecto)")
         return fallback
 
-    def run(self) -> EvaluationRun:
+    def run(self, resume_run_id: Optional[str] = None) -> EvaluationRun:
         """
         Ejecuta una evaluacion completa.
+
+        Args:
+            resume_run_id: Si se proporciona, reanuda un run previo desde
+                su checkpoint. Re-indexa (idempotente) pero salta queries
+                ya evaluadas.
 
         Returns:
             EvaluationRun con todos los resultados.
         """
         start_time = time.time()
-        run_id = f"mteb_{self.config.dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}"
+        run_id = resume_run_id or f"mteb_{self.config.dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}"
 
         logger.info("=" * 60)
         logger.info("MTEB EVALUATION RUN")
@@ -268,7 +275,7 @@ class MTEBEvaluator:
             # 5. Evaluar queries (pipeline async)
             ds_config = get_dataset_config(dataset.name)
             query_results = self._evaluate_queries(
-                queries, ds_config, dataset.name
+                queries, ds_config, dataset.name, run_id=run_id
             )
 
             # 6. Construir EvaluationRun
@@ -621,19 +628,45 @@ class MTEBEvaluator:
         queries: List[NormalizedQuery],
         ds_config: Dict[str, Any],
         dataset_name: str,
+        run_id: str = "",
     ) -> List[QueryEvaluationResult]:
         """
-        Pipeline de evaluacion en dos fases:
+        Pipeline de evaluacion con checkpoint/resume (DTm-36).
+
+        Fases:
           0. Pre-embed: batch embed queries via REST NIM
-          1. Retrieval: sync secuencial con vectores pre-computados (local)
-          2. Generacion + metricas: async paralelo (aprovecha semaforo LLM)
+          1. Retrieval + Generation + Metrics en chunks de _CHECKPOINT_CHUNK_SIZE
+             Con checkpoint despues de cada chunk.
+
+        Si existe un checkpoint previo para run_id, las queries ya evaluadas
+        se saltan y sus resultados se reutilizan.
         """
         n = len(queries)
 
-        # --- Fase 0: Pre-embed queries ---
-        query_texts = [q.query_text for q in queries]
-        query_vectors = self._batch_embed_queries(query_texts)
-        use_preembed = len(query_vectors) == n
+        # --- Resume: cargar checkpoint previo ---
+        checkpoint_results: List[QueryEvaluationResult] = []
+        evaluated_ids: Set[str] = set()
+        if run_id:
+            loaded = self._load_checkpoint(run_id)
+            if loaded:
+                evaluated_ids, checkpoint_results = loaded
+                logger.info(
+                    f"  Resumiendo: {len(evaluated_ids)}/{n} queries ya evaluadas, "
+                    f"{n - len(evaluated_ids)} pendientes"
+                )
+
+        # Filtrar queries pendientes
+        pending_queries = [q for q in queries if q.query_id not in evaluated_ids]
+        n_pending = len(pending_queries)
+
+        if n_pending == 0:
+            logger.info("  Todas las queries ya evaluadas (checkpoint completo)")
+            return checkpoint_results
+
+        # --- Fase 0: Pre-embed queries pendientes ---
+        pending_texts = [q.query_text for q in pending_queries]
+        query_vectors = self._batch_embed_queries(pending_texts)
+        use_preembed = len(query_vectors) == n_pending
         if not use_preembed:
             logger.warning(
                 "  Pre-embed fallido o incompleto. "
@@ -645,91 +678,114 @@ class MTEBEvaluator:
             from shared.retrieval.lightrag_retriever import LightRAGRetriever
             if isinstance(self._retriever, LightRAGRetriever):
                 logger.info(
-                    f"  Pre-extrayendo keywords de {n} queries (batch LLM)..."
+                    f"  Pre-extrayendo keywords de {n_pending} queries (batch LLM)..."
                 )
                 t_kw = time.time()
-                self._retriever.pre_extract_query_keywords(query_texts)
+                self._retriever.pre_extract_query_keywords(pending_texts)
                 logger.info(
                     f"  Keywords pre-extraidas en {time.time() - t_kw:.1f}s"
                 )
 
-        # --- Fase 1: Retrieval (sync, local con pre-embed) ---
-        mode_label = "pre-embed" if use_preembed else "per-query"
-        logger.info(
-            f"  Pipeline fase 1/2: Retrieval "
-            f"({n} queries, sync, {mode_label})..."
-        )
-        t0 = time.time()
-        retrievals: List[QueryRetrievalDetail] = []
-        rerank_statuses: List[Optional[bool]] = []
-        for i, query in enumerate(queries):
-            vector = query_vectors[i] if use_preembed else None
-            detail, reranked_ok = self._execute_retrieval(
-                query.query_text, query.relevant_doc_ids,
-                query_vector=vector,
+        # --- Chunked processing: Retrieval + Generation + Metrics ---
+        chunk_size = self._CHECKPOINT_CHUNK_SIZE
+        all_results = list(checkpoint_results)  # start with resumed results
+
+        for chunk_start in range(0, n_pending, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, n_pending)
+            chunk_queries = pending_queries[chunk_start:chunk_end]
+            chunk_vectors = query_vectors[chunk_start:chunk_end] if use_preembed else []
+            n_chunk = len(chunk_queries)
+
+            logger.info(
+                f"  Chunk {chunk_start // chunk_size + 1}: "
+                f"queries {len(evaluated_ids) + chunk_start + 1}-"
+                f"{len(evaluated_ids) + chunk_end}/{n} "
+                f"({n_chunk} queries)"
             )
-            retrievals.append(detail)
-            rerank_statuses.append(reranked_ok)
-        logger.info(f"  Retrieval completado en {time.time() - t0:.1f}s")
+
+            # Retrieval (sync)
+            retrievals: List[QueryRetrievalDetail] = []
+            rerank_statuses: List[Optional[bool]] = []
+            for i, query in enumerate(chunk_queries):
+                vector = chunk_vectors[i] if use_preembed else None
+                detail, reranked_ok = self._execute_retrieval(
+                    query.query_text, query.relevant_doc_ids,
+                    query_vector=vector,
+                )
+                retrievals.append(detail)
+                rerank_statuses.append(reranked_ok)
+
+            # Generation + Metrics (async)
+            gen_metrics_results: List[Optional[_GenMetricsResult]] = [None] * n_chunk
+            if self.config.generation_enabled and self._llm_service:
+                raw = run_sync(
+                    self._batch_generate_and_evaluate(
+                        chunk_queries, retrievals, ds_config, dataset_name
+                    )
+                )
+                for idx, item in enumerate(raw):
+                    if isinstance(item, Exception):
+                        logger.warning(
+                            f"  Error async query {chunk_queries[idx].query_id}: {item}"
+                        )
+                    else:
+                        gen_metrics_results[idx] = item
+
+            # Assemble chunk results
+            chunk_results = self._assemble_results(
+                chunk_queries, retrievals, gen_metrics_results,
+                rerank_statuses, ds_config, dataset_name,
+            )
+            all_results.extend(chunk_results)
+
+            # Update evaluated IDs and save checkpoint
+            for qr in chunk_results:
+                evaluated_ids.add(qr.query_id)
+
+            if run_id:
+                self._save_checkpoint(run_id, evaluated_ids, all_results)
+
+        # Log summary
         if self._strategy_mismatches > 0:
             logger.error(
                 f"  STRATEGY MISMATCH en {self._strategy_mismatches}/{n} queries: "
                 f"configurado={self.config.retrieval.strategy.name}, "
                 f"ejecutado distinto. Resultados NO representan la estrategia configurada."
             )
-
-        if self._reranker:
-            if self._rerank_failures > 0:
-                logger.warning(
-                    f"  Rerank failures: {self._rerank_failures}/{n} queries "
-                    f"usaron fallback sin reranking"
-                )
-            if retrievals:
-                sample = retrievals[0]
-                logger.info(
-                    f"  Metricas retrieval: {len(sample.retrieved_doc_ids)} docs "
-                    f"(RETRIEVAL_K={self.config.retrieval.retrieval_k}) | "
-                    f"Generacion: {len(sample.generation_doc_ids)} docs "
-                    f"(RERANKER_TOP_N={self.config.reranker.top_n})"
-                )
-
-        # --- Fase 2: Generacion + Metricas (async, paralelo) ---
-        gen_metrics_results: List[Optional[_GenMetricsResult]] = [None] * n
-
-        if self.config.generation_enabled and self._llm_service:
-            logger.info(
-                f"  Pipeline fase 2/2: Generacion + Metricas "
-                f"({n} queries, async)..."
+        if self._reranker and self._rerank_failures > 0:
+            logger.warning(
+                f"  Rerank failures: {self._rerank_failures}/{n} queries "
+                f"usaron fallback sin reranking"
             )
-            t1 = time.time()
-            raw = run_sync(
-                self._batch_generate_and_evaluate(
-                    queries, retrievals, ds_config, dataset_name
-                )
-            )
-            for idx, item in enumerate(raw):
-                if isinstance(item, Exception):
-                    logger.warning(
-                        f"  Error async query {queries[idx].query_id}: {item}"
-                    )
-                else:
-                    gen_metrics_results[idx] = item
-            logger.info(
-                f"  Generacion+Metricas completado en {time.time() - t1:.1f}s"
-            )
-        else:
-            logger.info("  Generacion deshabilitada, solo metricas retrieval")
 
-        # --- Ensamblar resultados ---
+        completed = sum(1 for r in all_results if r.status == EvaluationStatus.COMPLETED)
+        failed = sum(1 for r in all_results if r.status == EvaluationStatus.FAILED)
+        if failed:
+            logger.warning(f"  Queries: {completed} completadas, {failed} fallidas")
+
+        # Clean up checkpoint on successful completion
+        if run_id:
+            self._delete_checkpoint(run_id)
+
+        return all_results
+
+    def _assemble_results(
+        self,
+        queries: List[NormalizedQuery],
+        retrievals: List[QueryRetrievalDetail],
+        gen_metrics_results: List[Optional[_GenMetricsResult]],
+        rerank_statuses: List[Optional[bool]],
+        ds_config: Dict[str, Any],
+        dataset_name: str,
+    ) -> List[QueryEvaluationResult]:
+        """Ensambla QueryEvaluationResult desde retrieval + generation results."""
         results: List[QueryEvaluationResult] = []
         for query, retrieval, gm, reranked_status in zip(
             queries, retrievals, gen_metrics_results, rerank_statuses,
         ):
-            # FIX DT-7: propagar estado de rerank al metadata para diagnostico
             qr_metadata: Dict[str, Any] = {}
             if reranked_status is not None:
                 qr_metadata["reranked"] = reranked_status
-            # Propagar question_type para desglose bridge vs comparison en CSV
             qt = query.metadata.get("question_type", "")
             if qt:
                 qr_metadata["question_type"] = qt
@@ -771,16 +827,6 @@ class MTEBEvaluator:
                     status=EvaluationStatus.COMPLETED,
                     metadata=qr_metadata,
                 ))
-
-        completed = sum(
-            1 for r in results if r.status == EvaluationStatus.COMPLETED
-        )
-        failed = sum(
-            1 for r in results if r.status == EvaluationStatus.FAILED
-        )
-        if failed:
-            logger.warning(f"  Queries: {completed} completadas, {failed} fallidas")
-
         return results
 
     # -----------------------------------------------------------------
@@ -1287,6 +1333,131 @@ class MTEBEvaluator:
             avg_generation_score=avg_gen,
             execution_time_seconds=elapsed_seconds,
             query_results=query_results,
+        )
+
+    # -----------------------------------------------------------------
+    # CHECKPOINT / RESUME (DTm-36)
+    # -----------------------------------------------------------------
+
+    _CHECKPOINT_CHUNK_SIZE = 50  # queries per checkpoint
+
+    def _checkpoint_path(self, run_id: str) -> Path:
+        return Path(self.config.storage.evaluation_results_dir) / f"{run_id}_checkpoint.json"
+
+    def _save_checkpoint(
+        self,
+        run_id: str,
+        evaluated_query_ids: Set[str],
+        results: List[QueryEvaluationResult],
+    ) -> None:
+        """Persiste resultados parciales a disco."""
+        path = self._checkpoint_path(run_id)
+        data = {
+            "run_id": run_id,
+            "evaluated_query_ids": sorted(evaluated_query_ids),
+            "num_results": len(results),
+            "results": [self._serialize_query_result(r) for r in results],
+        }
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        tmp.rename(path)
+        logger.info(
+            f"  Checkpoint guardado: {len(evaluated_query_ids)} queries → {path.name}"
+        )
+
+    def _load_checkpoint(
+        self, run_id: str
+    ) -> Optional[Tuple[Set[str], List[QueryEvaluationResult]]]:
+        """Carga checkpoint previo si existe."""
+        path = self._checkpoint_path(run_id)
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            evaluated_ids = set(data["evaluated_query_ids"])
+            results = [self._deserialize_query_result(r) for r in data["results"]]
+            logger.info(
+                f"  Checkpoint cargado: {len(evaluated_ids)} queries desde {path.name}"
+            )
+            return evaluated_ids, results
+        except Exception as e:
+            logger.warning(f"  Checkpoint corrupto ({path.name}): {e}. Ignorando.")
+            return None
+
+    def _delete_checkpoint(self, run_id: str) -> None:
+        path = self._checkpoint_path(run_id)
+        if path.exists():
+            path.unlink()
+            logger.info(f"  Checkpoint eliminado: {path.name}")
+
+    @staticmethod
+    def _serialize_query_result(qr: QueryEvaluationResult) -> Dict[str, Any]:
+        """Serializa un QueryEvaluationResult a dict JSON-compatible."""
+        r = qr.retrieval
+        gen = qr.generation
+        return {
+            "query_id": qr.query_id,
+            "query_text": qr.query_text,
+            "dataset_name": qr.dataset_name,
+            "dataset_type": qr.dataset_type.value,
+            "status": qr.status.value,
+            "error_message": qr.error_message,
+            "expected_response": qr.expected_response,
+            "primary_metric_type": qr.primary_metric_type.value,
+            "primary_metric_value": qr.primary_metric_value,
+            "secondary_metrics": qr.secondary_metrics,
+            "metadata": qr.metadata,
+            "retrieval": {
+                "retrieved_doc_ids": r.retrieved_doc_ids,
+                "retrieved_contents": r.retrieved_contents,
+                "retrieval_scores": r.retrieval_scores,
+                "expected_doc_ids": r.expected_doc_ids,
+                "retrieval_time_ms": r.retrieval_time_ms,
+                "generation_doc_ids": r.generation_doc_ids,
+                "generation_contents": r.generation_contents,
+                "pre_rerank_candidate_ids": r.pre_rerank_candidate_ids,
+                "retrieval_metadata": r.retrieval_metadata,
+            },
+            "generation": {
+                "generated_response": gen.generated_response,
+                "generation_time_ms": gen.generation_time_ms,
+            } if gen else None,
+        }
+
+    @staticmethod
+    def _deserialize_query_result(data: Dict[str, Any]) -> QueryEvaluationResult:
+        """Deserializa un dict a QueryEvaluationResult."""
+        rd = data["retrieval"]
+        gen_data = data.get("generation")
+        return QueryEvaluationResult(
+            query_id=data["query_id"],
+            query_text=data["query_text"],
+            dataset_name=data["dataset_name"],
+            dataset_type=DatasetType(data["dataset_type"]),
+            status=EvaluationStatus(data["status"]),
+            error_message=data.get("error_message"),
+            expected_response=data.get("expected_response"),
+            primary_metric_type=MetricType(data["primary_metric_type"]),
+            primary_metric_value=data.get("primary_metric_value", 0.0),
+            secondary_metrics=data.get("secondary_metrics", {}),
+            metadata=data.get("metadata", {}),
+            retrieval=QueryRetrievalDetail(
+                retrieved_doc_ids=rd["retrieved_doc_ids"],
+                retrieved_contents=rd["retrieved_contents"],
+                retrieval_scores=rd["retrieval_scores"],
+                expected_doc_ids=rd["expected_doc_ids"],
+                retrieval_time_ms=rd.get("retrieval_time_ms", 0.0),
+                generation_doc_ids=rd.get("generation_doc_ids", []),
+                generation_contents=rd.get("generation_contents", []),
+                pre_rerank_candidate_ids=rd.get("pre_rerank_candidate_ids", []),
+                retrieval_metadata=rd.get("retrieval_metadata", {}),
+            ),
+            generation=GenerationResult(
+                generated_response=gen_data["generated_response"],
+                generation_time_ms=gen_data.get("generation_time_ms", 0.0),
+            ) if gen_data else None,
         )
 
     # -----------------------------------------------------------------
