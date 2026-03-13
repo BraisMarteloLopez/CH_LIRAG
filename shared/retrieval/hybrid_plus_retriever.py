@@ -183,6 +183,13 @@ class HybridPlusRetriever(BaseRetriever):
                 bm25_documents=bm25_arg,
             )
 
+            # DTm-31: compartir dict de contenidos en vez de duplicar.
+            # HybridRetriever._doc_map y _original_contents almacenan lo
+            # mismo (contenido original por doc_id). Reusar una sola copia.
+            from .hybrid_retriever import HybridRetriever
+            if isinstance(self._inner_retriever, HybridRetriever):
+                self._inner_retriever._doc_map = self._original_contents
+
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             self._is_indexed = result
 

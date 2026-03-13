@@ -88,10 +88,12 @@ class TripletExtractor:
     Estadisticas de extraccion accesibles via get_stats() (DTm-33).
     """
 
-    # Maximo de coroutines creadas simultaneamente en extract_batch_async.
-    # El semaphore del LLM limita HTTP concurrente, pero las coroutines
-    # en si retienen referencias a doc content mientras esperan turno.
-    _COROUTINE_BATCH_SIZE = 500
+    # Multiplicador para calcular batch de coroutines a partir del semaforo
+    # HTTP del LLM. Con semaforo=32 y mult=4, batch=128 coroutines vivas
+    # simultaneamente (DTm-25). Reduce presion de memoria sin afectar
+    # throughput (el semaforo HTTP es el cuello de botella real).
+    _CONCURRENCY_MULTIPLIER = 4
+    _MIN_BATCH_SIZE = 64
 
     def __init__(
         self,
@@ -100,6 +102,11 @@ class TripletExtractor:
     ) -> None:
         self._llm = llm_service
         self._max_text_chars = max_text_chars
+        # DTm-25: batch size adaptativo al semaforo HTTP
+        self._batch_size = max(
+            self._MIN_BATCH_SIZE,
+            llm_service._max_concurrent * self._CONCURRENCY_MULTIPLIER,
+        )
         # Estadisticas de extraccion (DTm-33)
         self._stats: Dict[str, int] = {
             "docs_processed": 0,
@@ -247,7 +254,7 @@ class TripletExtractor:
         # Procesar en chunks para limitar coroutines vivas en memoria
         # (DTm-22). El semaphore del LLM controla HTTP, pero cada
         # coroutine retiene su doc content mientras espera turno.
-        batch_sz = self._COROUTINE_BATCH_SIZE
+        batch_sz = self._batch_size
         for start in range(0, len(documents), batch_sz):
             chunk = documents[start:start + batch_sz]
             tasks = [_extract_one(doc) for doc in chunk]
@@ -355,7 +362,7 @@ class TripletExtractor:
             low, high = await self.extract_query_keywords_async(query)
             results[idx] = (low, high)
 
-        batch_sz = self._COROUTINE_BATCH_SIZE
+        batch_sz = self._batch_size
         for start in range(0, len(queries), batch_sz):
             chunk_tasks = [
                 _extract_one(i, q)
