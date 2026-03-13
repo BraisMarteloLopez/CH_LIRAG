@@ -233,6 +233,100 @@ pytest tests/ -m "not integration" # Solo unit
 pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 ```
 
+## Fases de implementacion
+
+### Fase 0: Reproducibilidad (prerrequisito para medir cualquier mejora)
+
+**Objetivo:** Garantizar que dos runs con la misma config producen resultados comparables.
+
+| Tarea | Issues | Esfuerzo | Justificacion |
+|---|---|---|---|
+| Pinnear dependencias (`pip freeze > requirements.lock`) | DTm-28 | Bajo | Sin versiones fijas, un `pip install` puede cambiar silenciosamente recall/F1 entre runs. Toda comparacion posterior es invalida sin esto. |
+| Run baseline con LIGHT_RAG (validar que funciona end-to-end) | — | Medio | Nunca se ha ejecutado LIGHT_RAG con grafo activo tras los fixes recientes (networkx, asyncio semaphore, fetch_k). Sin baseline, no hay referencia. |
+
+**Criterio de salida:** Run LIGHT_RAG completo exportado a `data/results/` con faithfulness != 0.0 en todas las queries. `requirements.lock` commiteado.
+
+---
+
+### Fase 1: Fiabilidad del evaluador (evitar perder runs de horas)
+
+**Objetivo:** Que un fallo mid-run no signifique perder miles de llamadas LLM.
+
+| Tarea | Issues | Esfuerzo | Justificacion |
+|---|---|---|---|
+| Checkpoint/resume en evaluator: serializar resultados parciales cada N queries | DTm-36 (parcial) | Alto | Un run LIGHT_RAG con 7K queries y extraccion de tripletas puede tardar horas. Un fallo en la query 6000 pierde todo. Es el riesgo operativo mas alto del sistema. |
+| Counter de entidades descartadas por cap + log WARNING | DTm-26 (parcial) | Bajo | Visibilidad minima: saber cuantas entidades se perdieron. Sin esto, un KG incompleto pasa desapercibido. |
+
+**Criterio de salida:** Un run interrumpido con Ctrl+C puede reanudarse con `--resume <run_id>` y completar sin reprocessar queries ya evaluadas. Log muestra `entities_discarded: N` si el cap se activa.
+
+---
+
+### Fase 2: Calidad de retrieval (impacto directo en metricas)
+
+**Objetivo:** Mejorar Hit@5 y MRR atacando las fuentes de perdida de recall conocidas.
+
+| Tarea | Issues | Esfuerzo | Justificacion |
+|---|---|---|---|
+| Preservar apostrofes intra-palabra en sanitizacion Tantivy | DTm-37 | Bajo | "don't" → "don t" destruye terminos BM25. Fix de una regex. Impacto directo en recall de HYBRID_PLUS. |
+| Entity normalization: alias resolution basica (lowercase + strip) | DTm-18 (parcial) | Medio | "United States" vs "US" vs "U.S." son entidades distintas en el KG. Cross-references y graph traversal pierden conexiones. Afecta HYBRID_PLUS y LIGHT_RAG. |
+| Relajar filtro de nombre de entidad: `len(name) < 2` → `name.strip() == ""` | DTm-27 | Bajo | Rechaza entidades de 1 caracter (siglas, nombres chinos). Fix trivial. |
+
+**Criterio de salida:** Run comparativo HYBRID_PLUS antes/despues con delta medible en Hit@5. Run comparativo LIGHT_RAG antes/despues con delta en Hit@5.
+
+---
+
+### Fase 3: Eficiencia de recursos (reducir tiempo y memoria)
+
+**Objetivo:** Que runs de corpus completo (66K docs) sean viables sin OOM.
+
+| Tarea | Issues | Esfuerzo | Justificacion |
+|---|---|---|---|
+| Batch size de extraccion: 500 → `min(batch_size, semaphore * 4)` | DTm-25 | Bajo | Con semaforo de 32, 468 coroutines esperan en memoria con sus prompts. Reducir a 128 libera memoria sin afectar throughput. |
+| Eliminar duplicacion de contenido en HYBRID_PLUS | DTm-31 | Medio | `_original_contents` y `_doc_map` son copias independientes del corpus. Con 66K docs, duplica ~1GB innecesariamente. |
+| Eliminar duplicacion `retrieved_contents` / `generation_contents` en evaluator | DTm-14 | Medio | Misma historia, otra capa. ~1.5GB con 7K queries. Referenciar por doc_id en vez de copiar strings. |
+
+**Criterio de salida:** Run con `EVAL_MAX_CORPUS=66576` (corpus completo) sin OOM. Pico de memoria medido con `tracemalloc` <= 4GB.
+
+---
+
+### Fase 4: Limpieza y mantenibilidad
+
+**Objetivo:** Reducir complejidad accidental para que futuras mejoras sean mas seguras.
+
+| Tarea | Issues | Esfuerzo | Justificacion |
+|---|---|---|---|
+| Extraer subset selection, metric aggregation y result building del evaluator | DTm-36 (completo) | Alto | 1308 LOC en un solo archivo. Cada cambio en metricas toca el mismo fichero que el pipeline de retrieval. Separar responsabilidades. |
+| Renombrar `RETRIEVAL_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT` para claridad | DTm-24 | Bajo | Semantica distinta (RRF weight vs graph fusion weight), nombre casi identico. Confuso para configurar. Ej: `RRF_VECTOR_WEIGHT` y `GRAPH_FUSION_VECTOR_WEIGHT`. |
+| Metadata passthrough generico para `question_type` en detail CSV | DTm-20 | Bajo | Eliminar propagacion manual. Pasar metadata dict completo al result builder. |
+| Asignar `answer_type="label"` a queries comparison en ETL HotpotQA | DTm-15 | Bajo | Correctness tecnica. Sin impacto numerico actual (F1=Accuracy para tokens unicos como "yes"/"no"), pero evita confusion futura. |
+
+**Criterio de salida:** `evaluator.py` < 600 LOC. Nuevos modulos con tests unitarios. Naming consistente en `.env`.
+
+---
+
+### No planificado (aceptar como limitacion)
+
+| Issue | Razon |
+|---|---|
+| DTm-13 (HNSW no-determinismo) | ChromaDB no expone `hnsw:random_seed`. Requiere fork o cambio de vector store. Varianza ±0.02 es aceptable para comparaciones relativas. |
+| DTm-12 (sesgo faithfulness en respuestas cortas) | Faithfulness es metrica informativa, no primaria. El sesgo es inherente al LLM-judge, no al sistema. Documentar y aceptar. |
+
+---
+
+### Diagrama de dependencias entre fases
+
+```
+Fase 0 (Reproducibilidad)
+  │
+  ├──→ Fase 1 (Fiabilidad)     ──→ Fase 3 (Eficiencia)
+  │                                     │
+  └──→ Fase 2 (Calidad)        ──→ Fase 4 (Mantenibilidad)
+```
+
+Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3 depende de 1 (checkpoint permite runs largos con corpus completo). Fase 4 depende de 2 (los cambios de calidad deben estar estables antes de refactorizar).
+
+---
+
 ## Deuda tecnica abierta
 
 | ID | Descripcion | Prioridad | Estado |
@@ -262,3 +356,4 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | DTm-36 | `evaluator.py` es un God Object emergente (1268 LOC). Orquesta carga de datos, subset selection, indexado, pre-embedding, retrieval, reranking, generacion, metricas, agregacion y logging. Sin checkpoint/resume — un fallo mid-run en LIGHT_RAG (miles de llamadas LLM) pierde toda la ejecucion. Candidato a extraer subset selection, metric aggregation y result building a modulos separados. | Media | Abierto |
 | DTm-37 | Query sanitization de Tantivy demasiado agresiva: `re.sub(r'[^\w\s]', ' ', query)` (`tantivy_index.py:183`) elimina todo caracter no alfanumerico, destruyendo apostrofes contractivos ("don't" → "don t", "it's" → "it s"). Afecta recall BM25 en queries con contracciones inglesas. Considerar preservar apostrofes intra-palabra: `re.sub(r"(?<!\w)[^\w\s]|[^\w\s'](?!\w)", ' ', query)` o similar. | Baja | Abierto |
 | DTm-38 | Fallback silencioso de estrategia: `LightRAGRetriever` degradaba a SimpleVector sin reflejarlo en `strategy_used` ni `config_snapshot`. Fix: (1) `strategy_used` ahora refleja la estrategia real (SIMPLE_VECTOR si `_has_graph=False`), (2) `_check_strategy()` en evaluator detecta y loggea mismatch con ERROR, (3) `config_snapshot` incluye `strategy_actual` y `strategy_mismatches`, (4) `metadata["graph_active"]` en cada resultado. | Alta | **Resuelto** |
+| DTm-45 | `run_sync()` llamaba `asyncio.run()` repetidamente, creando/destruyendo event loops. `asyncio.Semaphore` se vinculaba al primer loop; al cambiar de loop, todas las llamadas LLM-judge de faithfulness fallaban con "bound to a different event loop" (60+ errores por run). Fix: `_PersistentLoop` singleton con thread daemon que mantiene un unico event loop. `LLMMetrics._lock` cambiado de `asyncio.Lock` a `threading.Lock` (misma vulnerabilidad, seccion critica sin awaits). | Alta | **Resuelto** |
