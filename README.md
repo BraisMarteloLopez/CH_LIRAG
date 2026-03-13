@@ -155,7 +155,22 @@ python -m sandbox_mteb.run                  # Run con .env
 python -m sandbox_mteb.run --dry-run        # Solo validar config
 python -m sandbox_mteb.run --env /path/.env # .env alternativo
 python -m sandbox_mteb.run -v               # Verbose (DEBUG)
+
+# Preflight check (recomendado antes de runs LIGHT_RAG largos)
+python -m sandbox_mteb.preflight            # Verifica deps, NIM, MinIO, smoke test
+python -m sandbox_mteb.preflight --skip-smoke  # Sin smoke test LLM
 ```
+
+### Reproducibilidad (requirements.lock)
+
+Para garantizar resultados comparables entre runs, pinnear dependencias en el entorno de produccion:
+
+```bash
+pip install -r requirements.txt
+pip freeze > requirements.lock
+```
+
+`requirements.lock` se commitea al repo. Usar `pip install -r requirements.lock` para reproducir el entorno exacto.
 
 ## Configuracion (.env)
 

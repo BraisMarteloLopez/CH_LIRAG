@@ -1,0 +1,30 @@
+# =============================================================================
+# requirements.lock — Versiones exactas para reproducibilidad (DTm-28)
+# =============================================================================
+# Generado parcialmente. Regenerar en el entorno de produccion con:
+#
+#   pip install -r requirements.txt && pip freeze > requirements.lock
+#
+# Python 3.11.14
+# Fecha generacion parcial: 2026-03-13
+# =============================================================================
+
+# --- Verificadas (instaladas en entorno actual) ---
+networkx==3.6.1
+pytest==9.0.2
+python-dotenv==1.2.2
+
+# --- Pendientes de pin (requieren entorno con NIM) ---
+# Regenerar con pip freeze en el servidor de evaluacion.
+# Rangos actuales en requirements.txt como referencia:
+#
+# langchain-nvidia-ai-endpoints>=0.3.0,<1.0
+# langchain-core>=0.3.0,<1.0
+# langchain-chroma>=0.2.0,<1.0
+# chromadb>=0.5.0,<1.0
+# pandas>=2.0.0,<3.1
+# pyarrow>=12.0.0,<24.0
+# boto3>=1.28.0,<2.0
+# spacy>=3.7.0,<4.0
+# tantivy>=0.22.0
+# rank-bm25>=0.2.2,<0.3
