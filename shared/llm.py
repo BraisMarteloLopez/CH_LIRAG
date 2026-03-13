@@ -170,7 +170,9 @@ class AsyncLLMService:
         self.max_retries = max_retries
         self.temperature = temperature
 
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
         self._client = ChatNVIDIA(
             base_url=base_url,
             model=model_name,
@@ -182,6 +184,20 @@ class AsyncLLMService:
             f"AsyncLLMService: {model_name} @ {base_url} "
             f"(max_concurrent={max_concurrent})"
         )
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Return a Semaphore bound to the current event loop.
+
+        asyncio.Semaphore binds to the loop on first acquire. If the loop
+        changes (e.g. successive asyncio.run() calls via run_sync), the old
+        semaphore raises 'bound to a different event loop'.  We detect the
+        loop change and recreate the semaphore automatically.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self._max_concurrent)
+            self._semaphore_loop = loop
+        return self._semaphore
 
     async def __aenter__(self) -> "AsyncLLMService":
         return self
@@ -202,7 +218,7 @@ class AsyncLLMService:
         for attempt in range(self.max_retries + 1):
             start_time = time.perf_counter()
             try:
-                async with self._semaphore:
+                async with self._get_semaphore():
                     response = await self._client.ainvoke(
                         messages,
                         max_tokens=max_tokens,
