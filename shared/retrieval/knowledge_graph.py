@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
@@ -108,9 +109,32 @@ class KnowledgeGraph:
     def num_docs(self) -> int:
         return len(self._doc_to_entities)
 
+    # Articulos iniciales en ingles (DTm-18).
+    _LEADING_ARTICLES = ("the ", "a ", "an ")
+    # Patron para eliminar puntuacion excepto guiones internos (DTm-18).
+    _RE_NON_ALNUM = re.compile(r"[^\w\s-]")
+
     def _normalize_name(self, name: str) -> str:
-        """Normalizacion simple de nombres de entidad."""
-        return name.lower().strip()
+        """Normalizacion de nombres de entidad (DTm-18).
+
+        Alineado con entity_linker.normalize_entity() para consistencia
+        entre HYBRID_PLUS y LIGHT_RAG. Pasos:
+          1. Lowercase + strip
+          2. Eliminar articulos iniciales (the, a, an)
+          3. Eliminar puntuacion excepto guiones internos
+             "U.S." -> "us", "spider-man" -> "spider-man"
+          4. Colapsar espacios
+        """
+        result = name.lower().strip()
+        if not result:
+            return ""
+        for article in self._LEADING_ARTICLES:
+            if result.startswith(article):
+                result = result[len(article):]
+                break
+        result = self._RE_NON_ALNUM.sub("", result)
+        result = " ".join(result.split())
+        return result.strip()
 
     @staticmethod
     def _tokenize(text: str) -> List[str]:

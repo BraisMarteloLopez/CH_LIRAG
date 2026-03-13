@@ -282,11 +282,11 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 
 **Objetivo:** Mejorar Hit@5 y MRR atacando las fuentes de perdida de recall conocidas.
 
-| Tarea | Issues | Esfuerzo | Justificacion |
+| Tarea | Issues | Esfuerzo | Estado |
 |---|---|---|---|
-| Preservar apostrofes intra-palabra en sanitizacion Tantivy | DTm-37 | Bajo | "don't" → "don t" destruye terminos BM25. Fix de una regex. Impacto directo en recall de HYBRID_PLUS. |
-| Entity normalization: alias resolution basica (lowercase + strip) | DTm-18 (parcial) | Medio | "United States" vs "US" vs "U.S." son entidades distintas en el KG. Cross-references y graph traversal pierden conexiones. Afecta HYBRID_PLUS y LIGHT_RAG. |
-| Relajar filtro de nombre de entidad: `len(name) < 2` → `name.strip() == ""` | DTm-27 | Bajo | Rechaza entidades de 1 caracter (siglas, nombres chinos). Fix trivial. |
+| Preservar apostrofes intra-palabra en sanitizacion Tantivy | DTm-37 | Bajo | **Hecho** — Regex preserva `'` intra-palabra ("don't" intacto) |
+| Entity normalization: alinear KG con entity_linker (articles, punctuation) | DTm-18 | Medio | **Hecho** — `_normalize_name()` en KG ahora elimina articulos y puntuacion. "U.S." y "US" convergen. |
+| Relajar filtro de nombre de entidad: `MIN_ENTITY_NAME_LEN` 2 → 1 | DTm-27 | Bajo | **Hecho** — Entidades de 1 caracter (siglas, nombres chinos) aceptadas. Aplica a triplet_extractor y entity_linker. |
 
 **Criterio de salida:** Run comparativo HYBRID_PLUS antes/despues con delta medible en Hit@5. Run comparativo LIGHT_RAG antes/despues con delta en Hit@5.
 
@@ -353,7 +353,7 @@ Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3
 | DTm-14 | Duplicacion contenido en memoria: `retrieved_contents` + `generation_contents` (~1.5GB con 7K queries). | Baja | Abierto |
 | DTm-15 | ETL HotpotQA no asigna `answer_type="label"` a queries comparison (yes/no). Sin impacto numerico (F1=Accuracy para tokens unicos). | Baja | Abierto |
 | DTm-16 | Validacion output LLM en triplet extraction: entity types normalizados a enum, nombres >= 2 chars, descriptions truncadas a 200 chars. | Media | **Resuelto** |
-| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja | Abierto |
+| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja | **Resuelto** — KG `_normalize_name()` alineado con `entity_linker.normalize_entity()` |
 | DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja | Abierto |
 | DTm-21 | KG cap de memoria: `max_entities` configurable (default 50K), dedup de relaciones, estimacion de memoria en `get_stats()`. | Media | **Resuelto** |
 | DTm-22 | Batching de coroutines en `extract_batch_async()`: chunks de 500 docs para limitar presion de memoria. | Baja | **Resuelto** |
@@ -361,7 +361,7 @@ Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3
 | DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja | Abierto |
 | DTm-25 | Batch size de extraccion (500) sobredimensionado vs semaforo HTTP (32). Con 500 coroutines y semaforo de 32, 468 esperan en memoria. Batch de 64-128 (2-4x semaforo) seria mas eficiente. | Baja | Abierto |
 | DTm-26 | `kg_max_entities` descarta entidades nuevas silenciosamente al llegar al cap. Las ultimas queries del corpus tendran KG incompleto. Considerar politica LRU o al menos counter de entidades descartadas para visibilidad. | Media | **Resuelto** — WARNING/ERROR con porcentaje de descarte |
-| DTm-27 | Filtro `len(name) < 2` en validacion de entidades rechaza entidades legitimas de 1 caracter (nombres chinos, siglas). Filtrar solo `name.strip() == ""`. | Baja | Abierto |
+| DTm-27 | Filtro `len(name) < 2` en validacion de entidades rechaza entidades legitimas de 1 caracter (nombres chinos, siglas). Filtrar solo `name.strip() == ""`. | Baja | **Resuelto** — `MIN_ENTITY_NAME_LEN=1` en triplet_extractor y entity_linker |
 | DTm-28 | Sin dependencias pinneadas. `requirements.txt` sin versiones exactas. Un update de `networkx` o `chromadb` puede cambiar resultados silenciosamente entre runs. Necesita `pip freeze` versionado. | Media | Abierto |
 | DTm-29 | BFS en `query_entities()` usa `collections.deque.popleft()` — O(1) por operacion en lugar de O(n) con `list.pop(0)`. | Media | **Resuelto** |
 | DTm-30 | `query_by_keywords()` (`knowledge_graph.py`) sin indice: recorre toda `self._entities` y todas las aristas en cada llamada — O(entidades × keywords) por query. Resuelto con indice invertido por token. **Nota**: cambio semantico de substring matching a token (word-level) matching — puede afectar recall en nombres compuestos como "new york". | Media | **Resuelto** |
@@ -371,6 +371,6 @@ Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3
 | DTm-34 | Persistencia del Knowledge Graph entre runs via `KG_CACHE_DIR`. Serializa/deserializa el grafo completo (entidades, relaciones, indices, NetworkX) como JSON. Cache invalidado automaticamente por fingerprint del corpus (incluye `KG_MAX_TEXT_CHARS`). `kg_cache_dir` registrado en `config_snapshot`. Log de tamano del fichero al guardar con warning si > 100 MB. | Alta | **Resuelto** |
 | DTm-35 | `fetch_k` para reranker en `evaluator.py:_execute_retrieval()` puede ser menor que `retrieval_k`: con `RERANKER_FETCH_K=0` (default), `fetch_k = top_n * 3` (e.g. 15 con top_n=5), pero metricas pre-rerank necesitan `retrieval_k` docs (20). Resultado: `retrieved_doc_ids` = 15 en lugar de 20 en todas las queries. Fix: `fetch_k = max(fetch_k, retrieval_k)`. | Media | **Resuelto** |
 | DTm-36 | `evaluator.py` es un God Object emergente (~1500 LOC). Orquesta carga de datos, subset selection, indexado, pre-embedding, retrieval, reranking, generacion, metricas, agregacion y logging. Checkpoint/resume implementado (chunks de 50 queries, `--resume RUN_ID`). Pendiente: extraer subset selection, metric aggregation y result building a modulos separados. | Media | **Parcial** — Checkpoint/resume hecho. Descomposicion pendiente (Fase 4). |
-| DTm-37 | Query sanitization de Tantivy demasiado agresiva: `re.sub(r'[^\w\s]', ' ', query)` (`tantivy_index.py:183`) elimina todo caracter no alfanumerico, destruyendo apostrofes contractivos ("don't" → "don t", "it's" → "it s"). Afecta recall BM25 en queries con contracciones inglesas. Considerar preservar apostrofes intra-palabra: `re.sub(r"(?<!\w)[^\w\s]|[^\w\s'](?!\w)", ' ', query)` o similar. | Baja | Abierto |
+| DTm-37 | Query sanitization de Tantivy demasiado agresiva: `re.sub(r'[^\w\s]', ' ', query)` (`tantivy_index.py:183`) elimina todo caracter no alfanumerico, destruyendo apostrofes contractivos ("don't" → "don t", "it's" → "it s"). Afecta recall BM25 en queries con contracciones inglesas. | Baja | **Resuelto** — Regex preserva apostrofes intra-palabra |
 | DTm-38 | Fallback silencioso de estrategia: `LightRAGRetriever` degradaba a SimpleVector sin reflejarlo en `strategy_used` ni `config_snapshot`. Fix: (1) `strategy_used` ahora refleja la estrategia real (SIMPLE_VECTOR si `_has_graph=False`), (2) `_check_strategy()` en evaluator detecta y loggea mismatch con ERROR, (3) `config_snapshot` incluye `strategy_actual` y `strategy_mismatches`, (4) `metadata["graph_active"]` en cada resultado. | Alta | **Resuelto** |
 | DTm-45 | `run_sync()` llamaba `asyncio.run()` repetidamente, creando/destruyendo event loops. `asyncio.Semaphore` se vinculaba al primer loop; al cambiar de loop, todas las llamadas LLM-judge de faithfulness fallaban con "bound to a different event loop" (60+ errores por run). Fix: `_PersistentLoop` singleton con thread daemon que mantiene un unico event loop. `LLMMetrics._lock` cambiado de `asyncio.Lock` a `threading.Lock` (misma vulnerabilidad, seccion critica sin awaits). | Alta | **Resuelto** |

@@ -178,9 +178,10 @@ class TantivyIndex:
 
         try:
             # Sanitizar query: Tantivy parse_query falla con caracteres
-            # especiales como apostrofes, comillas, parentesis, ?, etc.
-            # Eliminamos todo lo que no sea alfanumerico o espacio.
-            clean_query = re.sub(r'[^\w\s]', ' ', query)
+            # especiales como comillas, parentesis, ?, etc.
+            # Preservar apostrofes intra-palabra (don't, it's) para
+            # no destruir terminos BM25 (DTm-37).
+            clean_query = re.sub(r"(?<!\w)'|'(?!\w)|[^\w\s']", ' ', query)
             clean_query = ' '.join(clean_query.split())  # normalizar espacios
 
             if not clean_query:

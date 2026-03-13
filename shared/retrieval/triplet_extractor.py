@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 VALID_ENTITY_TYPES = {"PERSON", "ORG", "PLACE", "CONCEPT", "EVENT", "OTHER"}
 MAX_DESCRIPTION_CHARS = 200
-MIN_ENTITY_NAME_LEN = 2
+MIN_ENTITY_NAME_LEN = 1
 
 
 # =============================================================================

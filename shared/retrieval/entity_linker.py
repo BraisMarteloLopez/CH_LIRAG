@@ -106,7 +106,7 @@ class EntityExtractor:
         "EVENT", "WORK_OF_ART", "LAW", "PRODUCT", "NORP",
     }
 
-    MIN_ENTITY_LENGTH: int = 2
+    MIN_ENTITY_LENGTH: int = 1
 
     def __init__(self, model_name: str = "en_core_web_sm") -> None:
         if not HAS_SPACY:
