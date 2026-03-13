@@ -254,12 +254,13 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 
 **Objetivo:** Garantizar que dos runs con la misma config producen resultados comparables.
 
-| Tarea | Issues | Esfuerzo | Justificacion |
+| Tarea | Issues | Esfuerzo | Estado |
 |---|---|---|---|
-| Pinnear dependencias (`pip freeze > requirements.lock`) | DTm-28 | Bajo | Sin versiones fijas, un `pip install` puede cambiar silenciosamente recall/F1 entre runs. Toda comparacion posterior es invalida sin esto. |
-| Run baseline con LIGHT_RAG (validar que funciona end-to-end) | — | Medio | Nunca se ha ejecutado LIGHT_RAG con grafo activo tras los fixes recientes (networkx, asyncio semaphore, fetch_k). Sin baseline, no hay referencia. |
+| Pinnear dependencias (`pip freeze > requirements.lock`) | DTm-28 | Bajo | **Parcial** — `requirements.lock` creado con 3 paquetes pinneados (networkx, pytest, python-dotenv). Regenerar en entorno con NIM: `pip freeze > requirements.lock` |
+| Preflight check (`sandbox_mteb/preflight.py`) | — | Bajo | **Hecho** — Verifica deps, config, conectividad NIM/MinIO y smoke test LLM antes de un run largo |
+| Run baseline con LIGHT_RAG (validar que funciona end-to-end) | — | Medio | **Pendiente** — Requiere entorno con NIM. Configurar `RETRIEVAL_STRATEGY=LIGHT_RAG` y `KG_CACHE_DIR=./data/kg_cache` en `.env` |
 
-**Criterio de salida:** Run LIGHT_RAG completo exportado a `data/results/` con faithfulness != 0.0 en todas las queries. `requirements.lock` commiteado.
+**Criterio de salida:** Run LIGHT_RAG completo exportado a `data/results/` con faithfulness != 0.0 en todas las queries. `requirements.lock` completo commiteado.
 
 ---
 
