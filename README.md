@@ -32,7 +32,7 @@ CH_LIRAG/
 │   ├── config.py                    # MTEBConfig: .env -> dataclass validada
 │   ├── loader.py                    # MinIO/Parquet -> LoadedDataset
 │   ├── evaluator.py                 # Pipeline: pre-embed + retrieval + gen async
-│   ├── run.py                       # Entry point (--dry-run, -v)
+│   ├── run.py                       # Entry point (--dry-run, -v, --resume)
 │   └── env.example                  # Plantilla .env
 │
 ├── tests/                           # pytest (unit + integration)
@@ -155,6 +155,7 @@ python -m sandbox_mteb.run                  # Run con .env
 python -m sandbox_mteb.run --dry-run        # Solo validar config
 python -m sandbox_mteb.run --env /path/.env # .env alternativo
 python -m sandbox_mteb.run -v               # Verbose (DEBUG)
+python -m sandbox_mteb.run --resume RUN_ID  # Reanudar run desde checkpoint
 
 # Preflight check (recomendado antes de runs LIGHT_RAG largos)
 python -m sandbox_mteb.preflight            # Verifica deps, NIM, MinIO, smoke test
@@ -268,10 +269,10 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 
 **Objetivo:** Que un fallo mid-run no signifique perder miles de llamadas LLM.
 
-| Tarea | Issues | Esfuerzo | Justificacion |
+| Tarea | Issues | Esfuerzo | Estado |
 |---|---|---|---|
-| Checkpoint/resume en evaluator: serializar resultados parciales cada N queries | DTm-36 (parcial) | Alto | Un run LIGHT_RAG con 7K queries y extraccion de tripletas puede tardar horas. Un fallo en la query 6000 pierde todo. Es el riesgo operativo mas alto del sistema. |
-| Counter de entidades descartadas por cap + log WARNING | DTm-26 (parcial) | Bajo | Visibilidad minima: saber cuantas entidades se perdieron. Sin esto, un KG incompleto pasa desapercibido. |
+| Checkpoint/resume en evaluator: serializar resultados parciales cada 50 queries, resume via `--resume RUN_ID` | DTm-36 | Alto | **Hecho** — Chunked processing + atomic JSON checkpoints + CLI `--resume` |
+| Counter de entidades descartadas por cap + log WARNING/ERROR (>10%) | DTm-26 | Bajo | **Hecho** — WARNING si <10% descartadas, ERROR si >10% |
 
 **Criterio de salida:** Un run interrumpido con Ctrl+C puede reanudarse con `--resume <run_id>` y completar sin reprocessar queries ya evaluadas. Log muestra `entities_discarded: N` si el cap se activa.
 
@@ -359,7 +360,7 @@ Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3
 | DTm-23 | Tests LIGHT_RAG: 63 tests unitarios cubriendo `KnowledgeGraph`, `TripletExtractor`, `_fuse_with_graph`, validacion y hardening. | Alta | **Resuelto** |
 | DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja | Abierto |
 | DTm-25 | Batch size de extraccion (500) sobredimensionado vs semaforo HTTP (32). Con 500 coroutines y semaforo de 32, 468 esperan en memoria. Batch de 64-128 (2-4x semaforo) seria mas eficiente. | Baja | Abierto |
-| DTm-26 | `kg_max_entities` descarta entidades nuevas silenciosamente al llegar al cap. Las ultimas queries del corpus tendran KG incompleto. Considerar politica LRU o al menos counter de entidades descartadas para visibilidad. | Media | Abierto |
+| DTm-26 | `kg_max_entities` descarta entidades nuevas silenciosamente al llegar al cap. Las ultimas queries del corpus tendran KG incompleto. Considerar politica LRU o al menos counter de entidades descartadas para visibilidad. | Media | **Resuelto** — WARNING/ERROR con porcentaje de descarte |
 | DTm-27 | Filtro `len(name) < 2` en validacion de entidades rechaza entidades legitimas de 1 caracter (nombres chinos, siglas). Filtrar solo `name.strip() == ""`. | Baja | Abierto |
 | DTm-28 | Sin dependencias pinneadas. `requirements.txt` sin versiones exactas. Un update de `networkx` o `chromadb` puede cambiar resultados silenciosamente entre runs. Necesita `pip freeze` versionado. | Media | Abierto |
 | DTm-29 | BFS en `query_entities()` usa `collections.deque.popleft()` — O(1) por operacion en lugar de O(n) con `list.pop(0)`. | Media | **Resuelto** |
@@ -369,7 +370,7 @@ Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3
 | DTm-33 | Fallos silenciosos en extraccion de tripletas: `extract_from_doc_async()` (`triplet_extractor.py`) devuelve `([], [])` en excepcion con solo un `logger.warning`. `get_stats()` no reporta cuantos documentos fallaron. Fraccion del corpus puede quedar sin representacion en KG sin visibilidad. | Media | **Resuelto** |
 | DTm-34 | Persistencia del Knowledge Graph entre runs via `KG_CACHE_DIR`. Serializa/deserializa el grafo completo (entidades, relaciones, indices, NetworkX) como JSON. Cache invalidado automaticamente por fingerprint del corpus (incluye `KG_MAX_TEXT_CHARS`). `kg_cache_dir` registrado en `config_snapshot`. Log de tamano del fichero al guardar con warning si > 100 MB. | Alta | **Resuelto** |
 | DTm-35 | `fetch_k` para reranker en `evaluator.py:_execute_retrieval()` puede ser menor que `retrieval_k`: con `RERANKER_FETCH_K=0` (default), `fetch_k = top_n * 3` (e.g. 15 con top_n=5), pero metricas pre-rerank necesitan `retrieval_k` docs (20). Resultado: `retrieved_doc_ids` = 15 en lugar de 20 en todas las queries. Fix: `fetch_k = max(fetch_k, retrieval_k)`. | Media | **Resuelto** |
-| DTm-36 | `evaluator.py` es un God Object emergente (1268 LOC). Orquesta carga de datos, subset selection, indexado, pre-embedding, retrieval, reranking, generacion, metricas, agregacion y logging. Sin checkpoint/resume — un fallo mid-run en LIGHT_RAG (miles de llamadas LLM) pierde toda la ejecucion. Candidato a extraer subset selection, metric aggregation y result building a modulos separados. | Media | Abierto |
+| DTm-36 | `evaluator.py` es un God Object emergente (~1500 LOC). Orquesta carga de datos, subset selection, indexado, pre-embedding, retrieval, reranking, generacion, metricas, agregacion y logging. Checkpoint/resume implementado (chunks de 50 queries, `--resume RUN_ID`). Pendiente: extraer subset selection, metric aggregation y result building a modulos separados. | Media | **Parcial** — Checkpoint/resume hecho. Descomposicion pendiente (Fase 4). |
 | DTm-37 | Query sanitization de Tantivy demasiado agresiva: `re.sub(r'[^\w\s]', ' ', query)` (`tantivy_index.py:183`) elimina todo caracter no alfanumerico, destruyendo apostrofes contractivos ("don't" → "don t", "it's" → "it s"). Afecta recall BM25 en queries con contracciones inglesas. Considerar preservar apostrofes intra-palabra: `re.sub(r"(?<!\w)[^\w\s]|[^\w\s'](?!\w)", ' ', query)` o similar. | Baja | Abierto |
 | DTm-38 | Fallback silencioso de estrategia: `LightRAGRetriever` degradaba a SimpleVector sin reflejarlo en `strategy_used` ni `config_snapshot`. Fix: (1) `strategy_used` ahora refleja la estrategia real (SIMPLE_VECTOR si `_has_graph=False`), (2) `_check_strategy()` en evaluator detecta y loggea mismatch con ERROR, (3) `config_snapshot` incluye `strategy_actual` y `strategy_mismatches`, (4) `metadata["graph_active"]` en cada resultado. | Alta | **Resuelto** |
 | DTm-45 | `run_sync()` llamaba `asyncio.run()` repetidamente, creando/destruyendo event loops. `asyncio.Semaphore` se vinculaba al primer loop; al cambiar de loop, todas las llamadas LLM-judge de faithfulness fallaban con "bound to a different event loop" (60+ errores por run). Fix: `_PersistentLoop` singleton con thread daemon que mantiene un unico event loop. `LLMMetrics._lock` cambiado de `asyncio.Lock` a `threading.Lock` (misma vulnerabilidad, seccion critica sin awaits). | Alta | **Resuelto** |
