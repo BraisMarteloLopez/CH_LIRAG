@@ -161,6 +161,9 @@ class MinIOLoader:
                 if not raw_answer_type and raw_answer:
                     raw_answer_type = "text"
                 question_type = str(row.get("question_type", "") or row.get("type", ""))
+                # DTm-15: comparison queries (yes/no) son clasificacion, no extractiva
+                if question_type == "comparison" and raw_answer_type != "label":
+                    raw_answer_type = "label"
 
                 result.queries.append(NormalizedQuery(
                     query_id=qid,

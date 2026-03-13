@@ -45,9 +45,9 @@ class RetrievalConfig:
     strategy: RetrievalStrategy = RetrievalStrategy.SIMPLE_VECTOR
     retrieval_k: int = 20
 
-    # Pesos RRF (HYBRID_PLUS)
-    bm25_weight: float = 0.5
-    vector_weight: float = 0.5
+    # Pesos RRF (HYBRID_PLUS) — DTm-24: renombrados para distinguir de kg_*_weight
+    rrf_bm25_weight: float = 0.5
+    rrf_vector_weight: float = 0.5
     rrf_k: int = 60
     pre_fusion_k: int = 150
 
@@ -81,8 +81,8 @@ class RetrievalConfig:
         return cls(
             strategy=RetrievalStrategy[_env("RETRIEVAL_STRATEGY", "SIMPLE_VECTOR")],
             retrieval_k=_env_int("RETRIEVAL_K", 20),
-            bm25_weight=_env_float("RETRIEVAL_BM25_WEIGHT", 0.5),
-            vector_weight=_env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5),
+            rrf_bm25_weight=_env_float("RRF_BM25_WEIGHT", _env_float("RETRIEVAL_BM25_WEIGHT", 0.5)),
+            rrf_vector_weight=_env_float("RRF_VECTOR_WEIGHT", _env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5)),
             pre_fusion_k=_env_int("RETRIEVAL_PRE_FUSION_K", 150),
             rrf_k=_env_int("RETRIEVAL_RRF_K", 60),
             bm25_language=_env("RETRIEVAL_BM25_LANGUAGE", "en"),

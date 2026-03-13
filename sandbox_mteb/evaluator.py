@@ -14,12 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import json
 import logging
 import random
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from shared.types import (
@@ -45,6 +43,13 @@ from shared.structured_logging import structured_log
 
 from .config import MTEBConfig, GENERATION_PROMPTS
 from .loader import MinIOLoader
+from .checkpoint import (
+    CHECKPOINT_CHUNK_SIZE,
+    save_checkpoint,
+    load_checkpoint,
+    delete_checkpoint,
+)
+from .result_builder import build_run
 
 logger = logging.getLogger(__name__)
 
@@ -647,7 +652,7 @@ class MTEBEvaluator:
         checkpoint_results: List[QueryEvaluationResult] = []
         evaluated_ids: Set[str] = set()
         if run_id:
-            loaded = self._load_checkpoint(run_id)
+            loaded = load_checkpoint(str(self.config.storage.evaluation_results_dir), run_id)
             if loaded:
                 evaluated_ids, checkpoint_results = loaded
                 logger.info(
@@ -687,7 +692,7 @@ class MTEBEvaluator:
                 )
 
         # --- Chunked processing: Retrieval + Generation + Metrics ---
-        chunk_size = self._CHECKPOINT_CHUNK_SIZE
+        chunk_size = CHECKPOINT_CHUNK_SIZE
         all_results = list(checkpoint_results)  # start with resumed results
 
         for chunk_start in range(0, n_pending, chunk_size):
@@ -743,7 +748,7 @@ class MTEBEvaluator:
                 evaluated_ids.add(qr.query_id)
 
             if run_id:
-                self._save_checkpoint(run_id, evaluated_ids, all_results)
+                save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
 
         # Log summary
         if self._strategy_mismatches > 0:
@@ -765,7 +770,7 @@ class MTEBEvaluator:
 
         # Clean up checkpoint on successful completion
         if run_id:
-            self._delete_checkpoint(run_id)
+            delete_checkpoint(str(self.config.storage.evaluation_results_dir), run_id)
 
         return all_results
 
@@ -783,12 +788,12 @@ class MTEBEvaluator:
         for query, retrieval, gm, reranked_status in zip(
             queries, retrievals, gen_metrics_results, rerank_statuses,
         ):
-            qr_metadata: Dict[str, Any] = {}
+            # DTm-20: passthrough generico de metadata de la query
+            qr_metadata: Dict[str, Any] = {
+                k: v for k, v in query.metadata.items() if v
+            }
             if reranked_status is not None:
                 qr_metadata["reranked"] = reranked_status
-            qt = query.metadata.get("question_type", "")
-            if qt:
-                qr_metadata["question_type"] = qt
 
             if gm is not None:
                 results.append(QueryEvaluationResult(
@@ -1178,7 +1183,7 @@ class MTEBEvaluator:
         return primary, secondary
 
     # -----------------------------------------------------------------
-    # BUILD RUN
+    # BUILD RUN (delegado a result_builder.py — DTm-36 fase 4)
     # -----------------------------------------------------------------
 
     def _build_run(
@@ -1189,275 +1194,16 @@ class MTEBEvaluator:
         elapsed_seconds: float,
         indexed_corpus_size: int = 0,
     ) -> EvaluationRun:
-        """Construye EvaluationRun plano a partir de resultados."""
-        completed = [
-            qr for qr in query_results
-            if qr.status == EvaluationStatus.COMPLETED
-        ]
-        failed = [
-            qr for qr in query_results
-            if qr.status == EvaluationStatus.FAILED
-        ]
-
-        # Agregar metricas de retrieval
-        avg_hit5 = 0.0
-        avg_mrr = 0.0
-        recall_sums: Dict[int, float] = {}
-        ndcg_sums: Dict[int, float] = {}
-
-        if completed:
-            for qr in completed:
-                avg_hit5 += qr.retrieval.hit_at_k.get(5, 0.0)
-                avg_mrr += qr.retrieval.mrr
-                for k, v in qr.retrieval.recall_at_k.items():
-                    recall_sums[k] = recall_sums.get(k, 0.0) + v
-                for k, v in qr.retrieval.ndcg_at_k.items():
-                    ndcg_sums[k] = ndcg_sums.get(k, 0.0) + v
-
-            nc = len(completed)
-            avg_hit5 /= nc
-            avg_mrr /= nc
-            avg_recall = {k: v / nc for k, v in recall_sums.items()}
-            avg_ndcg = {k: v / nc for k, v in ndcg_sums.items()}
-            complement_recall = {k: 1.0 - v for k, v in avg_recall.items()}
-            avg_retrieved = sum(
-                len(qr.retrieval.retrieved_doc_ids) for qr in completed
-            ) / nc
-            avg_expected = sum(
-                len(qr.retrieval.expected_doc_ids) for qr in completed
-            ) / nc
-        else:
-            avg_recall = {}
-            avg_ndcg = {}
-            complement_recall = {}
-            avg_retrieved = 0.0
-            avg_expected = 0.0
-
-        # Metricas de retrieval efectivo (post-rerank)
-        avg_gen_recall: Optional[float] = None
-        avg_gen_hit: Optional[float] = None
-        rescue_count = 0
-        if completed:
-            with_gen = [
-                qr for qr in completed if qr.retrieval.generation_doc_ids
-            ]
-            if with_gen:
-                retrieval_k = self.config.retrieval.retrieval_k
-                avg_gen_recall = sum(
-                    qr.retrieval.generation_recall for qr in with_gen
-                ) / len(with_gen)
-                avg_gen_hit = sum(
-                    qr.retrieval.generation_hit for qr in with_gen
-                ) / len(with_gen)
-                rescue_count = sum(
-                    1 for qr in with_gen
-                    if qr.retrieval.generation_recall
-                    > qr.retrieval.recall_at_k.get(retrieval_k, 0.0)
-                )
-
-        # Generacion promedio - INCLUYE ZEROS (fix DT-002)
-        avg_gen = None
-        gen_zero_count = 0
-        gen_nonzero_count = 0
-        if self.config.generation_enabled and completed:
-            all_gen_values = [
-                qr.primary_metric_value
-                for qr in completed
-            ]
-            gen_zero_count = sum(1 for v in all_gen_values if v == 0.0)
-            gen_nonzero_count = sum(1 for v in all_gen_values if v > 0.0)
-            if all_gen_values:
-                avg_gen = sum(all_gen_values) / len(all_gen_values)
-
-        # Config snapshot
-        config_snapshot = {
-            "retrieval_strategy": self.config.retrieval.strategy.name,
-            "retrieval_k": self.config.retrieval.retrieval_k,
-            "pre_fusion_k": self.config.retrieval.pre_fusion_k,
-            "bm25_weight": self.config.retrieval.bm25_weight,
-            "vector_weight": self.config.retrieval.vector_weight,
-            "rrf_k": self.config.retrieval.rrf_k,
-            "corpus_shuffle_seed": self.config.corpus_shuffle_seed,
-            "max_queries": self.config.max_queries,
-            "max_corpus": self.config.max_corpus,
-            "generation_enabled": self.config.generation_enabled,
-            "max_context_chars": self._max_context_chars,
-            "reranker_enabled": self.config.reranker.enabled,
-            "reranker_top_n": self.config.reranker.top_n if self.config.reranker.enabled else None,
-            "rerank_failures": self._rerank_failures if self.config.reranker.enabled else None,
-            "strategy_mismatches": self._strategy_mismatches,
-            "corpus_total_available": len(dataset.corpus),
-            "corpus_indexed": indexed_corpus_size,
-            "gen_zero_count": gen_zero_count,
-            "gen_nonzero_count": gen_nonzero_count,
-            "dev_mode": self.config.dev_mode,
-            # DTm-38: estrategia real vs configurada
-            "strategy_actual": (
-                self.config.retrieval.strategy.name
-                if self._strategy_mismatches == 0
-                else "FALLBACK_SIMPLE_VECTOR"
-            ),
-        }
-        if self.config.dev_mode:
-            config_snapshot["dev_queries"] = self.config.dev_queries
-            config_snapshot["dev_corpus_size"] = self.config.dev_corpus_size
-        if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
-            config_snapshot["kg_max_hops"] = self.config.retrieval.kg_max_hops
-            config_snapshot["kg_max_text_chars"] = self.config.retrieval.kg_max_text_chars
-            config_snapshot["kg_max_entities"] = self.config.retrieval.kg_max_entities
-            config_snapshot["kg_graph_weight"] = self.config.retrieval.kg_graph_weight
-            config_snapshot["kg_vector_weight"] = self.config.retrieval.kg_vector_weight
-            config_snapshot["max_graph_expansion"] = self.config.retrieval.max_graph_expansion
-            config_snapshot["kg_cache_dir"] = self.config.retrieval.kg_cache_dir or None
-
-        return EvaluationRun(
+        return build_run(
+            config=self.config,
             run_id=run_id,
-            dataset_name=self.config.dataset_name,
-            embedding_model=self.config.infra.embedding_model_name,
-            retrieval_strategy=self.config.retrieval.strategy.name,
-            config_snapshot=config_snapshot,
-            status=EvaluationStatus.COMPLETED,
-            num_queries_evaluated=len(completed),
-            num_queries_failed=len(failed),
-            total_documents=indexed_corpus_size,
-            avg_hit_rate_at_5=avg_hit5,
-            avg_mrr=avg_mrr,
-            avg_recall_at_k=avg_recall,
-            avg_ndcg_at_k=avg_ndcg,
-            retrieval_complement_recall_at_k=complement_recall,
-            avg_retrieved_count=avg_retrieved,
-            avg_expected_count=avg_expected,
-            avg_generation_recall=avg_gen_recall,
-            avg_generation_hit=avg_gen_hit,
-            reranker_rescue_count=rescue_count,
-            avg_generation_score=avg_gen,
-            execution_time_seconds=elapsed_seconds,
+            dataset=dataset,
             query_results=query_results,
-        )
-
-    # -----------------------------------------------------------------
-    # CHECKPOINT / RESUME (DTm-36)
-    # -----------------------------------------------------------------
-
-    _CHECKPOINT_CHUNK_SIZE = 50  # queries per checkpoint
-
-    def _checkpoint_path(self, run_id: str) -> Path:
-        return Path(self.config.storage.evaluation_results_dir) / f"{run_id}_checkpoint.json"
-
-    def _save_checkpoint(
-        self,
-        run_id: str,
-        evaluated_query_ids: Set[str],
-        results: List[QueryEvaluationResult],
-    ) -> None:
-        """Persiste resultados parciales a disco."""
-        path = self._checkpoint_path(run_id)
-        data = {
-            "run_id": run_id,
-            "evaluated_query_ids": sorted(evaluated_query_ids),
-            "num_results": len(results),
-            "results": [self._serialize_query_result(r) for r in results],
-        }
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        tmp.rename(path)
-        logger.info(
-            f"  Checkpoint guardado: {len(evaluated_query_ids)} queries → {path.name}"
-        )
-
-    def _load_checkpoint(
-        self, run_id: str
-    ) -> Optional[Tuple[Set[str], List[QueryEvaluationResult]]]:
-        """Carga checkpoint previo si existe."""
-        path = self._checkpoint_path(run_id)
-        if not path.exists():
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            evaluated_ids = set(data["evaluated_query_ids"])
-            results = [self._deserialize_query_result(r) for r in data["results"]]
-            logger.info(
-                f"  Checkpoint cargado: {len(evaluated_ids)} queries desde {path.name}"
-            )
-            return evaluated_ids, results
-        except Exception as e:
-            logger.warning(f"  Checkpoint corrupto ({path.name}): {e}. Ignorando.")
-            return None
-
-    def _delete_checkpoint(self, run_id: str) -> None:
-        path = self._checkpoint_path(run_id)
-        if path.exists():
-            path.unlink()
-            logger.info(f"  Checkpoint eliminado: {path.name}")
-
-    @staticmethod
-    def _serialize_query_result(qr: QueryEvaluationResult) -> Dict[str, Any]:
-        """Serializa un QueryEvaluationResult a dict JSON-compatible."""
-        r = qr.retrieval
-        gen = qr.generation
-        return {
-            "query_id": qr.query_id,
-            "query_text": qr.query_text,
-            "dataset_name": qr.dataset_name,
-            "dataset_type": qr.dataset_type.value,
-            "status": qr.status.value,
-            "error_message": qr.error_message,
-            "expected_response": qr.expected_response,
-            "primary_metric_type": qr.primary_metric_type.value,
-            "primary_metric_value": qr.primary_metric_value,
-            "secondary_metrics": qr.secondary_metrics,
-            "metadata": qr.metadata,
-            "retrieval": {
-                "retrieved_doc_ids": r.retrieved_doc_ids,
-                "retrieved_contents": r.retrieved_contents,
-                "retrieval_scores": r.retrieval_scores,
-                "expected_doc_ids": r.expected_doc_ids,
-                "retrieval_time_ms": r.retrieval_time_ms,
-                "generation_doc_ids": r.generation_doc_ids,
-                "generation_contents": r.generation_contents,
-                "pre_rerank_candidate_ids": r.pre_rerank_candidate_ids,
-                "retrieval_metadata": r.retrieval_metadata,
-            },
-            "generation": {
-                "generated_response": gen.generated_response,
-                "generation_time_ms": gen.generation_time_ms,
-            } if gen else None,
-        }
-
-    @staticmethod
-    def _deserialize_query_result(data: Dict[str, Any]) -> QueryEvaluationResult:
-        """Deserializa un dict a QueryEvaluationResult."""
-        rd = data["retrieval"]
-        gen_data = data.get("generation")
-        return QueryEvaluationResult(
-            query_id=data["query_id"],
-            query_text=data["query_text"],
-            dataset_name=data["dataset_name"],
-            dataset_type=DatasetType(data["dataset_type"]),
-            status=EvaluationStatus(data["status"]),
-            error_message=data.get("error_message"),
-            expected_response=data.get("expected_response"),
-            primary_metric_type=MetricType(data["primary_metric_type"]),
-            primary_metric_value=data.get("primary_metric_value", 0.0),
-            secondary_metrics=data.get("secondary_metrics", {}),
-            metadata=data.get("metadata", {}),
-            retrieval=QueryRetrievalDetail(
-                retrieved_doc_ids=rd["retrieved_doc_ids"],
-                retrieved_contents=rd["retrieved_contents"],
-                retrieval_scores=rd["retrieval_scores"],
-                expected_doc_ids=rd["expected_doc_ids"],
-                retrieval_time_ms=rd.get("retrieval_time_ms", 0.0),
-                generation_doc_ids=rd.get("generation_doc_ids", []),
-                generation_contents=rd.get("generation_contents", []),
-                pre_rerank_candidate_ids=rd.get("pre_rerank_candidate_ids", []),
-                retrieval_metadata=rd.get("retrieval_metadata", {}),
-            ),
-            generation=GenerationResult(
-                generated_response=gen_data["generated_response"],
-                generation_time_ms=gen_data.get("generation_time_ms", 0.0),
-            ) if gen_data else None,
+            elapsed_seconds=elapsed_seconds,
+            indexed_corpus_size=indexed_corpus_size,
+            max_context_chars=self._max_context_chars,
+            rerank_failures=self._rerank_failures,
+            strategy_mismatches=self._strategy_mismatches,
         )
 
     # -----------------------------------------------------------------
