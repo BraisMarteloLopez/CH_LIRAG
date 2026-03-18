@@ -250,127 +250,27 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 ```
 
 ## Fases de implementacion
+### Completado
 
-### Fase 0: Reproducibilidad (prerrequisito para medir cualquier mejora)
+| Fase | Objetivo | Resumen |
+|---|---|---|
+| **0. Reproducibilidad** | Config determinista entre runs | `requirements.lock` pinneado, `preflight.py` para validacion pre-run. **Pendiente:** baseline LIGHT_RAG end-to-end (requiere NIM). |
+| **1. Fiabilidad** | No perder runs de horas | Checkpoint/resume cada 50 queries (`--resume RUN_ID`). Counter de entidades descartadas por cap KG. |
+| **2. Calidad retrieval** | Mejorar Hit@5 y MRR | Apostrofes preservados en BM25, entity normalization alineada KG/linker, `MIN_ENTITY_NAME_LEN=1`. |
+| **3. Eficiencia** | Corpus 66K sin OOM | Batch adaptativo (`semaphore*4`), dedup memoria HYBRID_PLUS. |
+| **4. Mantenibilidad** | `evaluator.py` < 600 LOC | Descompuesto de 1225 a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py`, `checkpoint.py`, `result_builder.py`. |
 
-**Objetivo:** Garantizar que dos runs con la misma config producen resultados comparables.
+Issues resueltos: DTm-14 a DTm-38, DTm-45 (22 issues). Ver historial git para detalles de cada fix.
 
-| Tarea | Issues | Esfuerzo | Estado |
-|---|---|---|---|
-| Pinnear dependencias (`pip freeze > requirements.lock`) | DTm-28 | Bajo | **Hecho** — `requirements.lock` completo con todas las dependencias pinneadas (directas + transitivas) |
-| Preflight check (`sandbox_mteb/preflight.py`) | — | Bajo | **Hecho** — Verifica deps, config, conectividad NIM/MinIO y smoke test LLM antes de un run largo |
-| Run baseline con LIGHT_RAG (validar que funciona end-to-end) | — | Medio | **Pendiente** — Requiere entorno con NIM. Configurar `RETRIEVAL_STRATEGY=LIGHT_RAG` y `KG_CACHE_DIR=./data/kg_cache` en `.env` |
+### Deuda tecnica abierta
 
-**Criterio de salida:** Run LIGHT_RAG completo exportado a `data/results/` con faithfulness != 0.0 en todas las queries. `requirements.lock` completo commiteado.
+| ID | Descripcion | Prioridad |
+|---|---|---|
+| DTm-12 | Sesgo LLM-judge en faithfulness para respuestas cortas (score 0.0-0.2 con F1=1.0). Faithfulness es informativa, no primaria. Inherente al LLM-judge. | Baja |
+| DTm-13 | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. Recall@K varia ±0.02 entre runs. Aceptable para comparaciones relativas. | Baja |
+| DTm-24 | Naming ambiguo: `RRF_VECTOR_WEIGHT` (peso vector en RRF) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph). Semantica distinta, nombre similar. | Baja |
 
----
+### Pendiente de infraestructura
 
-### Fase 1: Fiabilidad del evaluador (evitar perder runs de horas)
-
-**Objetivo:** Que un fallo mid-run no signifique perder miles de llamadas LLM.
-
-| Tarea | Issues | Esfuerzo | Estado |
-|---|---|---|---|
-| Checkpoint/resume en evaluator: serializar resultados parciales cada 50 queries, resume via `--resume RUN_ID` | DTm-36 | Alto | **Hecho** — Chunked processing + atomic JSON checkpoints + CLI `--resume` |
-| Counter de entidades descartadas por cap + log WARNING/ERROR (>10%) | DTm-26 | Bajo | **Hecho** — WARNING si <10% descartadas, ERROR si >10% |
-
-**Criterio de salida:** Un run interrumpido con Ctrl+C puede reanudarse con `--resume <run_id>` y completar sin reprocessar queries ya evaluadas. Log muestra `entities_discarded: N` si el cap se activa.
-
----
-
-### Fase 2: Calidad de retrieval (impacto directo en metricas)
-
-**Objetivo:** Mejorar Hit@5 y MRR atacando las fuentes de perdida de recall conocidas.
-
-| Tarea | Issues | Esfuerzo | Estado |
-|---|---|---|---|
-| Preservar apostrofes intra-palabra en sanitizacion Tantivy | DTm-37 | Bajo | **Hecho** — Regex preserva `'` intra-palabra ("don't" intacto) |
-| Entity normalization: alinear KG con entity_linker (articles, punctuation) | DTm-18 | Medio | **Hecho** — `_normalize_name()` en KG ahora elimina articulos y puntuacion. "U.S." y "US" convergen. |
-| Relajar filtro de nombre de entidad: `MIN_ENTITY_NAME_LEN` 2 → 1 | DTm-27 | Bajo | **Hecho** — Entidades de 1 caracter (siglas, nombres chinos) aceptadas. Aplica a triplet_extractor y entity_linker. |
-
-**Criterio de salida:** Run comparativo HYBRID_PLUS antes/despues con delta medible en Hit@5. Run comparativo LIGHT_RAG antes/despues con delta en Hit@5.
-
----
-
-### Fase 3: Eficiencia de recursos (reducir tiempo y memoria)
-
-**Objetivo:** Que runs de corpus completo (66K docs) sean viables sin OOM.
-
-| Tarea | Issues | Esfuerzo | Estado |
-|---|---|---|---|
-| Batch size de extraccion adaptativo: `semaphore * 4` (min 64) | DTm-25 | Bajo | **Hecho** — Con semaforo=32, batch=128 (antes 500). Menos coroutines reteniendo prompts en memoria. |
-| Eliminar duplicacion de contenido en HYBRID_PLUS | DTm-31 | Medio | **Hecho** — `HybridRetriever._doc_map` reutiliza `_original_contents` en vez de copiar. |
-| Duplicacion `retrieved_contents` / `generation_contents` en evaluator | DTm-14 | Medio | **Descartado** — Sin reranker `generation_contents=[]` (sin duplicacion). Con reranker, ~70MB total con 7K queries. Irrelevante con >50GB RAM. |
-
-**Criterio de salida:** Run con `EVAL_MAX_CORPUS=66576` (corpus completo) sin OOM.
-
----
-
-### Fase 4: Limpieza y mantenibilidad
-
-**Objetivo:** Reducir complejidad accidental para que futuras mejoras sean mas seguras.
-
-| Tarea | Issues | Esfuerzo | Justificacion |
-|---|---|---|---|
-| Extraer subset selection, metric aggregation y result building del evaluator | DTm-36 (completo) | Alto | **Hecho** — `evaluator.py` reducido de 1225 a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py` |
-| Renombrar `RETRIEVAL_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT` para claridad | DTm-24 | Bajo | Semantica distinta (RRF weight vs graph fusion weight), nombre casi identico. Confuso para configurar. Ej: `RRF_VECTOR_WEIGHT` y `GRAPH_FUSION_VECTOR_WEIGHT`. |
-| Metadata passthrough generico para `question_type` en detail CSV | DTm-20 | Bajo | **Hecho** — Metadata dict completo propagado via `query.metadata` en `_assemble_results()` |
-| Asignar `answer_type="label"` a queries comparison en ETL HotpotQA | DTm-15 | Bajo | **Hecho** — `loader.py` detecta `question_type=="comparison"` y asigna `answer_type="label"` |
-
-**Criterio de salida:** `evaluator.py` < 600 LOC. Nuevos modulos con tests unitarios. Naming consistente en `.env`.
-
----
-
-### No planificado (aceptar como limitacion)
-
-| Issue | Razon |
-|---|---|
-| DTm-13 (HNSW no-determinismo) | ChromaDB no expone `hnsw:random_seed`. Requiere fork o cambio de vector store. Varianza ±0.02 es aceptable para comparaciones relativas. |
-| DTm-12 (sesgo faithfulness en respuestas cortas) | Faithfulness es metrica informativa, no primaria. El sesgo es inherente al LLM-judge, no al sistema. Documentar y aceptar. |
-
----
-
-### Diagrama de dependencias entre fases
-
-```
-Fase 0 (Reproducibilidad)
-  │
-  ├──→ Fase 1 (Fiabilidad)     ──→ Fase 3 (Eficiencia)
-  │                                     │
-  └──→ Fase 2 (Calidad)        ──→ Fase 4 (Mantenibilidad)
-```
-
-Fase 0 es prerrequisito de todo. Fases 1 y 2 son independientes entre si. Fase 3 depende de 1 (checkpoint permite runs largos con corpus completo). Fase 4 depende de 2 (los cambios de calidad deben estar estables antes de refactorizar).
-
----
-
-## Deuda tecnica abierta
-
-| ID | Descripcion | Prioridad | Estado |
-|---|---|---|---|
-| DTm-12 | Sesgo LLM-judge en faithfulness para respuestas cortas (score 0.0-0.2 con F1=1.0). F1 es primaria; faithfulness solo informativa. | Baja | Abierto |
-| DTm-13 | No-determinismo HNSW: ChromaDB no soporta `hnsw:random_seed`. Recall@K varia +/-0.02 entre runs. | Baja | Abierto |
-| DTm-14 | Duplicacion contenido en memoria: `retrieved_contents` + `generation_contents`. Sin reranker no hay duplicacion (`generation_contents=[]`). Con reranker, ~70MB con 7K queries. | Baja | **Descartado** — Impacto negligible con >50GB RAM |
-| DTm-15 | ETL HotpotQA no asigna `answer_type="label"` a queries comparison (yes/no). Sin impacto numerico (F1=Accuracy para tokens unicos). | Baja | **Resuelto** — `loader.py` detecta `question_type=="comparison"` y asigna `answer_type="label"` |
-| DTm-16 | Validacion output LLM en triplet extraction: entity types normalizados a enum, nombres >= 2 chars, descriptions truncadas a 200 chars. | Media | **Resuelto** |
-| DTm-18 | Entity normalization basica: no resuelve aliases (US/United States) ni formas parciales. Aplica a HYBRID_PLUS y LIGHT_RAG. | Baja | **Resuelto** — KG `_normalize_name()` alineado con `entity_linker.normalize_entity()` |
-| DTm-20 | `question_type` en detail CSV requiere propagacion manual. Considerar metadata passthrough generico. | Baja | **Resuelto** — Metadata dict completo propagado en `_assemble_results()` |
-| DTm-21 | KG cap de memoria: `max_entities` configurable (default 50K), dedup de relaciones, estimacion de memoria en `get_stats()`. | Media | **Resuelto** |
-| DTm-22 | Batching de coroutines en `extract_batch_async()`: chunks de 500 docs para limitar presion de memoria. | Baja | **Resuelto** |
-| DTm-23 | Tests LIGHT_RAG: 63 tests unitarios cubriendo `KnowledgeGraph`, `TripletExtractor`, `_fuse_with_graph`, validacion y hardening. | Alta | **Resuelto** |
-| DTm-24 | Naming ambiguo: `RETRIEVAL_VECTOR_WEIGHT` (peso vector en RRF/HYBRID_PLUS) vs `KG_VECTOR_WEIGHT` (peso vector en fusion graph/LIGHT_RAG). Semantica distinta, nombre similar. | Baja | Abierto |
-| DTm-25 | Batch size de extraccion (500) sobredimensionado vs semaforo HTTP (32). Con 500 coroutines y semaforo de 32, 468 esperan en memoria. Batch de 64-128 (2-4x semaforo) seria mas eficiente. | Baja | **Resuelto** — Batch adaptativo `semaphore * 4` (min 64) |
-| DTm-26 | `kg_max_entities` descarta entidades nuevas silenciosamente al llegar al cap. Las ultimas queries del corpus tendran KG incompleto. Considerar politica LRU o al menos counter de entidades descartadas para visibilidad. | Media | **Resuelto** — WARNING/ERROR con porcentaje de descarte |
-| DTm-27 | Filtro `len(name) < 2` en validacion de entidades rechaza entidades legitimas de 1 caracter (nombres chinos, siglas). Filtrar solo `name.strip() == ""`. | Baja | **Resuelto** — `MIN_ENTITY_NAME_LEN=1` en triplet_extractor y entity_linker |
-| DTm-28 | Sin dependencias pinneadas. `requirements.txt` sin versiones exactas. Un update de `networkx` o `chromadb` puede cambiar resultados silenciosamente entre runs. Necesita `pip freeze` versionado. | Media | **Resuelto** — `requirements.lock` completo con todas las dependencias pinneadas |
-| DTm-29 | BFS en `query_entities()` usa `collections.deque.popleft()` — O(1) por operacion en lugar de O(n) con `list.pop(0)`. | Media | **Resuelto** |
-| DTm-30 | `query_by_keywords()` (`knowledge_graph.py`) sin indice: recorre toda `self._entities` y todas las aristas en cada llamada — O(entidades × keywords) por query. Resuelto con indice invertido por token. **Nota**: cambio semantico de substring matching a token (word-level) matching — puede afectar recall en nombres compuestos como "new york". | Media | **Resuelto** |
-| DTm-31 | Corpus duplicado en memoria en HYBRID_PLUS: `HybridPlusRetriever._original_contents` y `HybridRetriever._doc_map` mantienen copias independientes del contenido completo. | Baja | **Resuelto** — `_doc_map` reutiliza `_original_contents` |
-| DTm-32 | `random.seed()` global en `evaluator.py:run()`: muta estado global del modulo `random`. Fix: reemplazado por `random.Random(seed)` (instancia aislada) consistente con DEV_MODE. | Baja | **Resuelto** |
-| DTm-33 | Fallos silenciosos en extraccion de tripletas: `extract_from_doc_async()` (`triplet_extractor.py`) devuelve `([], [])` en excepcion con solo un `logger.warning`. `get_stats()` no reporta cuantos documentos fallaron. Fraccion del corpus puede quedar sin representacion en KG sin visibilidad. | Media | **Resuelto** |
-| DTm-34 | Persistencia del Knowledge Graph entre runs via `KG_CACHE_DIR`. Serializa/deserializa el grafo completo (entidades, relaciones, indices, NetworkX) como JSON. Cache invalidado automaticamente por fingerprint del corpus (incluye `KG_MAX_TEXT_CHARS`). `kg_cache_dir` registrado en `config_snapshot`. Log de tamano del fichero al guardar con warning si > 100 MB. | Alta | **Resuelto** |
-| DTm-35 | `fetch_k` para reranker en `evaluator.py:_execute_retrieval()` puede ser menor que `retrieval_k`: con `RERANKER_FETCH_K=0` (default), `fetch_k = top_n * 3` (e.g. 15 con top_n=5), pero metricas pre-rerank necesitan `retrieval_k` docs (20). Resultado: `retrieved_doc_ids` = 15 en lugar de 20 en todas las queries. Fix: `fetch_k = max(fetch_k, retrieval_k)`. | Media | **Resuelto** |
-| DTm-36 | `evaluator.py` es un God Object emergente (~1500 LOC). Orquesta carga de datos, subset selection, indexado, pre-embedding, retrieval, reranking, generacion, metricas, agregacion y logging. | Media | **Resuelto** — Checkpoint/resume + descomposicion completa. `evaluator.py` reducido a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py`, `checkpoint.py`, `result_builder.py` |
-| DTm-37 | Query sanitization de Tantivy demasiado agresiva: `re.sub(r'[^\w\s]', ' ', query)` (`tantivy_index.py:183`) elimina todo caracter no alfanumerico, destruyendo apostrofes contractivos ("don't" → "don t", "it's" → "it s"). Afecta recall BM25 en queries con contracciones inglesas. | Baja | **Resuelto** — Regex preserva apostrofes intra-palabra |
-| DTm-38 | Fallback silencioso de estrategia: `LightRAGRetriever` degradaba a SimpleVector sin reflejarlo en `strategy_used` ni `config_snapshot`. Fix: (1) `strategy_used` ahora refleja la estrategia real (SIMPLE_VECTOR si `_has_graph=False`), (2) `_check_strategy()` en evaluator detecta y loggea mismatch con ERROR, (3) `config_snapshot` incluye `strategy_actual` y `strategy_mismatches`, (4) `metadata["graph_active"]` en cada resultado. | Alta | **Resuelto** |
-| DTm-45 | `run_sync()` llamaba `asyncio.run()` repetidamente, creando/destruyendo event loops. `asyncio.Semaphore` se vinculaba al primer loop; al cambiar de loop, todas las llamadas LLM-judge de faithfulness fallaban con "bound to a different event loop" (60+ errores por run). Fix: `_PersistentLoop` singleton con thread daemon que mantiene un unico event loop. `LLMMetrics._lock` cambiado de `asyncio.Lock` a `threading.Lock` (misma vulnerabilidad, seccion critica sin awaits). | Alta | **Resuelto** |
+- Run baseline LIGHT_RAG end-to-end (requiere entorno con NIM activo)
+- Benchmarks comparativos entre estrategias (Hit@K, F1) — sin datos no se puede validar el valor de HYBRID_PLUS/LIGHT_RAG sobre SIMPLE_VECTOR
