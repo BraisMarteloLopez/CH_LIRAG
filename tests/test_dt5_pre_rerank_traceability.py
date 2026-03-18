@@ -1,5 +1,5 @@
 """
-Tests DT-5: Trazabilidad de candidatos pre-rerank via _execute_retrieval.
+Tests DT-5: Trazabilidad de candidatos pre-rerank via RetrievalExecutor.
 
 Verifica que:
   - Con reranker: pre_rerank_candidate_ids contiene el pool completo
@@ -14,12 +14,11 @@ from unittest.mock import MagicMock
 
 from shared.retrieval.core import RetrievalResult, RetrievalConfig
 from shared.config_base import InfraConfig, RerankerConfig
+from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
+from sandbox_mteb.retrieval_executor import RetrievalExecutor
 
 
-def _make_evaluator(reranker_enabled=True):
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-
+def _make_executor(reranker_enabled=True):
     config = MTEBConfig(
         infra=InfraConfig(),
         storage=MinIOStorageConfig(),
@@ -27,7 +26,11 @@ def _make_evaluator(reranker_enabled=True):
         reranker=RerankerConfig(enabled=reranker_enabled, top_n=3),
         generation_enabled=True,
     )
-    return MTEBEvaluator(config)
+    return config, RetrievalExecutor(
+        retriever=None,
+        reranker=None,
+        config=config,
+    )
 
 
 def _mock_retriever(doc_ids):
@@ -57,14 +60,14 @@ def _mock_reranker(top_ids):
 
 def test_pre_rerank_ids_populated_with_reranker():
     """Con reranker: pre_rerank_candidate_ids = pool completo, generation_doc_ids = post-rerank."""
-    evaluator = _make_evaluator(reranker_enabled=True)
+    config, executor = _make_executor(reranker_enabled=True)
     all_ids = [f"doc_{i:03d}" for i in range(20)]
     reranked_top = ["doc_015", "doc_003", "doc_007"]
 
-    evaluator._retriever = _mock_retriever(all_ids)
-    evaluator._reranker = _mock_reranker(reranked_top)
+    executor._retriever = _mock_retriever(all_ids)
+    executor._reranker = _mock_reranker(reranked_top)
 
-    detail, reranked_ok = evaluator._execute_retrieval("test query", ["doc_003"])
+    detail, reranked_ok = executor.execute("test query", ["doc_003"])
 
     assert detail.pre_rerank_candidate_ids == all_ids
     assert detail.generation_doc_ids == reranked_top
@@ -73,11 +76,11 @@ def test_pre_rerank_ids_populated_with_reranker():
 
 def test_pre_rerank_ids_empty_without_reranker():
     """Sin reranker: pre_rerank_candidate_ids vacio, reranked_status=None."""
-    evaluator = _make_evaluator(reranker_enabled=False)
-    evaluator._retriever = _mock_retriever([f"doc_{i:03d}" for i in range(5)])
-    evaluator._reranker = None
+    config, executor = _make_executor(reranker_enabled=False)
+    executor._retriever = _mock_retriever([f"doc_{i:03d}" for i in range(5)])
+    executor._reranker = None
 
-    detail, reranked_ok = evaluator._execute_retrieval("test query", ["doc_001"])
+    detail, reranked_ok = executor.execute("test query", ["doc_001"])
 
     assert detail.pre_rerank_candidate_ids == []
     assert reranked_ok is None
@@ -85,12 +88,12 @@ def test_pre_rerank_ids_empty_without_reranker():
 
 def test_reranker_promotes_low_ranked_doc():
     """Doc en posicion 16 promovido al top 3: trazable via pre_rerank_candidate_ids."""
-    evaluator = _make_evaluator(reranker_enabled=True)
+    config, executor = _make_executor(reranker_enabled=True)
     all_ids = [f"doc_{i:03d}" for i in range(20)]
-    evaluator._retriever = _mock_retriever(all_ids)
-    evaluator._reranker = _mock_reranker(["doc_015", "doc_000", "doc_001"])
+    executor._retriever = _mock_retriever(all_ids)
+    executor._reranker = _mock_reranker(["doc_015", "doc_000", "doc_001"])
 
-    detail, _ = evaluator._execute_retrieval("test", ["doc_015"])
+    detail, _ = executor.execute("test", ["doc_015"])
 
     # doc_015 NO en top 5 pre-rerank, SI en generation y pre_rerank
     assert "doc_015" not in detail.retrieved_doc_ids

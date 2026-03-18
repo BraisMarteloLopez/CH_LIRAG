@@ -1,5 +1,5 @@
 """
-Tests para _format_context().
+Tests para format_context().
 
 Cobertura:
   - Lista vacia retorna placeholder
@@ -11,25 +11,8 @@ Cobertura:
 
 Sin dependencias externas.
 """
-from unittest.mock import MagicMock
 
-from sandbox_mteb.evaluator import MTEBEvaluator
-from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-from shared.config_base import InfraConfig, RerankerConfig
-from shared.retrieval.core import RetrievalConfig
-
-
-def _make_evaluator(max_context_chars: int = 4000) -> MTEBEvaluator:
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(),
-        reranker=RerankerConfig(enabled=False),
-        generation_enabled=True,
-    )
-    evaluator = MTEBEvaluator(config)
-    evaluator._max_context_chars = max_context_chars
-    return evaluator
+from sandbox_mteb.retrieval_executor import format_context
 
 
 # =================================================================
@@ -38,16 +21,14 @@ def _make_evaluator(max_context_chars: int = 4000) -> MTEBEvaluator:
 
 def test_empty_list_returns_placeholder():
     """Lista vacia retorna placeholder fijo."""
-    ev = _make_evaluator()
-    result = ev._format_context([])
+    result = format_context([], 4000)
     assert result == "[No se encontraron documentos]", f"Obtenido: '{result}'"
     print("PASS: lista vacia retorna placeholder")
 
 
 def test_single_doc_has_header():
     """Un solo documento incluye header [Doc 1]."""
-    ev = _make_evaluator()
-    result = ev._format_context(["contenido del doc"])
+    result = format_context(["contenido del doc"], 4000)
     assert result.startswith("[Doc 1]\n"), f"No empieza con header: '{result[:30]}'"
     assert "contenido del doc" in result
     print("PASS: single doc tiene header [Doc 1]")
@@ -55,8 +36,7 @@ def test_single_doc_has_header():
 
 def test_multiple_docs_numbered():
     """Multiples docs tienen headers numerados secuencialmente."""
-    ev = _make_evaluator()
-    result = ev._format_context(["doc uno", "doc dos", "doc tres"])
+    result = format_context(["doc uno", "doc dos", "doc tres"], 4000)
 
     assert "[Doc 1]" in result
     assert "[Doc 2]" in result
@@ -69,8 +49,7 @@ def test_multiple_docs_numbered():
 
 def test_docs_separated_by_double_newline():
     """Documentos separados por \\n\\n."""
-    ev = _make_evaluator()
-    result = ev._format_context(["aaa", "bbb"])
+    result = format_context(["aaa", "bbb"], 4000)
 
     # Estructura esperada: "[Doc 1]\naaa\n\n[Doc 2]\nbbb"
     parts = result.split("\n\n")
@@ -86,8 +65,7 @@ def test_truncation_omits_docs_that_exceed_limit():
     # Primer doc: sep_len=0 + part_len(8+4)=12. length=12.
     # Segundo doc: sep_len=2 + part_len(8+4)=12. Guard: 12+2+12=26 > 20. Break.
     # Con max_context_chars=20, segundo doc no cabe
-    ev = _make_evaluator(max_context_chars=20)
-    result = ev._format_context(["aaaa", "bbbb"])
+    result = format_context(["aaaa", "bbbb"], 20)
 
     assert "aaaa" in result
     assert "bbbb" not in result, f"Segundo doc no deberia caber: '{result}'"
@@ -97,18 +75,16 @@ def test_truncation_omits_docs_that_exceed_limit():
 
 def test_truncation_first_doc_too_large():
     """Si el primer doc ya excede max_chars, result es string vacio (join de lista vacia)."""
-    ev = _make_evaluator(max_context_chars=5)
     # "[Doc 1]\n" = 8 chars > 5, asi que el primer doc no cabe
-    result = ev._format_context(["este doc es largo"])
+    result = format_context(["este doc es largo"], 5)
     assert result == "", f"Esperado string vacio, obtenido: '{result}'"
     print("PASS: primer doc excede limite -> string vacio")
 
 
 def test_all_docs_fit_within_limit():
     """Todos los docs caben si max_chars es suficiente."""
-    ev = _make_evaluator(max_context_chars=10000)
     docs = [f"documento numero {i}" for i in range(5)]
-    result = ev._format_context(docs)
+    result = format_context(docs, 10000)
 
     for i in range(1, 6):
         assert f"[Doc {i}]" in result, f"Falta [Doc {i}]"
@@ -122,16 +98,14 @@ def test_exact_boundary():
     header = "[Doc 1]\n"  # 8 chars
     # length check: 0 + 8 + 1 = 9 > max_length?
     # Si max_length=9, 9 > 9 es False, asi que cabe
-    ev = _make_evaluator(max_context_chars=9)
-    result = ev._format_context(["x"])
+    result = format_context(["x"], 9)
     assert "x" in result, f"Doc deberia caber exactamente: '{result}'"
     print("PASS: doc que cabe exactamente en el limite se incluye")
 
 
 def test_empty_string_docs():
     """Documentos con string vacio: headers se generan pero sin contenido."""
-    ev = _make_evaluator()
-    result = ev._format_context(["", "contenido"])
+    result = format_context(["", "contenido"], 4000)
     assert "[Doc 1]" in result
     assert "[Doc 2]" in result
     assert "contenido" in result

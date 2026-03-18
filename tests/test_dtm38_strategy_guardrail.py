@@ -5,7 +5,7 @@ Cobertura:
   S1. strategy_used=SIMPLE_VECTOR cuando LightRAGRetriever no tiene grafo activo.
   S2. strategy_used=LIGHT_RAG cuando LightRAGRetriever tiene grafo activo.
   S3. metadata["graph_active"] refleja estado del grafo en ambos casos.
-  S4. Evaluator detecta strategy mismatch (config=LIGHT_RAG, actual=SIMPLE_VECTOR).
+  S4. RetrievalExecutor detecta strategy mismatch (config=LIGHT_RAG, actual=SIMPLE_VECTOR).
   S5. config_snapshot incluye strategy_actual y strategy_mismatches.
   S6. fetch_k >= retrieval_k cuando reranker activo (DTm-35).
 """
@@ -21,6 +21,10 @@ from shared.retrieval.core import (
 )
 from shared.retrieval.knowledge_graph import KnowledgeGraph
 from shared.retrieval.lightrag_retriever import LightRAGRetriever
+from shared.config_base import InfraConfig, RerankerConfig
+from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
+from sandbox_mteb.retrieval_executor import RetrievalExecutor
+from sandbox_mteb.result_builder import build_run
 
 
 # =============================================================================
@@ -53,6 +57,42 @@ def _make_lightrag(has_graph=True):
         retriever._vector_retriever.retrieve.return_value
     )
     return retriever
+
+
+class _MockRetrieverWithStrategy:
+    """Retriever que devuelve una estrategia especifica."""
+
+    def __init__(self, strategy: RetrievalStrategy):
+        self._strategy = strategy
+
+    def retrieve(self, query_text, top_k=None):
+        k = top_k or 20
+        return RetrievalResult(
+            doc_ids=[f"doc_{i}" for i in range(k)],
+            contents=[f"content_{i}" for i in range(k)],
+            scores=[1.0 - i * 0.01 for i in range(k)],
+            strategy_used=self._strategy,
+        )
+
+    def retrieve_by_vector(self, query_text, query_vector, top_k=None):
+        return self.retrieve(query_text, top_k)
+
+
+def _make_executor(strategy=RetrievalStrategy.LIGHT_RAG, retrieval_k=20, reranker_enabled=False, reranker_top_n=5, reranker_fetch_k=0):
+    config = MTEBConfig(
+        infra=InfraConfig(),
+        storage=MinIOStorageConfig(),
+        retrieval=RetrievalConfig(
+            strategy=strategy,
+            retrieval_k=retrieval_k,
+        ),
+        reranker=RerankerConfig(enabled=reranker_enabled, top_n=reranker_top_n, fetch_k=reranker_fetch_k),
+    )
+    return config, RetrievalExecutor(
+        retriever=None,
+        reranker=None,
+        config=config,
+    )
 
 
 # =============================================================================
@@ -105,50 +145,17 @@ def test_graph_active_metadata_true():
 
 
 # =============================================================================
-# S4: Evaluator detecta strategy mismatch
+# S4: Executor detecta strategy mismatch
 # =============================================================================
 
-class _MockRetrieverWithStrategy:
-    """Retriever que devuelve una estrategia especifica."""
+def test_executor_detects_strategy_mismatch():
+    """Executor incrementa strategy_mismatches cuando config != actual."""
+    config, executor = _make_executor(strategy=RetrievalStrategy.LIGHT_RAG)
+    executor._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
 
-    def __init__(self, strategy: RetrievalStrategy):
-        self._strategy = strategy
+    detail, _ = executor.execute("test query", ["doc_0"])
 
-    def retrieve(self, query_text, top_k=None):
-        k = top_k or 20
-        return RetrievalResult(
-            doc_ids=[f"doc_{i}" for i in range(k)],
-            contents=[f"content_{i}" for i in range(k)],
-            scores=[1.0 - i * 0.01 for i in range(k)],
-            strategy_used=self._strategy,
-        )
-
-    def retrieve_by_vector(self, query_text, query_vector, top_k=None):
-        return self.retrieve(query_text, top_k)
-
-
-def test_evaluator_detects_strategy_mismatch():
-    """Evaluator incrementa _strategy_mismatches cuando config != actual."""
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.config_base import InfraConfig, RerankerConfig
-
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(
-            strategy=RetrievalStrategy.LIGHT_RAG,
-            retrieval_k=20,
-        ),
-        reranker=RerankerConfig(enabled=False),
-    )
-    evaluator = MTEBEvaluator(config)
-    # Retriever devuelve SIMPLE_VECTOR (simula fallback)
-    evaluator._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
-
-    detail, _ = evaluator._execute_retrieval("test query", ["doc_0"])
-
-    assert evaluator._strategy_mismatches == 1
+    assert executor.strategy_mismatches == 1
     assert len(detail.retrieved_doc_ids) == 20
 
 
@@ -158,31 +165,29 @@ def test_evaluator_detects_strategy_mismatch():
 
 def test_config_snapshot_strategy_fields():
     """config_snapshot registra strategy_actual y strategy_mismatches."""
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.config_base import InfraConfig, RerankerConfig
     from shared.types import LoadedDataset, NormalizedDocument
 
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(
-            strategy=RetrievalStrategy.LIGHT_RAG,
-            retrieval_k=20,
-        ),
-        reranker=RerankerConfig(enabled=False),
-    )
-    evaluator = MTEBEvaluator(config)
-    evaluator._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
+    config, executor = _make_executor(strategy=RetrievalStrategy.LIGHT_RAG)
+    executor._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
 
     # Trigger mismatch
-    evaluator._execute_retrieval("q1", ["doc_0"])
+    executor.execute("q1", ["doc_0"])
 
     dataset = LoadedDataset(
         name="test",
         corpus={"doc_0": NormalizedDocument("doc_0", "content")},
     )
-    run = evaluator._build_run("test_run", dataset, [], 1.0, 1)
+    run = build_run(
+        config=config,
+        run_id="test_run",
+        dataset=dataset,
+        query_results=[],
+        elapsed_seconds=1.0,
+        indexed_corpus_size=1,
+        max_context_chars=4000,
+        rerank_failures=executor.rerank_failures,
+        strategy_mismatches=executor.strategy_mismatches,
+    )
 
     assert run.config_snapshot["strategy_mismatches"] == 1
     assert run.config_snapshot["strategy_actual"] == "FALLBACK_SIMPLE_VECTOR"
@@ -190,30 +195,28 @@ def test_config_snapshot_strategy_fields():
 
 def test_config_snapshot_no_mismatch():
     """Sin mismatch, strategy_actual coincide con configurada."""
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.config_base import InfraConfig, RerankerConfig
     from shared.types import LoadedDataset, NormalizedDocument
 
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(
-            strategy=RetrievalStrategy.SIMPLE_VECTOR,
-            retrieval_k=20,
-        ),
-        reranker=RerankerConfig(enabled=False),
-    )
-    evaluator = MTEBEvaluator(config)
-    evaluator._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
+    config, executor = _make_executor(strategy=RetrievalStrategy.SIMPLE_VECTOR)
+    executor._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
 
-    evaluator._execute_retrieval("q1", ["doc_0"])
+    executor.execute("q1", ["doc_0"])
 
     dataset = LoadedDataset(
         name="test",
         corpus={"doc_0": NormalizedDocument("doc_0", "content")},
     )
-    run = evaluator._build_run("test_run", dataset, [], 1.0, 1)
+    run = build_run(
+        config=config,
+        run_id="test_run",
+        dataset=dataset,
+        query_results=[],
+        elapsed_seconds=1.0,
+        indexed_corpus_size=1,
+        max_context_chars=4000,
+        rerank_failures=executor.rerank_failures,
+        strategy_mismatches=executor.strategy_mismatches,
+    )
 
     assert run.config_snapshot["strategy_mismatches"] == 0
     assert run.config_snapshot["strategy_actual"] == "SIMPLE_VECTOR"
@@ -225,20 +228,13 @@ def test_config_snapshot_no_mismatch():
 
 def test_fetch_k_at_least_retrieval_k():
     """Con reranker top_n=5, fetch_k debe ser >= retrieval_k=20, no 15."""
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.config_base import InfraConfig, RerankerConfig
-
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(
-            strategy=RetrievalStrategy.SIMPLE_VECTOR,
-            retrieval_k=20,
-        ),
-        reranker=RerankerConfig(enabled=True, top_n=5, fetch_k=0),
+    config, executor = _make_executor(
+        strategy=RetrievalStrategy.SIMPLE_VECTOR,
+        retrieval_k=20,
+        reranker_enabled=True,
+        reranker_top_n=5,
+        reranker_fetch_k=0,
     )
-    evaluator = MTEBEvaluator(config)
 
     # Mock reranker que retorna lo que recibe (passthrough)
     mock_reranker = MagicMock()
@@ -250,10 +246,10 @@ def test_fetch_k_at_least_retrieval_k():
         strategy_used=retrieval_result.strategy_used,
         metadata={"reranked": True},
     )
-    evaluator._reranker = mock_reranker
-    evaluator._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
+    executor._reranker = mock_reranker
+    executor._retriever = _MockRetrieverWithStrategy(RetrievalStrategy.SIMPLE_VECTOR)
 
-    detail, reranked_ok = evaluator._execute_retrieval("test query", ["doc_0"])
+    detail, reranked_ok = executor.execute("test query", ["doc_0"])
 
     # Pre-rerank metrics should have 20 docs, not 15
     assert len(detail.retrieved_doc_ids) == 20

@@ -12,7 +12,7 @@ Cobertura:
   TE8. extract_from_doc_async: texto vacio -> ([], []).
   TE9. _parse_keywords_json con JSON valido.
   TE10. _parse_keywords_json con JSON malformado -> ([], []).
-  TE11. Entity name < 2 chars rechazada (DTm-16).
+  TE11. Entity name de 1 char aceptada (DTm-27: MIN_ENTITY_NAME_LEN=1).
   TE12. Entity name vacio rechazada (DTm-16).
   TE13. Entity description truncada a MAX_DESCRIPTION_CHARS (DTm-16).
   TE14. Relation description truncada a MAX_DESCRIPTION_CHARS (DTm-16).
@@ -179,9 +179,7 @@ def test_truncation():
 
     long_text = "x" * 500
 
-    asyncio.get_event_loop().run_until_complete(
-        ext.extract_from_doc_async("doc1", long_text)
-    )
+    asyncio.run(ext.extract_from_doc_async("doc1", long_text))
 
     # Verificar que el prompt enviado contiene texto truncado
     call_args = mock_llm.invoke_async.call_args
@@ -201,7 +199,7 @@ def test_extract_from_doc_llm_error():
     mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("API down"))
     ext = _make_extractor(mock_llm=mock_llm)
 
-    entities, relations = asyncio.get_event_loop().run_until_complete(
+    entities, relations = asyncio.run(
         ext.extract_from_doc_async("doc1", "some text")
     )
     assert entities == []
@@ -218,7 +216,7 @@ def test_extract_from_doc_empty_text():
     mock_llm.invoke_async = AsyncMock()
     ext = _make_extractor(mock_llm=mock_llm)
 
-    entities, relations = asyncio.get_event_loop().run_until_complete(
+    entities, relations = asyncio.run(
         ext.extract_from_doc_async("doc1", "")
     )
     assert entities == []
@@ -232,7 +230,7 @@ def test_extract_from_doc_whitespace_only():
     mock_llm.invoke_async = AsyncMock()
     ext = _make_extractor(mock_llm=mock_llm)
 
-    entities, relations = asyncio.get_event_loop().run_until_complete(
+    entities, relations = asyncio.run(
         ext.extract_from_doc_async("doc1", "   \n  ")
     )
     assert entities == []
@@ -278,13 +276,14 @@ def test_parse_keywords_malformed():
 # TE11-TE16: Validacion post-parse (DTm-16)
 # =============================================================================
 
-def test_entity_name_too_short_rejected():
-    """Entity con nombre < 2 chars se rechaza (DTm-16)."""
+def test_entity_name_min_length_accepted():
+    """Entity con nombre de 1 char se acepta (DTm-27: MIN_ENTITY_NAME_LEN=1)."""
     ext = _make_extractor()
     raw = '{"entities": [{"name": "A", "type": "PERSON"}, {"name": "Bob", "type": "PERSON"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
-    assert len(entities) == 1
-    assert entities[0].name == "Bob"
+    assert len(entities) == 2
+    assert entities[0].name == "A"
+    assert entities[1].name == "Bob"
 
 
 def test_entity_empty_name_rejected():

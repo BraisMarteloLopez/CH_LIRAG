@@ -12,13 +12,11 @@ Optimizacion v3.2: pre-embed queries en batch via REST NIM.
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import logging
-import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from shared.types import (
     EvaluationRun,
@@ -26,22 +24,18 @@ from shared.types import (
     LoadedDataset,
     NormalizedQuery,
     QueryRetrievalDetail,
-    GenerationResult,
     QueryEvaluationResult,
-    DatasetType,
-    MetricType,
-    LLMJudgeProtocol,
     EmbeddingModelProtocol,
     get_dataset_config,
 )
 from shared.llm import AsyncLLMService, load_embedding_model, run_sync
-from shared.metrics import MetricsCalculator, MetricResult
+from shared.metrics import MetricsCalculator
 from shared.retrieval import get_retriever, RetrievalStrategy
 from shared.retrieval.core import BaseRetriever
 from shared.retrieval.reranker import CrossEncoderReranker, HAS_NVIDIA_RERANK
 from shared.structured_logging import structured_log
 
-from .config import MTEBConfig, GENERATION_PROMPTS
+from .config import MTEBConfig
 from .loader import MinIOLoader
 from .checkpoint import (
     CHECKPOINT_CHUNK_SIZE,
@@ -50,29 +44,12 @@ from .checkpoint import (
     delete_checkpoint,
 )
 from .result_builder import build_run
+from .subset_selection import select_subset_dev, select_subset_standard
+from .retrieval_executor import RetrievalExecutor, format_context
+from .generation_executor import GenerationExecutor, GenMetricsResult
+from .embedding_service import batch_embed_queries, resolve_max_context_chars
 
 logger = logging.getLogger(__name__)
-
-
-# -----------------------------------------------------------------
-# TIPO INTERNO
-# -----------------------------------------------------------------
-
-class _GenMetricsResult:
-    """Resultado interno del pipeline async (generacion + metricas)."""
-    __slots__ = ("generation", "primary_metric_value", "primary_metric_type", "secondary_metrics")
-
-    def __init__(
-        self,
-        generation: GenerationResult,
-        primary_metric_value: float,
-        primary_metric_type: MetricType = MetricType.F1_SCORE,
-        secondary_metrics: Optional[Dict[str, float]] = None,
-    ):
-        self.generation = generation
-        self.primary_metric_value = primary_metric_value
-        self.primary_metric_type = primary_metric_type
-        self.secondary_metrics = secondary_metrics or {}
 
 
 # -----------------------------------------------------------------
@@ -92,100 +69,11 @@ class MTEBEvaluator:
         self._embedding_model: Optional[EmbeddingModelProtocol] = None
         self._retriever: Optional[BaseRetriever] = None
         self._reranker: Optional[CrossEncoderReranker] = None
+        self._retrieval_executor: Optional[RetrievalExecutor] = None
+        self._generation_executor: Optional[GenerationExecutor] = None
         self._llm_service: Optional[AsyncLLMService] = None
         self._metrics_calculator: Optional[MetricsCalculator] = None
         self._max_context_chars: int = 4000  # fallback por defecto
-        self._rerank_failures: int = 0
-        self._strategy_mismatches: int = 0
-
-    # -----------------------------------------------------------------
-    # CONTEXT WINDOW DETECTION
-    # -----------------------------------------------------------------
-
-    # Constantes para derivar limite de contexto desde model context window.
-    _CHARS_PER_TOKEN: float = 4.0
-    _OVERHEAD_TOKENS: int = 1024  # system prompt + user template + max_output
-
-    def _query_model_context_window(self) -> Optional[int]:
-        """
-        Consulta GET /v1/models del LLM NIM para obtener max_model_len.
-
-        Returns:
-            max_model_len en tokens, o None si no se puede obtener.
-        """
-        import urllib.request
-        import json
-
-        base_url = self.config.infra.llm_base_url.rstrip("/")
-        url = f"{base_url}/models"
-
-        try:
-            req = urllib.request.Request(url, method="GET")
-            req.add_header("Accept", "application/json")
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-
-            models = data.get("data", [])
-            if not models:
-                logger.warning("GET /v1/models: respuesta vacia")
-                return None
-
-            max_model_len = models[0].get("max_model_len")
-            if max_model_len and isinstance(max_model_len, (int, float)):
-                logger.info(
-                    f"  LLM context window: {int(max_model_len)} tokens "
-                    f"(modelo: {models[0].get('id', 'unknown')})"
-                )
-                return int(max_model_len)
-
-            logger.warning("GET /v1/models: max_model_len no encontrado en respuesta")
-            return None
-
-        except Exception as e:
-            logger.warning(f"No se pudo consultar context window del LLM: {e}")
-            return None
-
-    def _resolve_max_context_chars(self) -> int:
-        """
-        Determina el limite de caracteres para contexto de generacion.
-
-        Prioridad:
-          1. Override manual via GENERATION_MAX_CONTEXT_CHARS > 0
-          2. Derivado del context window del modelo via /v1/models
-          3. Fallback hardcodeado: 4000 chars
-        """
-        fallback = 4000
-
-        # 1. Override manual
-        if self.config.generation_max_context_chars > 0:
-            logger.info(
-                f"  Context chars: {self.config.generation_max_context_chars} "
-                "(override manual via GENERATION_MAX_CONTEXT_CHARS)"
-            )
-            return self.config.generation_max_context_chars
-
-        # 2. Derivar del modelo
-        max_model_len = self._query_model_context_window()
-        if max_model_len is not None:
-            available_tokens = max_model_len - self._OVERHEAD_TOKENS
-            if available_tokens <= 0:
-                logger.warning(
-                    f"  Context window ({max_model_len}) menor que overhead "
-                    f"({self._OVERHEAD_TOKENS}). Usando fallback={fallback}"
-                )
-                return fallback
-
-            derived_chars = int(available_tokens * self._CHARS_PER_TOKEN)
-            logger.info(
-                f"  Context chars: {derived_chars} "
-                f"(derivado: {max_model_len} tokens - {self._OVERHEAD_TOKENS} overhead "
-                f"= {available_tokens} tokens * {self._CHARS_PER_TOKEN} chars/token)"
-            )
-            return derived_chars
-
-        # 3. Fallback
-        logger.info(f"  Context chars: {fallback} (fallback por defecto)")
-        return fallback
 
     def run(self, resume_run_id: Optional[str] = None) -> EvaluationRun:
         """
@@ -238,37 +126,9 @@ class MTEBEvaluator:
                     logger.info(
                         "  DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS"
                     )
-                queries, corpus = self._select_subset_dev(dataset)
+                queries, corpus = select_subset_dev(dataset, self.config)
             else:
-                # --- flujo estandar (codigo original) ---
-                # max_queries=0 / max_corpus=0 significa "usar todo"
-                if self.config.max_queries > 0:
-                    queries = dataset.queries[: self.config.max_queries]
-                else:
-                    queries = dataset.queries
-
-                # Shuffle corpus antes de slice para evitar sesgo de orden.
-                # Sin shuffle, corpus[0:N] puede contener artificialmente
-                # todos los docs relevantes para queries[0:M] (alineacion
-                # por posicion detectada en HotpotQA Parquet).
-                corpus_ids = list(dataset.corpus.keys())
-                corpus_seed = self.config.corpus_shuffle_seed
-                if corpus_seed is not None:
-                    # Instancia aislada para no contaminar RNG global (DTm-32)
-                    rng_corpus = random.Random(corpus_seed)
-                    rng_corpus.shuffle(corpus_ids)
-                    logger.info(f"  Corpus shuffled con seed={corpus_seed}")
-                else:
-                    logger.warning(
-                        "  CORPUS_SHUFFLE_SEED no configurado. "
-                        "Corpus NO shuffled (riesgo de sesgo de orden)."
-                    )
-
-                if self.config.max_corpus > 0:
-                    corpus_ids = corpus_ids[: self.config.max_corpus]
-                # else: usar todo el corpus (max_corpus=0)
-
-                corpus = {k: dataset.corpus[k] for k in corpus_ids}
+                queries, corpus = select_subset_standard(dataset, self.config)
 
             logger.info(
                 f"  Usando {len(queries)} queries, {len(corpus)} docs"
@@ -276,6 +136,13 @@ class MTEBEvaluator:
 
             # 4. Indexar documentos
             self._index_documents(dataset.name, corpus, run_id)
+
+            # 4b. Crear retrieval executor
+            self._retrieval_executor = RetrievalExecutor(
+                retriever=self._retriever,
+                reranker=self._reranker,
+                config=self.config,
+            )
 
             # 5. Evaluar queries (pipeline async)
             ds_config = get_dataset_config(dataset.name)
@@ -381,7 +248,14 @@ class MTEBEvaluator:
 
         # Limite de contexto para generacion
         if self.config.generation_enabled and self._llm_service:
-            self._max_context_chars = self._resolve_max_context_chars()
+            self._max_context_chars = resolve_max_context_chars(self.config)
+
+            # Generation executor
+            self._generation_executor = GenerationExecutor(
+                llm_service=self._llm_service,
+                metrics_calculator=self._metrics_calculator,
+                max_context_chars=self._max_context_chars,
+            )
 
     # -----------------------------------------------------------------
     # DATA LOADING
@@ -405,73 +279,6 @@ class MTEBEvaluator:
             )
 
         return dataset
-
-    # -----------------------------------------------------------------
-    # SUBSET SELECTION (DEV_MODE)
-    # -----------------------------------------------------------------
-
-    def _select_subset_dev(
-        self, dataset: LoadedDataset,
-    ) -> Tuple[List[NormalizedQuery], Dict[str, Any]]:
-        """
-        Subset para DEV_MODE: gold docs garantizados en corpus.
-
-        1. Shuffle queries con seed, tomar dev_queries
-        2. Recopilar gold doc_ids de queries seleccionadas
-        3. Incluir gold docs en corpus
-        4. Rellenar con distractores aleatorios hasta dev_corpus_size
-        """
-        seed = self.config.corpus_shuffle_seed or 42
-        rng = random.Random(seed)
-        dev_queries = self.config.dev_queries
-        dev_corpus_size = self.config.dev_corpus_size
-
-        # 1. Seleccionar queries
-        all_queries = list(dataset.queries)
-        rng.shuffle(all_queries)
-        if dev_queries >= len(all_queries):
-            logger.warning(
-                f"  DEV_MODE: dev_queries ({dev_queries}) >= total queries "
-                f"({len(all_queries)}). Usando todas."
-            )
-        queries = all_queries[:dev_queries]
-
-        # 2. Recopilar gold docs
-        gold_ids = set()
-        for q in queries:
-            gold_ids.update(q.relevant_doc_ids)
-
-        available_gold = gold_ids & set(dataset.corpus.keys())
-        missing = gold_ids - available_gold
-        if missing:
-            logger.warning(
-                f"  DEV_MODE: {len(missing)} gold docs ausentes en corpus"
-            )
-
-        if len(available_gold) > dev_corpus_size:
-            raise ValueError(
-                f"DEV_MODE: gold docs ({len(available_gold)}) > "
-                f"DEV_CORPUS_SIZE ({dev_corpus_size}). Aumentar DEV_CORPUS_SIZE."
-            )
-
-        # 3. Corpus: gold obligatorios + distractores aleatorios
-        corpus = {k: dataset.corpus[k] for k in available_gold}
-
-        non_gold = [k for k in dataset.corpus if k not in gold_ids]
-        rng.shuffle(non_gold)
-        n_distractors = dev_corpus_size - len(corpus)
-        for doc_id in non_gold[:n_distractors]:
-            corpus[doc_id] = dataset.corpus[doc_id]
-
-        n_gold = len(available_gold)
-        logger.info(
-            f"  DEV_MODE: {len(queries)} queries, "
-            f"{n_gold} gold docs, "
-            f"{len(corpus) - n_gold} distractores, "
-            f"{len(corpus)} corpus total"
-        )
-
-        return queries, corpus
 
     # -----------------------------------------------------------------
     # INDEXACION
@@ -533,98 +340,6 @@ class MTEBEvaluator:
         logger.info("  Indexacion completada")
 
     # -----------------------------------------------------------------
-    # PRE-EMBED QUERIES (batch REST al NIM)
-    # -----------------------------------------------------------------
-
-    def _batch_embed_queries(
-        self, query_texts: List[str]
-    ) -> List[List[float]]:
-        """
-        Embebe todas las queries en batch via REST al NIM de embeddings.
-
-        Usa input_type=query para modelos asimetricos (el NIM distingue
-        entre query y passage). Para modelos simetricos, input_type se omite.
-
-        Returns:
-            Lista de vectores, uno por query. Si falla, retorna lista vacia
-            y el caller debe hacer fallback a retrieval sin pre-embed.
-        """
-        import json
-        import urllib.request
-
-        n = len(query_texts)
-        batch_size = self.config.infra.embedding_batch_size or 5
-        base_url = self.config.infra.embedding_base_url.rstrip("/")
-        model_name = self.config.infra.embedding_model_name
-        model_type = self.config.infra.embedding_model_type
-        url = f"{base_url}/embeddings"
-
-        all_vectors: List[List[float]] = []
-
-        logger.info(
-            f"  Pre-embedding {n} queries (batch={batch_size}, "
-            f"type={model_type})..."
-        )
-        t0 = time.time()
-
-        for batch_start in range(0, n, batch_size):
-            batch = query_texts[batch_start : batch_start + batch_size]
-
-            payload: Dict[str, Any] = {
-                "input": batch,
-                "model": model_name,
-            }
-            # Modelos asimetricos requieren input_type
-            if model_type == "asymmetric":
-                payload["input_type"] = "query"
-
-            # FIX DTm-6: retry por batch antes de abandonar todo el pre-embed.
-            max_retries = 2
-            for attempt in range(max_retries + 1):
-                try:
-                    body = json.dumps(payload).encode("utf-8")
-                    req = urllib.request.Request(
-                        url, data=body, method="POST",
-                        headers={"Content-Type": "application/json"},
-                    )
-                    with urllib.request.urlopen(req, timeout=30) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-
-                    # Ordenar por index (la API puede devolver desordenado)
-                    items = sorted(data["data"], key=lambda x: x["index"])
-                    for item in items:
-                        all_vectors.append(item["embedding"])
-                    break  # batch OK
-
-                except Exception as e:
-                    if attempt < max_retries:
-                        wait = 2 ** attempt
-                        logger.warning(
-                            f"  Batch embed retry {attempt + 1}/{max_retries} "
-                            f"(offset={batch_start}): {e}. "
-                            f"Reintentando en {wait}s..."
-                        )
-                        time.sleep(wait)
-                    else:
-                        logger.warning(
-                            f"  Error en batch embed (offset={batch_start}) "
-                            f"tras {max_retries + 1} intentos: {e}. "
-                            "Fallback a retrieval sin pre-embed."
-                        )
-                        return []
-
-            batch_end = batch_start + len(batch)
-            if batch_end % 500 == 0 or batch_end == n:
-                logger.info(f"  Queries embebidas: {batch_end}/{n}")
-
-        elapsed = time.time() - t0
-        logger.info(
-            f"  Pre-embedding completado: {n} queries en {elapsed:.1f}s "
-            f"({n / elapsed:.0f} queries/s)"
-        )
-        return all_vectors
-
-    # -----------------------------------------------------------------
     # EVALUACION DE QUERIES (PIPELINE ASYNC)
     # -----------------------------------------------------------------
 
@@ -670,7 +385,7 @@ class MTEBEvaluator:
 
         # --- Fase 0: Pre-embed queries pendientes ---
         pending_texts = [q.query_text for q in pending_queries]
-        query_vectors = self._batch_embed_queries(pending_texts)
+        query_vectors = batch_embed_queries(pending_texts, self.config)
         use_preembed = len(query_vectors) == n_pending
         if not use_preembed:
             logger.warning(
@@ -713,7 +428,7 @@ class MTEBEvaluator:
             rerank_statuses: List[Optional[bool]] = []
             for i, query in enumerate(chunk_queries):
                 vector = chunk_vectors[i] if use_preembed else None
-                detail, reranked_ok = self._execute_retrieval(
+                detail, reranked_ok = self._retrieval_executor.execute(
                     query.query_text, query.relevant_doc_ids,
                     query_vector=vector,
                 )
@@ -721,10 +436,10 @@ class MTEBEvaluator:
                 rerank_statuses.append(reranked_ok)
 
             # Generation + Metrics (async)
-            gen_metrics_results: List[Optional[_GenMetricsResult]] = [None] * n_chunk
-            if self.config.generation_enabled and self._llm_service:
+            gen_metrics_results: List[Optional[GenMetricsResult]] = [None] * n_chunk
+            if self.config.generation_enabled and self._generation_executor:
                 raw = run_sync(
-                    self._batch_generate_and_evaluate(
+                    self._generation_executor.batch_generate_and_evaluate(
                         chunk_queries, retrievals, ds_config, dataset_name
                     )
                 )
@@ -751,15 +466,15 @@ class MTEBEvaluator:
                 save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
 
         # Log summary
-        if self._strategy_mismatches > 0:
+        if self._retrieval_executor.strategy_mismatches > 0:
             logger.error(
-                f"  STRATEGY MISMATCH en {self._strategy_mismatches}/{n} queries: "
+                f"  STRATEGY MISMATCH en {self._retrieval_executor.strategy_mismatches}/{n} queries: "
                 f"configurado={self.config.retrieval.strategy.name}, "
                 f"ejecutado distinto. Resultados NO representan la estrategia configurada."
             )
-        if self._reranker and self._rerank_failures > 0:
+        if self._reranker and self._retrieval_executor.rerank_failures > 0:
             logger.warning(
-                f"  Rerank failures: {self._rerank_failures}/{n} queries "
+                f"  Rerank failures: {self._retrieval_executor.rerank_failures}/{n} queries "
                 f"usaron fallback sin reranking"
             )
 
@@ -778,7 +493,7 @@ class MTEBEvaluator:
         self,
         queries: List[NormalizedQuery],
         retrievals: List[QueryRetrievalDetail],
-        gen_metrics_results: List[Optional[_GenMetricsResult]],
+        gen_metrics_results: List[Optional[GenMetricsResult]],
         rerank_statuses: List[Optional[bool]],
         ds_config: Dict[str, Any],
         dataset_name: str,
@@ -835,354 +550,6 @@ class MTEBEvaluator:
         return results
 
     # -----------------------------------------------------------------
-    # BATCH ASYNC: Generacion + Metricas
-    # -----------------------------------------------------------------
-
-    async def _batch_generate_and_evaluate(
-        self,
-        queries: List[NormalizedQuery],
-        retrievals: List[QueryRetrievalDetail],
-        ds_config: Dict[str, Any],
-        dataset_name: str,
-    ) -> list:
-        """Lanza generacion+metricas en paralelo para todas las queries."""
-        tasks = [
-            self._process_single_async(query, retrieval, ds_config, dataset_name)
-            for query, retrieval in zip(queries, retrievals)
-        ]
-        return await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _process_single_async(
-        self,
-        query: NormalizedQuery,
-        retrieval_detail: QueryRetrievalDetail,
-        ds_config: Dict[str, Any],
-        dataset_name: str,
-    ) -> _GenMetricsResult:
-        """Procesa una query: generacion async + metricas async."""
-        context = self._format_context(retrieval_detail.get_generation_contents())
-
-        # 1. Generacion async
-        generation = await self._execute_generation_async(
-            query.query_text, context, dataset_name
-        )
-
-        # 2. Metricas async
-        primary_result, secondary_results = await self._calculate_metrics_async(
-            generated=generation.generated_response,
-            expected_answer=query.expected_answer,
-            answer_type=query.answer_type,
-            context=context,
-            query_text=query.query_text,
-            dataset_type=ds_config["type"],
-            dataset_name=dataset_name,
-        )
-
-        # Convertir secondary a dict
-        secondary_dict = {}
-        for sr in secondary_results:
-            secondary_dict[sr.metric_type.value] = sr.value
-
-        return _GenMetricsResult(
-            generation=generation,
-            primary_metric_value=primary_result.value,
-            primary_metric_type=primary_result.metric_type,
-            secondary_metrics=secondary_dict,
-        )
-
-    # -----------------------------------------------------------------
-    # RETRIEVAL (sync)
-    # -----------------------------------------------------------------
-
-    def _execute_retrieval(
-        self, query_text: str, expected_doc_ids: List[str],
-        query_vector: Optional[List[float]] = None,
-    ) -> Tuple[QueryRetrievalDetail, Optional[bool]]:
-        """
-        Ejecuta retrieval + reranking opcional.
-
-        Si query_vector se proporciona, usa retrieve_by_vector() para
-        evitar la llamada REST al NIM de embeddings (pre-embebido en batch).
-
-        Separacion de flujos cuando reranker activo:
-          - Metricas de retrieval: sobre los top RETRIEVAL_K docs del retriever
-            (pre-rerank). Mide la capacidad del retriever.
-          - Generacion: sobre los top RERANKER_TOP_N docs post-rerank.
-            Mide la calidad del contexto que recibe el LLM.
-
-        Sin reranker: ambos flujos usan los mismos docs (RETRIEVAL_K).
-
-        Returns:
-            Tupla (QueryRetrievalDetail, reranked_status):
-              - reranked_status: None si no hay reranker, True si rerank OK,
-                False si fallback sin rerank.
-              Retrieval metadata viaja en QueryRetrievalDetail.retrieval_metadata.
-        """
-        if self._retriever is None:
-            return QueryRetrievalDetail(
-                retrieved_doc_ids=[], retrieved_contents=[],
-                retrieval_scores=[], expected_doc_ids=expected_doc_ids,
-            ), None
-
-        try:
-            retrieval_k = self.config.retrieval.retrieval_k
-
-            configured_strategy = self.config.retrieval.strategy
-
-            # Seleccionar metodo de retrieval
-            def _do_retrieve(top_k: int) -> "RetrievalResult":
-                if query_vector is not None:
-                    return self._retriever.retrieve_by_vector(
-                        query_text, query_vector, top_k=top_k
-                    )
-                return self._retriever.retrieve(query_text, top_k=top_k)
-
-            def _check_strategy(result: "RetrievalResult") -> None:
-                """Detecta discrepancia entre estrategia configurada y ejecutada (DTm-38)."""
-                actual = result.strategy_used.name
-                expected = configured_strategy.name
-                if actual != expected:
-                    self._strategy_mismatches += 1
-                    if self._strategy_mismatches == 1:
-                        logger.error(
-                            f"STRATEGY MISMATCH: configurado={expected}, "
-                            f"ejecutado={actual}. Los resultados no representan "
-                            f"la estrategia configurada."
-                        )
-
-            if self._reranker:
-                fetch_k = self.config.reranker.fetch_k or (self.config.reranker.top_n * 3)
-                # Garantizar que fetch_k >= retrieval_k para que las metricas
-                # pre-rerank tengan suficientes candidatos (DTm-35).
-                fetch_k = max(fetch_k, retrieval_k)
-                logger.debug(
-                    f"  fetch_k={fetch_k} (retrieval_k={retrieval_k}, "
-                    f"reranker.top_n={self.config.reranker.top_n})"
-                )
-                full_result = _do_retrieve(fetch_k)
-                _check_strategy(full_result)
-
-                # Metricas de retrieval: top RETRIEVAL_K del retriever (pre-rerank)
-                metric_doc_ids = full_result.doc_ids[:retrieval_k]
-                metric_contents = full_result.contents[:retrieval_k]
-                metric_scores = full_result.scores[:retrieval_k]
-
-                # Generacion: reranker reordena los candidatos completos
-                reranked = self._reranker.rerank(
-                    query=query_text,
-                    retrieval_result=full_result,
-                    top_n=self.config.reranker.top_n,
-                )
-
-                # FIX DT-7: detectar fallback silencioso del reranker
-                reranked_ok = reranked.metadata.get("reranked", True)
-                if not reranked_ok:
-                    self._rerank_failures += 1
-                    logger.warning(
-                        f"  Rerank fallback (sin reorder) en query: "
-                        f"'{query_text[:80]}...' | "
-                        f"Error: {reranked.metadata.get('rerank_error', 'unknown')}"
-                    )
-
-                return QueryRetrievalDetail(
-                    retrieved_doc_ids=metric_doc_ids,
-                    retrieved_contents=metric_contents,
-                    retrieval_scores=metric_scores,
-                    expected_doc_ids=expected_doc_ids,
-                    retrieval_time_ms=reranked.retrieval_time_ms,
-                    generation_doc_ids=reranked.doc_ids,
-                    generation_contents=reranked.contents,
-                    # FIX DT-5: almacenar IDs de todos los candidatos pre-rerank
-                    # para trazabilidad post-hoc (solo IDs, ~3KB/query)
-                    pre_rerank_candidate_ids=full_result.doc_ids,
-                    retrieval_metadata=full_result.metadata,
-                ), reranked_ok
-            else:
-                # Sin reranker: retrieval_k docs para metricas y generacion
-                result = _do_retrieve(retrieval_k)
-                _check_strategy(result)
-
-                return QueryRetrievalDetail(
-                    retrieved_doc_ids=result.doc_ids,
-                    retrieved_contents=result.contents,
-                    retrieval_scores=result.scores,
-                    expected_doc_ids=expected_doc_ids,
-                    retrieval_time_ms=result.retrieval_time_ms,
-                    retrieval_metadata=result.metadata,
-                ), None
-
-        except Exception as e:
-            logger.warning(f"Error retrieval: {e}")
-            return QueryRetrievalDetail(
-                retrieved_doc_ids=[], retrieved_contents=[],
-                retrieval_scores=[], expected_doc_ids=expected_doc_ids,
-            ), None
-
-    # -----------------------------------------------------------------
-    # GENERACION (async)
-    # -----------------------------------------------------------------
-
-    async def _execute_generation_async(
-        self, query_text: str, context: str, dataset_name: str
-    ) -> GenerationResult:
-        """Genera respuesta con LLM via invoke_async."""
-        start = time.time()
-        prompts = GENERATION_PROMPTS.get(
-            dataset_name, GENERATION_PROMPTS["default"]
-        )
-        user_prompt = prompts["user_template"].format(
-            context=context, query=query_text
-        )
-
-        try:
-            response = await self._llm_service.invoke_async(
-                user_prompt, system_prompt=prompts["system"]
-            )
-            return GenerationResult(
-                generated_response=str(response).strip(),
-                generation_time_ms=(time.time() - start) * 1000,
-            )
-        except Exception as e:
-            logger.warning(f"Error generacion async: {e}")
-            return GenerationResult(f"[ERROR: {e}]", 0.0)
-
-    def _format_context(self, contents: List[str]) -> str:
-        max_length = self._max_context_chars
-        if not contents:
-            return "[No se encontraron documentos]"
-
-        separator = "\n\n"
-        parts: List[str] = []
-        length = 0
-        for i, content in enumerate(contents, 1):
-            header = f"[Doc {i}]\n"
-            part_len = len(header) + len(content)
-            sep_len = len(separator) if parts else 0
-            if length + sep_len + part_len > max_length:
-                break
-            parts.append(f"{header}{content}")
-            length += sep_len + part_len
-
-        if len(parts) < len(contents):
-            logger.debug(
-                f"Contexto truncado: {len(parts)}/{len(contents)} docs "
-                f"({length}/{max_length} chars)"
-            )
-
-        return separator.join(parts)
-
-    # -----------------------------------------------------------------
-    # METRICAS (async)
-    # -----------------------------------------------------------------
-
-    async def _calculate_metrics_async(
-        self,
-        generated: str,
-        expected_answer: Optional[str],
-        answer_type: Optional[str],
-        context: str,
-        query_text: str,
-        dataset_type: DatasetType,
-        dataset_name: str,
-    ) -> Tuple[MetricResult, List[MetricResult]]:
-        """
-        Calcula metricas usando calculate_async para LLM-judge.
-
-        Metrica primaria adaptativa para HYBRID datasets:
-          - answer_type == "label": ACCURACY (clasificacion yes/no)
-          - extractiva (cualquier longitud): F1_SCORE
-            Para 1 token, F1 y EM son equivalentes (0 o 1).
-            Para 2+ tokens, F1 captura aciertos parciales.
-        EM se computa siempre como secundaria para analisis post-hoc.
-        """
-        ds_config = get_dataset_config(dataset_name)
-        calc = self._metrics_calculator
-
-        # Metrica principal
-        try:
-            if dataset_type == DatasetType.HYBRID:
-                if answer_type == "label":
-                    primary = await calc.calculate_async(
-                        MetricType.ACCURACY,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-                else:
-                    primary = await calc.calculate_async(
-                        MetricType.F1_SCORE,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-            elif dataset_type == DatasetType.ADAPTED:
-                if expected_answer and calc.embedding_model:
-                    primary = await calc.calculate_async(
-                        MetricType.SEMANTIC_SIMILARITY,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-                else:
-                    primary = await calc.calculate_async(
-                        MetricType.ANSWER_RELEVANCE,
-                        generated=generated,
-                        query=query_text,
-                    )
-            else:  # RETRIEVAL_ONLY
-                primary = await calc.calculate_async(
-                    MetricType.FAITHFULNESS,
-                    generated=generated,
-                    context=context,
-                )
-        except Exception as e:
-            primary = MetricResult(
-                metric_type=ds_config["primary_metric"],
-                value=0.0,
-                error=str(e),
-            )
-
-        # Metricas secundarias: siempre calcular todas las disponibles
-        secondary = []
-
-        # Para HYBRID: siempre calcular F1, EM, y Faithfulness como secundarias
-        secondary_types = []
-        if dataset_type == DatasetType.HYBRID and expected_answer:
-            secondary_types = [MetricType.F1_SCORE, MetricType.EXACT_MATCH]
-            # Excluir la que ya es primary
-            secondary_types = [
-                mt for mt in secondary_types
-                if mt != primary.metric_type
-            ]
-        # Tambien incluir las configuradas en el dataset
-        for mt in ds_config.get("secondary_metrics", []):
-            if mt != primary.metric_type and mt not in secondary_types:
-                secondary_types.append(mt)
-
-        for mt in secondary_types:
-            try:
-                r = await calc.calculate_async(
-                    mt,
-                    generated=generated,
-                    expected=expected_answer,
-                    context=context,
-                    query=query_text,
-                )
-                secondary.append(r)
-            except Exception as e:
-                # FIX DTm-5: registrar fallo y propagar MetricResult con error.
-                # Sin esto, la metrica desaparece del dict y report.py la muestra
-                # como 0.0 via .get(sk, 0.0), indistinguible de un score legitimo.
-                logger.warning(
-                    f"Metrica secundaria {mt.value} fallo: {e} "
-                    f"(query: '{query_text[:80]}...')"
-                )
-                secondary.append(MetricResult(
-                    metric_type=mt,
-                    value=0.0,
-                    error=f"secondary_metric_error: {e}",
-                ))
-
-        return primary, secondary
-
-    # -----------------------------------------------------------------
     # BUILD RUN (delegado a result_builder.py — DTm-36 fase 4)
     # -----------------------------------------------------------------
 
@@ -1202,8 +569,8 @@ class MTEBEvaluator:
             elapsed_seconds=elapsed_seconds,
             indexed_corpus_size=indexed_corpus_size,
             max_context_chars=self._max_context_chars,
-            rerank_failures=self._rerank_failures,
-            strategy_mismatches=self._strategy_mismatches,
+            rerank_failures=self._retrieval_executor.rerank_failures if self._retrieval_executor else 0,
+            strategy_mismatches=self._retrieval_executor.strategy_mismatches if self._retrieval_executor else 0,
         )
 
     # -----------------------------------------------------------------

@@ -1,13 +1,11 @@
 """
-Test DT-7 #5: Rerank exitoso -> reranked_ok=True, _rerank_failures=0.
-Test DT-7 #6: Rerank fallido -> reranked_ok=False, _rerank_failures incrementa.
+Test DT-7 #5: Rerank exitoso -> reranked_ok=True, rerank_failures=0.
+Test DT-7 #6: Rerank fallido -> reranked_ok=False, rerank_failures incrementa.
 """
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
-
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy, RetrievalConfig
 from shared.config_base import InfraConfig, RerankerConfig
+from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
+from sandbox_mteb.retrieval_executor import RetrievalExecutor
 
 
 # ---------------------------------------------------------------
@@ -55,7 +53,6 @@ class MockRerankerFail:
         self.top_n = 5
 
     def rerank(self, query, retrieval_result, top_n=5):
-        # Simula el fallback exacto de reranker.py lineas 128-143
         return RetrievalResult(
             doc_ids=retrieval_result.doc_ids[:top_n],
             contents=retrieval_result.contents[:top_n],
@@ -70,21 +67,20 @@ class MockRerankerFail:
         )
 
 
-def _make_evaluator(reranker):
-    """Construye MTEBEvaluator con mocks inyectados, sin infra real."""
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-
+def _make_executor(reranker):
+    """Construye RetrievalExecutor con mocks inyectados, sin infra real."""
     config = MTEBConfig(
         infra=InfraConfig(),
         storage=MinIOStorageConfig(),
         retrieval=RetrievalConfig(retrieval_k=20, pre_fusion_k=150),
         reranker=RerankerConfig(enabled=True, top_n=5),
     )
-    evaluator = MTEBEvaluator(config)
-    evaluator._retriever = MockRetriever()
-    evaluator._reranker = reranker
-    return evaluator
+    executor = RetrievalExecutor(
+        retriever=MockRetriever(),
+        reranker=reranker,
+        config=config,
+    )
+    return executor
 
 
 # ---------------------------------------------------------------
@@ -92,44 +88,44 @@ def _make_evaluator(reranker):
 # ---------------------------------------------------------------
 
 def test_rerank_success():
-    evaluator = _make_evaluator(MockRerankerSuccess())
+    executor = _make_executor(MockRerankerSuccess())
 
-    detail, reranked_ok = evaluator._execute_retrieval(
+    detail, reranked_ok = executor.execute(
         "test query", ["doc_0", "doc_1"]
     )
 
     assert reranked_ok is True, f"Esperado True, obtenido {reranked_ok}"
-    assert evaluator._rerank_failures == 0, (
-        f"Esperado 0 failures, obtenido {evaluator._rerank_failures}"
+    assert executor.rerank_failures == 0, (
+        f"Esperado 0 failures, obtenido {executor.rerank_failures}"
     )
     assert len(detail.generation_doc_ids) == 5, (
         f"Esperado 5 docs post-rerank, obtenido {len(detail.generation_doc_ids)}"
     )
-    print("PASS: rerank exitoso -> reranked_ok=True, _rerank_failures=0")
+    print("PASS: rerank exitoso -> reranked_ok=True, rerank_failures=0")
 
 
 def test_rerank_failure():
-    evaluator = _make_evaluator(MockRerankerFail())
+    executor = _make_executor(MockRerankerFail())
 
-    detail, reranked_ok = evaluator._execute_retrieval(
+    detail, reranked_ok = executor.execute(
         "test query", ["doc_0", "doc_1"]
     )
 
     assert reranked_ok is False, f"Esperado False, obtenido {reranked_ok}"
-    assert evaluator._rerank_failures == 1, (
-        f"Esperado 1 failure, obtenido {evaluator._rerank_failures}"
+    assert executor.rerank_failures == 1, (
+        f"Esperado 1 failure, obtenido {executor.rerank_failures}"
     )
 
     # Segundo fallo: contador debe incrementar
-    _, reranked_ok2 = evaluator._execute_retrieval(
+    _, reranked_ok2 = executor.execute(
         "another query", ["doc_0"]
     )
     assert reranked_ok2 is False
-    assert evaluator._rerank_failures == 2, (
-        f"Esperado 2 failures, obtenido {evaluator._rerank_failures}"
+    assert executor.rerank_failures == 2, (
+        f"Esperado 2 failures, obtenido {executor.rerank_failures}"
     )
 
-    print("PASS: rerank fallido -> reranked_ok=False, _rerank_failures incrementa")
+    print("PASS: rerank fallido -> reranked_ok=False, rerank_failures incrementa")
 
 
 if __name__ == "__main__":
