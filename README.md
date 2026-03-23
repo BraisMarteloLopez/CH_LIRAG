@@ -82,6 +82,7 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 - Deduplicacion de relaciones en aristas (misma relacion + mismo doc no se duplica)
 - Validacion post-parse del output LLM: entity types normalizados a enum (`PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER`), nombres >= 2 chars, descriptions truncadas a 200 chars (DTm-16)
 - Estimacion de memoria en `get_stats()` para observabilidad
+- Robustez para modelos de razonamiento (nemotron-3-nano thinking mode): strip de `<think>` tags en `llm.py` (incluye tags sin cerrar por truncamiento), `max_tokens` ampliados en extraccion (2048 tripletas, 512 keywords) para compensar tokens consumidos por razonamiento, y fallback `json.JSONDecoder.raw_decode()` para extraer JSON de respuestas con texto mixto
 
 **Optimizacion:** `pre_extract_query_keywords()` permite pre-extraer keywords de todas las queries en batch antes del loop de retrieval, analogo al pre-embed de vectores.
 
@@ -260,7 +261,7 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | **3. Eficiencia** | Corpus 66K sin OOM | Batch adaptativo (`semaphore*4`), dedup memoria HYBRID_PLUS. |
 | **4. Mantenibilidad** | `evaluator.py` < 600 LOC | Descompuesto de 1225 a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py`, `checkpoint.py`, `result_builder.py`. |
 
-Issues resueltos: DTm-14 a DTm-38, DTm-45 (22 issues). Ver historial git para detalles de cada fix.
+Issues resueltos: DTm-14 a DTm-38, DTm-45 (22 issues), DTm-46 (robustez thinking mode). Ver historial git para detalles de cada fix.
 
 ### Deuda tecnica abierta
 

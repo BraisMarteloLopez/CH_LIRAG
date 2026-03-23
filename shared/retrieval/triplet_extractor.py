@@ -114,6 +114,7 @@ class TripletExtractor:
             "docs_failed": 0,
             "docs_empty_input": 0,
             "docs_empty_result": 0,
+            "docs_json_recovered": 0,
             "total_entities": 0,
             "total_relations": 0,
         }
@@ -127,6 +128,23 @@ class TripletExtractor:
         for k in self._stats:
             self._stats[k] = 0
 
+    @staticmethod
+    def _find_json_object(text: str) -> Any:
+        """Encuentra el primer objeto JSON valido en texto arbitrario.
+
+        Usa json.JSONDecoder.raw_decode() — la solucion estandar de Python
+        para extraer JSON embebido en texto mixto.
+        """
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(text):
+            if ch == '{':
+                try:
+                    obj, _ = decoder.raw_decode(text, i)
+                    return obj
+                except json.JSONDecodeError:
+                    continue
+        return None
+
     def _parse_extraction_json(
         self, raw: str, doc_id: str
     ) -> Tuple[List[KGEntity], List[KGRelation]]:
@@ -139,11 +157,24 @@ class TripletExtractor:
             text = raw.strip()
             if text.startswith("```"):
                 lines = text.split("\n")
-                # Quitar primera y ultima linea (```json y ```)
                 lines = [l for l in lines if not l.strip().startswith("```")]
                 text = "\n".join(lines)
 
-            data = json.loads(text)
+            # Fast path: texto es JSON puro
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                # Fallback: buscar primer objeto JSON en texto mixto
+                data = self._find_json_object(text)
+                if data is None:
+                    raise ValueError(
+                        f"No JSON object found in response for doc {doc_id}"
+                    )
+                self._stats["docs_json_recovered"] += 1
+                logger.debug(
+                    f"Doc {doc_id}: JSON recuperado via raw_decode "
+                    f"(respuesta comenzaba con: {text[:80]!r})"
+                )
 
             rejected = 0
             for e in data.get("entities", []):
@@ -210,7 +241,7 @@ class TripletExtractor:
             raw = await self._llm.invoke_async(
                 prompt,
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
-                max_tokens=1024,
+                max_tokens=2048,
             )
             entities, relations = self._parse_extraction_json(raw, doc_id)
             self._stats["docs_success"] += 1
@@ -300,7 +331,7 @@ class TripletExtractor:
     def _parse_keywords_json(
         self, raw: str,
     ) -> Tuple[List[str], List[str]]:
-        """Parsea JSON de keywords con fallback."""
+        """Parsea JSON de keywords con fallback raw_decode."""
         try:
             text = raw.strip()
             if text.startswith("```"):
@@ -308,11 +339,21 @@ class TripletExtractor:
                 lines = [l for l in lines if not l.strip().startswith("```")]
                 text = "\n".join(lines)
 
-            data = json.loads(text)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = self._find_json_object(text)
+                if data is None:
+                    raise ValueError("No JSON object found in keywords response")
+                logger.debug(
+                    f"Keywords JSON recuperado via raw_decode "
+                    f"(respuesta comenzaba con: {text[:80]!r})"
+                )
+
             low = [str(k) for k in data.get("low_level", []) if k]
             high = [str(k) for k in data.get("high_level", []) if k]
             return low, high
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error parseando keywords JSON: {e}")
             return [], []
 
@@ -333,7 +374,7 @@ class TripletExtractor:
             raw = await self._llm.invoke_async(
                 prompt,
                 system_prompt=QUERY_KEYWORDS_SYSTEM,
-                max_tokens=256,
+                max_tokens=512,
             )
             return self._parse_keywords_json(raw)
         except Exception as e:

@@ -19,6 +19,7 @@ Fixes aplicados:
 
 import asyncio
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -295,23 +296,18 @@ class AsyncLLMService:
                         for part in content
                     )
 
-                # Reasoning models (e.g. nemotron-3-nano) may return
-                # content in reasoning_content while leaving content empty.
-                if not content or not str(content).strip():
-                    extra = getattr(response, "additional_kwargs", {})
-                    reasoning = (
-                        extra.get("reasoning_content")
-                        or extra.get("reasoning")
-                    )
-                    if reasoning and str(reasoning).strip():
-                        logger.debug(
-                            "Content empty, using reasoning_content as fallback"
-                        )
-                        content = str(reasoning)
+                # Strip reasoning tags from thinking-mode models
+                # (e.g. nemotron-3-nano). Two passes: closed tags, then
+                # unclosed tags (model hit max_tokens mid-thought).
+                content = str(content)
+                content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+                content = re.sub(r'<think>[\s\S]*$', '', content).strip()
 
-                if not content or not str(content).strip():
-                    raise ValueError("LLM returned empty/null content")
-                return str(content).strip()
+                if not content:
+                    raise ValueError(
+                        "LLM returned empty content after stripping reasoning tags"
+                    )
+                return content
 
             except Exception as e:
                 last_error = e
