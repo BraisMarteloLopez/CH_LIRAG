@@ -212,7 +212,10 @@ class TripletExtractor:
                     ))
 
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            logger.debug(f"Error parseando JSON de doc {doc_id}: {e}")
+            logger.debug(
+                f"Error parseando JSON de doc {doc_id}: {e} "
+                f"| raw (first 200 chars): {raw[:200]!r}"
+            )
 
         return entities, relations
 

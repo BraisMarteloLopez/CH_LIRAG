@@ -300,8 +300,15 @@ class AsyncLLMService:
                 # (e.g. nemotron-3-nano). Two passes: closed tags, then
                 # unclosed tags (model hit max_tokens mid-thought).
                 content = str(content)
+                original_len = len(content)
                 content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
                 content = re.sub(r'<think>[\s\S]*$', '', content).strip()
+                stripped = original_len - len(content)
+                if stripped > 0:
+                    logger.debug(
+                        f"Stripped {stripped} chars of <think> tags "
+                        f"({original_len} -> {len(content)})"
+                    )
 
                 if not content:
                     raise ValueError(
