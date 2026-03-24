@@ -70,7 +70,7 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 
 **Indexacion:**
 1. Extrae tripletas (entidad, relacion, entidad) de cada documento via LLM (`TripletExtractor`)
-2. Construye un `KnowledgeGraph` in-memory (NetworkX) con entidades, relaciones e indices invertidos
+2. Construye un `KnowledgeGraph` in-memory (igraph) con entidades, relaciones e indices invertidos
 3. Indexa contenido original en ChromaDB para vector search
 
 **Retrieval:**
