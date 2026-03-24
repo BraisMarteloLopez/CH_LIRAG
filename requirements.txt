@@ -28,6 +28,7 @@ spacy>=3.7.0,<4.0
 
 # --- Knowledge Graph (LIGHT_RAG) ---
 networkx>=3.0,<4.0
+snowballstemmer>=2.2,<3.0
 
 # --- Hybrid Retrieval: BM25 ---
 tantivy>=0.22.0

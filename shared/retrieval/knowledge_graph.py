@@ -34,6 +34,18 @@ except ImportError:
     HAS_NETWORKX = False
     nx = None  # type: ignore[assignment]
 
+# =============================================================================
+# IMPORTACION CONDICIONAL — Snowball Stemmer
+# =============================================================================
+
+try:
+    import snowballstemmer
+    _STEMMER = snowballstemmer.stemmer("english")
+    HAS_STEMMER = True
+except ImportError:
+    _STEMMER = None
+    HAS_STEMMER = False
+
 
 # =============================================================================
 # TIPOS
@@ -137,8 +149,16 @@ class KnowledgeGraph:
 
     @staticmethod
     def _tokenize(text: str) -> List[str]:
-        """Tokeniza texto en palabras lowercase para el indice invertido (DTm-30)."""
-        return text.lower().split()
+        """Tokeniza texto en palabras lowercase con stemming para el indice invertido.
+
+        Aplica Snowball stemming (si disponible) para normalizar variantes
+        morfologicas: "mechanics" y "mechanical" -> "mechan", mejorando
+        recall en query_by_keywords.
+        """
+        tokens = text.lower().split()
+        if _STEMMER is not None:
+            tokens = _STEMMER.stemWords(tokens)
+        return tokens
 
     def _index_entity_tokens(self, entity_name: str) -> None:
         """Indexa tokens de nombre y descripcion de una entidad (DTm-30)."""

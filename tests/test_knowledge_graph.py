@@ -237,6 +237,32 @@ def test_query_by_keywords_in_relations():
 
 
 # =============================================================================
+# KG12b: stemming en keyword search
+# =============================================================================
+
+def test_query_by_keywords_stemming():
+    """Variantes morfologicas matchean via stemming: 'mechanical' -> 'mechanics'."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("quantum mechanics", "physics", "branch of",
+             desc="study of subatomic particles", doc_id="doc1"),
+    ])
+    # "mechanical" stems to same root as "mechanics"
+    results = kg.query_by_keywords(["mechanical"], max_docs=10)
+    result_dict = dict(results)
+    assert "doc1" in result_dict, (
+        "Stemming deberia matchear 'mechanical' con entidad 'quantum mechanics'"
+    )
+
+    # "studying" stems to same root as "study"
+    results2 = kg.query_by_keywords(["studying"], max_docs=10)
+    result_dict2 = dict(results2)
+    assert "doc1" in result_dict2, (
+        "Stemming deberia matchear 'studying' con descripcion 'study of...'"
+    )
+
+
+# =============================================================================
 # KG13: grafo vacio
 # =============================================================================
 
@@ -494,13 +520,15 @@ def test_keyword_index_populated_on_add():
     """KG24: _kw_entity_index se puebla al anadir tripletas (DTm-30)."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "studied")])
-    # Tokens de entity names deben estar en el indice
+    # Tokens de entity names deben estar en el indice (stemmed)
     assert "albert" in kg._kw_entity_index
     assert "einstein" in kg._kw_entity_index
-    assert "physics" in kg._kw_entity_index
+    # "physics" se stemiza a "physic"
+    stemmed_physics = KnowledgeGraph._tokenize("physics")[0]
+    assert stemmed_physics in kg._kw_entity_index
     # Deben apuntar a entidades correctas
     assert "albert einstein" in kg._kw_entity_index["albert"]
-    assert "physics" in kg._kw_entity_index["physics"]
+    assert "physics" in kg._kw_entity_index[stemmed_physics]
 
 
 def test_keyword_index_relations():
@@ -510,10 +538,12 @@ def test_keyword_index_relations():
         KGRelation(source="Alice", target="MIT", relation="works at",
                    description="employed since 2020", source_doc_id="doc1"),
     ])
-    assert "works" in kg._kw_relation_index
-    assert "employed" in kg._kw_relation_index
+    stemmed_works = KnowledgeGraph._tokenize("works")[0]
+    stemmed_employed = KnowledgeGraph._tokenize("employed")[0]
+    assert stemmed_works in kg._kw_relation_index
+    assert stemmed_employed in kg._kw_relation_index
     # La entrada debe contener el doc_id
-    entries = kg._kw_relation_index["works"]
+    entries = kg._kw_relation_index[stemmed_works]
     assert any(doc_id == "doc1" for _, _, doc_id in entries)
 
 
@@ -521,12 +551,13 @@ def test_keyword_index_metadata_update():
     """KG26: Re-indexa tokens al actualizar metadata de entidad (DTm-30)."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("Quantum", "Physics", "branch of")])
-    # Antes de metadata, "mechanics" no esta indexado
-    assert "mechanics" not in kg._kw_entity_index
+    # Antes de metadata, "mechanics" (stemmed) no esta indexado
+    stemmed_mechanics = KnowledgeGraph._tokenize("mechanics")[0]
+    assert stemmed_mechanics not in kg._kw_entity_index
     # Actualizar con descripcion que contiene "mechanics"
     kg.add_entity_metadata("Quantum", "CONCEPT", "quantum mechanics theory")
-    assert "mechanics" in kg._kw_entity_index
-    assert "quantum" in kg._kw_entity_index["mechanics"]
+    assert stemmed_mechanics in kg._kw_entity_index
+    assert "quantum" in kg._kw_entity_index[stemmed_mechanics]
 
 
 def test_keyword_index_from_dict_roundtrip():
@@ -537,10 +568,10 @@ def test_keyword_index_from_dict_roundtrip():
 
     kg2 = KnowledgeGraph.from_dict(kg.to_dict())
 
-    # El indice debe estar reconstruido
-    assert "newton" in kg2._kw_entity_index
-    assert "gravity" in kg2._kw_entity_index
-    assert "mathematician" in kg2._kw_entity_index
+    # El indice debe estar reconstruido (stemmed tokens)
+    assert KnowledgeGraph._tokenize("newton")[0] in kg2._kw_entity_index
+    assert KnowledgeGraph._tokenize("gravity")[0] in kg2._kw_entity_index
+    assert KnowledgeGraph._tokenize("mathematician")[0] in kg2._kw_entity_index
     # query_by_keywords debe funcionar
     results = kg2.query_by_keywords(["gravity"])
     assert len(results) > 0
