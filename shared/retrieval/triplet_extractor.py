@@ -281,11 +281,13 @@ class TripletExtractor:
         t0 = time.perf_counter()
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation]]] = {}
 
-        async def _extract_one(doc: Dict[str, Any]) -> None:
+        async def _extract_one(
+            doc: Dict[str, Any],
+        ) -> Tuple[str, List[KGEntity], List[KGRelation]]:
             doc_id = doc.get("doc_id", "")
             content = doc.get("content", "")
             entities, relations = await self.extract_from_doc_async(doc_id, content)
-            results[doc_id] = (entities, relations)
+            return (doc_id, entities, relations)
 
         # Procesar en chunks para limitar coroutines vivas en memoria
         # (DTm-22). El semaphore del LLM controla HTTP, pero cada
@@ -294,7 +296,13 @@ class TripletExtractor:
         for start in range(0, len(documents), batch_sz):
             chunk = documents[start:start + batch_sz]
             tasks = [_extract_one(doc) for doc in chunk]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in chunk_results:
+                if isinstance(r, BaseException):
+                    logger.warning(f"TripletExtractor: doc extraction failed: {r}")
+                    continue
+                doc_id, entities, relations = r
+                results[doc_id] = (entities, relations)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         total_entities = sum(len(e) for e, _ in results.values())
@@ -402,11 +410,13 @@ class TripletExtractor:
             Lista de (low_level, high_level) en mismo orden que queries.
         """
         t0 = time.perf_counter()
-        results: List[Optional[Tuple[List[str], List[str]]]] = [None] * len(queries)
+        results: List[Tuple[List[str], List[str]]] = [([],[])] * len(queries)
 
-        async def _extract_one(idx: int, query: str) -> None:
+        async def _extract_one(
+            idx: int, query: str,
+        ) -> Tuple[int, List[str], List[str]]:
             low, high = await self.extract_query_keywords_async(query)
-            results[idx] = (low, high)
+            return (idx, low, high)
 
         batch_sz = self._batch_size
         for start in range(0, len(queries), batch_sz):
@@ -414,7 +424,13 @@ class TripletExtractor:
                 _extract_one(i, q)
                 for i, q in enumerate(queries[start:start + batch_sz], start=start)
             ]
-            await asyncio.gather(*chunk_tasks, return_exceptions=True)
+            chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+            for r in chunk_results:
+                if isinstance(r, BaseException):
+                    logger.warning(f"TripletExtractor: keyword extraction failed: {r}")
+                    continue
+                idx, low, high = r
+                results[idx] = (low, high)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
@@ -422,8 +438,7 @@ class TripletExtractor:
             f"en {elapsed_ms:.0f}ms"
         )
 
-        # Rellenar None con vacios
-        return [(r[0], r[1]) if r else ([], []) for r in results]
+        return results
 
     def extract_query_keywords_batch(
         self, queries: List[str],

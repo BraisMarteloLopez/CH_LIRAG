@@ -236,8 +236,7 @@ class LightRAGRetriever(BaseRetriever):
         for doc in sorted(documents, key=lambda d: d.get("doc_id", "")):
             h.update(doc.get("doc_id", "").encode())
             content = doc.get("content", "")
-            # Solo primeros 200 chars por doc para que el hash sea rapido
-            h.update(content[:200].encode())
+            h.update(content.encode())
         h.update(str(len(documents)).encode())
         # max_text_chars afecta cuanto texto ve el LLM para extraccion
         if max_text_chars:

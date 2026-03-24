@@ -55,7 +55,6 @@ class MetricType(Enum):
     # Sin referencia (LLM-Judge)
     FAITHFULNESS = "faithfulness"
     ANSWER_RELEVANCE = "answer_relevance"
-    CONTEXT_UTILIZATION = "context_utilization"
 
 
 class EvaluationStatus(Enum):

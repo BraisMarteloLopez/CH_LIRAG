@@ -69,7 +69,6 @@ class KnowledgeGraph:
       - add_triplets(): construir grafo incrementalmente
       - query_entities(): traversal por entidades especificas (low-level)
       - query_by_keywords(): busqueda por keywords en descripciones (high-level)
-      - get_subgraph_context(): generar texto de contexto del subgrafo
     """
 
     # Cap por defecto de entidades. 0 = sin limite.
@@ -371,49 +370,6 @@ class KnowledgeGraph:
                 doc_scores[doc_id] += 0.5
 
         return doc_scores.most_common(max_docs)
-
-    def get_subgraph_context(
-        self,
-        entity_names: List[str],
-        max_hops: int = 1,
-        max_relations: int = 20,
-    ) -> str:
-        """Genera texto de contexto del subgrafo para enriquecer la query.
-
-        Recorre el subgrafo alrededor de las entidades dadas y genera
-        texto con las relaciones encontradas.
-
-        Returns:
-            Texto descriptivo de relaciones relevantes.
-        """
-        lines: List[str] = []
-        seen_edges: Set[Tuple[str, str]] = set()
-
-        for name in entity_names:
-            norm = self._normalize_name(name)
-            if not self._graph.has_node(norm):
-                continue
-
-            # Subgrafo local
-            ego = nx.ego_graph(self._graph, norm, radius=max_hops)
-            for src, tgt, data in ego.edges(data=True):
-                edge_key = (min(src, tgt), max(src, tgt))
-                if edge_key in seen_edges:
-                    continue
-                seen_edges.add(edge_key)
-
-                for rel_info in data.get("relations", []):
-                    rel = rel_info.get("relation", "related to")
-                    lines.append(f"{src} {rel} {tgt}")
-
-                    if len(lines) >= max_relations:
-                        break
-                if len(lines) >= max_relations:
-                    break
-            if len(lines) >= max_relations:
-                break
-
-        return ". ".join(lines) + "." if lines else ""
 
     # =================================================================
     # SERIALIZACION (DTm-34)

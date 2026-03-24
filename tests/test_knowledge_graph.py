@@ -13,8 +13,7 @@ Cobertura:
   KG9. query_by_keywords — substring match en nombres de entidad.
   KG10. query_by_keywords vacia — sin keywords retorna lista vacia.
   KG11. query_by_keywords en relaciones — match en descripcion de relacion.
-  KG12. get_subgraph_context — genera texto con relaciones.
-  KG13. grafo vacio — todas las queries retornan vacio.
+  KG12. grafo vacio — todas las queries retornan vacio.
   KG14. get_stats — estadisticas correctas.
   KG15. add_entity_metadata — actualiza type y description.
 """
@@ -238,26 +237,6 @@ def test_query_by_keywords_in_relations():
 
 
 # =============================================================================
-# KG12: get_subgraph_context
-# =============================================================================
-
-def test_get_subgraph_context():
-    """Genera texto con relaciones del subgrafo."""
-    kg = KnowledgeGraph()
-    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
-
-    ctx = kg.get_subgraph_context(["Alice"], max_hops=1)
-    assert "knows" in ctx
-    assert ctx.endswith(".")
-
-
-def test_get_subgraph_context_unknown_entity():
-    """Entidad desconocida -> string vacio."""
-    kg = _build_chain_graph()
-    assert kg.get_subgraph_context(["NoExiste"]) == ""
-
-
-# =============================================================================
 # KG13: grafo vacio
 # =============================================================================
 
@@ -269,7 +248,6 @@ def test_empty_graph_queries():
     assert kg.num_docs == 0
     assert kg.query_entities(["A"]) == []
     assert kg.query_by_keywords(["algo"]) == []
-    assert kg.get_subgraph_context(["A"]) == ""
 
 
 # =============================================================================
