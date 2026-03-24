@@ -271,6 +271,24 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 
 Issues resueltos: DTm-14 a DTm-38, DTm-45 (22 issues), DTm-46 (robustez thinking mode). Ver historial git para detalles de cada fix.
 
+### En progreso: mejoras LIGHT_RAG
+
+Ronda de mejoras identificadas por code review. 8 problemas agrupados en 5 fases:
+
+| Fase | Objetivo | Problemas | Estado |
+|---|---|---|---|
+| **0. Bugs + limpieza** | Corregir errores de datos y eliminar codigo muerto | Fingerprint truncado en cache KG (P5), race conditions en TripletExtractor (P6), dead code: `get_subgraph_context`, `semantic_similarity`, `answer_relevance`, `context_utilization` (P7) | Pendiente |
+| **1. Calidad keyword search** | Stemming en indices de entidades/relaciones del KG | `_tokenize()` sin normalizacion morfologica — "mechanics" no matchea "mechanical" (P3) | Pendiente |
+| **2.1. Batch extraction** | Reducir llamadas LLM 3-5x en construccion del KG | 1 doc/llamada → N docs/llamada con prompt multi-documento (P2) | Pendiente |
+| **2.2. igraph** | Reemplazar NetworkX por igraph (C-backed, 10-100x BFS) | Grafo in-memory lento y memory-heavy con NetworkX (P1) | Pendiente |
+| **3. RRF fusion** | Reemplazar fusion lineal por Reciprocal Rank Fusion | Reusar `reciprocal_rank_fusion()` ya implementada en HYBRID_PLUS (P4) | Pendiente |
+| **4. Test coverage** | Tests para evaluator, loader y pipeline e2e mockeado | Sin cobertura de tests para orquestacion y carga de datos (P8) | Pendiente |
+
+Cambios esperados en dependencias al completar:
+- `networkx` → `python-igraph` (Fase 2.2)
+- Nuevo: `snowballstemmer` (Fase 1)
+- Fusion LIGHT_RAG pasara de combinacion lineal a RRF (Fase 3)
+
 ### Deuda tecnica abierta
 
 | ID | Descripcion | Prioridad |
