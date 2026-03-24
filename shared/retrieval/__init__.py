@@ -24,7 +24,7 @@ from .hybrid_plus_retriever import HybridPlusRetriever
 from .lightrag_retriever import LightRAGRetriever
 from .tantivy_index import TantivyIndex
 from .entity_linker import HAS_SPACY
-from .knowledge_graph import HAS_NETWORKX
+from .knowledge_graph import HAS_IGRAPH, HAS_NETWORKX
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,7 @@ __all__ = [
     "HybridPlusRetriever",
     "LightRAGRetriever",
     "HAS_SPACY",
+    "HAS_IGRAPH",
     "HAS_NETWORKX",
     "get_retriever",
 ]

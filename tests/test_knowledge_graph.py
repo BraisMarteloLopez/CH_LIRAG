@@ -121,7 +121,8 @@ def test_add_triplets_duplicate_relation_accumulates():
     kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows", doc_id="doc1")])
     kg.add_triplets("doc2", [_rel("Alice", "Bob", "collaborates", doc_id="doc2")])
 
-    edge_data = kg._graph["alice"]["bob"]
+    edge_data = kg._get_edge_data("alice", "bob")
+    assert edge_data is not None
     assert len(edge_data["relations"]) == 2
     assert edge_data["relations"][0]["relation"] == "knows"
     assert edge_data["relations"][1]["relation"] == "collaborates"
@@ -368,7 +369,7 @@ def test_relation_dedup_same_doc():
         _rel("A", "B", "knows", doc_id="doc1"),  # duplicado exacto
     ])
 
-    edge_data = kg._graph["a"]["b"]
+    edge_data = kg._get_edge_data("a", "b")
     assert len(edge_data["relations"]) == 1
 
 
@@ -378,7 +379,7 @@ def test_relation_dedup_different_doc():
     kg.add_triplets("doc1", [_rel("A", "B", "knows", doc_id="doc1")])
     kg.add_triplets("doc2", [_rel("A", "B", "knows", doc_id="doc2")])
 
-    edge_data = kg._graph["a"]["b"]
+    edge_data = kg._get_edge_data("a", "b")
     assert len(edge_data["relations"]) == 2
 
 
@@ -390,7 +391,7 @@ def test_relation_dedup_different_relation():
         _rel("A", "B", "works with", doc_id="doc1"),
     ])
 
-    edge_data = kg._graph["a"]["b"]
+    edge_data = kg._get_edge_data("a", "b")
     assert len(edge_data["relations"]) == 2
 
 
@@ -460,7 +461,7 @@ def test_to_dict_version_field():
     """to_dict incluye campo version."""
     kg = KnowledgeGraph()
     data = kg.to_dict()
-    assert data["version"] == 1
+    assert data["version"] == 2
 
 
 def test_save_load_file(tmp_path):
@@ -478,7 +479,7 @@ def test_save_load_file(tmp_path):
     # Verificar que es JSON valido
     with open(path) as f:
         data = json.load(f)
-    assert data["version"] == 1
+    assert data["version"] == 2
 
     # Load y verificar
     kg2 = KnowledgeGraph.load(path)
@@ -505,7 +506,7 @@ def test_roundtrip_preserves_edge_relations():
 
     kg2 = KnowledgeGraph.from_dict(kg.to_dict())
 
-    edge = kg2._graph["a"]["b"]
+    edge = kg2._get_edge_data("a", "b")
     assert len(edge["relations"]) == 2
     rel_types = {r["relation"] for r in edge["relations"]}
     assert rel_types == {"knows", "works with"}

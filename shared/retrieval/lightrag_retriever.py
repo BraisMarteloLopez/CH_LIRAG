@@ -51,7 +51,7 @@ class LightRAGRetriever(BaseRetriever):
     Requiere:
       - AsyncLLMService para extraccion de tripletas y query analysis
       - EmbeddingModel para busqueda vectorial (ChromaDB)
-      - NetworkX para knowledge graph
+      - igraph para knowledge graph
 
     Sin LLM service: fallback a SimpleVectorRetriever puro.
     Sin NetworkX: fallback a SimpleVectorRetriever puro.

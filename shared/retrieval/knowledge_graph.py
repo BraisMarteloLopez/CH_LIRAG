@@ -1,6 +1,6 @@
 """
 Modulo: Knowledge Graph
-Descripcion: Grafo de conocimiento in-memory basado en NetworkX.
+Descripcion: Grafo de conocimiento in-memory basado en igraph (C-backed).
              Almacena entidades y relaciones extraidas por LLM,
              soporta traversal multi-hop y busqueda por entidades.
 
@@ -24,15 +24,18 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# IMPORTACION CONDICIONAL — NetworkX
+# IMPORTACION CONDICIONAL — igraph
 # =============================================================================
 
 try:
-    import networkx as nx
-    HAS_NETWORKX = True
+    import igraph as ig
+    HAS_IGRAPH = True
 except ImportError:
-    HAS_NETWORKX = False
-    nx = None  # type: ignore[assignment]
+    HAS_IGRAPH = False
+    ig = None  # type: ignore[assignment]
+
+# Backward-compat alias: callers que checkeaban HAS_NETWORKX ahora checkean HAS_IGRAPH.
+HAS_NETWORKX = HAS_IGRAPH
 
 # =============================================================================
 # IMPORTACION CONDICIONAL — Snowball Stemmer
@@ -75,7 +78,7 @@ class KGRelation:
 # =============================================================================
 
 class KnowledgeGraph:
-    """Knowledge graph in-memory basado en NetworkX.
+    """Knowledge graph in-memory basado en igraph (C-backed).
 
     Operaciones principales:
       - add_triplets(): construir grafo incrementalmente
@@ -87,11 +90,13 @@ class KnowledgeGraph:
     _DEFAULT_MAX_ENTITIES = 50_000
 
     def __init__(self, max_entities: int = 0) -> None:
-        if not HAS_NETWORKX:
+        if not HAS_IGRAPH:
             raise ImportError(
-                "networkx no instalado. Instalar: pip install networkx"
+                "igraph no instalado. Instalar: pip install python-igraph"
             )
-        self._graph: nx.Graph = nx.Graph()
+        self._graph: ig.Graph = ig.Graph()
+        # name -> vertex index mapping
+        self._name_to_vid: Dict[str, int] = {}
         self._max_entities = max_entities or self._DEFAULT_MAX_ENTITIES
         # Indices invertidos
         self._entity_to_docs: Dict[str, Set[str]] = defaultdict(set)
@@ -114,7 +119,7 @@ class KnowledgeGraph:
 
     @property
     def num_relations(self) -> int:
-        return self._graph.number_of_edges()
+        return self._graph.ecount()
 
     @property
     def num_docs(self) -> int:
@@ -126,16 +131,7 @@ class KnowledgeGraph:
     _RE_NON_ALNUM = re.compile(r"[^\w\s-]")
 
     def _normalize_name(self, name: str) -> str:
-        """Normalizacion de nombres de entidad (DTm-18).
-
-        Alineado con entity_linker.normalize_entity() para consistencia
-        entre HYBRID_PLUS y LIGHT_RAG. Pasos:
-          1. Lowercase + strip
-          2. Eliminar articulos iniciales (the, a, an)
-          3. Eliminar puntuacion excepto guiones internos
-             "U.S." -> "us", "spider-man" -> "spider-man"
-          4. Colapsar espacios
-        """
+        """Normalizacion de nombres de entidad (DTm-18)."""
         result = name.lower().strip()
         if not result:
             return ""
@@ -149,12 +145,7 @@ class KnowledgeGraph:
 
     @staticmethod
     def _tokenize(text: str) -> List[str]:
-        """Tokeniza texto en palabras lowercase con stemming para el indice invertido.
-
-        Aplica Snowball stemming (si disponible) para normalizar variantes
-        morfologicas: "mechanics" y "mechanical" -> "mechan", mejorando
-        recall en query_by_keywords.
-        """
+        """Tokeniza texto en palabras lowercase con stemming para el indice invertido."""
         tokens = text.lower().split()
         if _STEMMER is not None:
             tokens = _STEMMER.stemWords(tokens)
@@ -180,6 +171,49 @@ class KnowledgeGraph:
         entry = (src, tgt, doc_id)
         for token in self._tokenize(rel_text):
             self._kw_relation_index[token].add(entry)
+
+    # -----------------------------------------------------------------
+    # Graph primitive helpers (igraph)
+    # -----------------------------------------------------------------
+
+    def _ensure_node(self, name: str, entity_type: str = "UNKNOWN") -> int:
+        """Ensure a vertex exists for the given name, return its vertex id."""
+        vid = self._name_to_vid.get(name)
+        if vid is not None:
+            return vid
+        vid = self._graph.vcount()
+        self._graph.add_vertex(name=name, entity_type=entity_type)
+        self._name_to_vid[name] = vid
+        return vid
+
+    def _has_node(self, name: str) -> bool:
+        return name in self._name_to_vid
+
+    def _get_edge_id(self, src: str, tgt: str) -> Optional[int]:
+        """Return edge id between src and tgt, or None."""
+        src_vid = self._name_to_vid.get(src)
+        tgt_vid = self._name_to_vid.get(tgt)
+        if src_vid is None or tgt_vid is None:
+            return None
+        eid = self._graph.get_eid(src_vid, tgt_vid, error=False)
+        return eid if eid >= 0 else None
+
+    def _get_edge_data(self, src: str, tgt: str) -> Optional[Dict[str, Any]]:
+        """Return edge attribute dict between src and tgt, or None."""
+        eid = self._get_edge_id(src, tgt)
+        if eid is None:
+            return None
+        return {"relations": self._graph.es[eid]["relations"]}
+
+    def _get_neighbors(self, name: str) -> List[str]:
+        """Return list of neighbor names for the given node."""
+        vid = self._name_to_vid.get(name)
+        if vid is None:
+            return []
+        neighbor_vids = self._graph.neighbors(vid)
+        return [self._graph.vs[nv]["name"] for nv in neighbor_vids]
+
+    # -----------------------------------------------------------------
 
     def add_triplets(self, doc_id: str, triplets: List[KGRelation]) -> int:
         """Anade tripletas al grafo desde un documento.
@@ -228,8 +262,8 @@ class KnowledgeGraph:
             self._index_entity_tokens(tgt_name)
 
             # Anadir nodos y arista al grafo
-            self._graph.add_node(src_name, entity_type=self._entities[src_name].entity_type)
-            self._graph.add_node(tgt_name, entity_type=self._entities[tgt_name].entity_type)
+            src_vid = self._ensure_node(src_name, self._entities[src_name].entity_type)
+            tgt_vid = self._ensure_node(tgt_name, self._entities[tgt_name].entity_type)
 
             # Si ya existe arista, acumular relaciones (con dedup DTm-21)
             new_rel = {
@@ -237,8 +271,9 @@ class KnowledgeGraph:
                 "description": triplet.description,
                 "doc_id": doc_id,
             }
-            if self._graph.has_edge(src_name, tgt_name):
-                existing = self._graph[src_name][tgt_name].get("relations", [])
+            eid = self._get_edge_id(src_name, tgt_name)
+            if eid is not None:
+                existing = self._graph.es[eid]["relations"]
                 # Dedup: skip si misma relacion del mismo doc ya existe
                 is_dup = any(
                     r.get("relation") == triplet.relation
@@ -247,9 +282,8 @@ class KnowledgeGraph:
                 )
                 if not is_dup:
                     existing.append(new_rel)
-                    self._graph[src_name][tgt_name]["relations"] = existing
             else:
-                self._graph.add_edge(src_name, tgt_name, relations=[new_rel])
+                self._graph.add_edge(src_vid, tgt_vid, relations=[new_rel])
 
             # Indexar tokens de relacion (DTm-30)
             self._index_relation_tokens(src_name, tgt_name, new_rel)
@@ -276,8 +310,9 @@ class KnowledgeGraph:
             if description:
                 self._entities[norm].description = description
             # Actualizar atributo del nodo
-            if self._graph.has_node(norm):
-                self._graph.nodes[norm]["entity_type"] = self._entities[norm].entity_type
+            vid = self._name_to_vid.get(norm)
+            if vid is not None:
+                self._graph.vs[vid]["entity_type"] = self._entities[norm].entity_type
             # Re-indexar tokens con nueva descripcion (DTm-30)
             self._index_entity_tokens(norm)
 
@@ -291,23 +326,15 @@ class KnowledgeGraph:
 
         Traversal BFS hasta max_hops desde cada entidad query.
         Scoring: docs mas cercanos (menos hops) reciben score mas alto.
-
-        Args:
-            entity_names: Nombres de entidades a buscar.
-            max_hops: Profundidad maxima de traversal.
-            max_docs: Numero maximo de doc_ids a devolver.
-
-        Returns:
-            Lista de (doc_id, score) ordenada por score descendente.
         """
         doc_scores: Counter = Counter()
 
         for name in entity_names:
             norm = self._normalize_name(name)
-            if norm not in self._entities or not self._graph.has_node(norm):
+            if norm not in self._entities or not self._has_node(norm):
                 continue
 
-            # BFS con distancia (DTm-29: deque.popleft() en lugar de list.pop(0))
+            # BFS con distancia
             visited: Set[str] = set()
             queue: deque[Tuple[str, int]] = deque([(norm, 0)])
             visited.add(norm)
@@ -326,7 +353,7 @@ class KnowledgeGraph:
 
                 # Expandir vecinos
                 if depth < max_hops:
-                    for neighbor in self._graph.neighbors(current):
+                    for neighbor in self._get_neighbors(current):
                         if neighbor not in visited:
                             visited.add(neighbor)
                             queue.append((neighbor, depth + 1))
@@ -344,19 +371,6 @@ class KnowledgeGraph:
         y descripciones de relaciones.
 
         Usa indice invertido por token (DTm-30) en lugar de scan completo.
-        Complejidad: O(tokens_keyword × matches) en vez de O(entidades × keywords).
-
-        Nota: La busqueda es por token (word-level), no por substring.
-        El keyword "new york" se tokeniza en ["new", "york"] y cada token
-        se busca independientemente. Esto difiere del substring matching
-        original y puede afectar recall en nombres compuestos.
-
-        Args:
-            keywords: Temas/keywords de alto nivel.
-            max_docs: Numero maximo de doc_ids a devolver.
-
-        Returns:
-            Lista de (doc_id, score) ordenada por score descendente.
         """
         doc_scores: Counter = Counter()
         keywords_lower = [k.lower().strip() for k in keywords if k.strip()]
@@ -421,10 +435,28 @@ class KnowledgeGraph:
             for doc_id, rels in self._doc_to_relations.items()
         }
 
-        graph_data = nx.node_link_data(self._graph)
+        # Serialize graph as edge list with attributes
+        graph_edges = []
+        for eid in range(self._graph.ecount()):
+            edge = self._graph.es[eid]
+            src_name = self._graph.vs[edge.source]["name"]
+            tgt_name = self._graph.vs[edge.target]["name"]
+            graph_edges.append({
+                "source": src_name,
+                "target": tgt_name,
+                "relations": edge["relations"],
+            })
+
+        graph_nodes = []
+        for vid in range(self._graph.vcount()):
+            v = self._graph.vs[vid]
+            graph_nodes.append({
+                "name": v["name"],
+                "entity_type": v["entity_type"],
+            })
 
         return {
-            "version": 1,
+            "version": 2,
             "max_entities": self._max_entities,
             "entities_dropped": self._entities_dropped,
             "entities": entities_ser,
@@ -435,7 +467,10 @@ class KnowledgeGraph:
             "doc_to_entities": {
                 k: sorted(v) for k, v in self._doc_to_entities.items()
             },
-            "graph": graph_data,
+            "graph": {
+                "nodes": graph_nodes,
+                "edges": graph_edges,
+            },
         }
 
     @classmethod
@@ -472,10 +507,36 @@ class KnowledgeGraph:
                 for r in rels_data
             ]
 
-        # Reconstruir grafo NetworkX
+        # Reconstruir grafo igraph
         graph_data = data.get("graph")
         if graph_data:
-            kg._graph = nx.node_link_graph(graph_data)
+            version = data.get("version", 1)
+            if version >= 2:
+                # v2 format: explicit nodes + edges lists
+                nodes = graph_data.get("nodes", [])
+                edges = graph_data.get("edges", [])
+                for node in nodes:
+                    kg._ensure_node(node["name"], node.get("entity_type", "UNKNOWN"))
+                for edge_info in edges:
+                    src = edge_info["source"]
+                    tgt = edge_info["target"]
+                    src_vid = kg._name_to_vid.get(src)
+                    tgt_vid = kg._name_to_vid.get(tgt)
+                    if src_vid is not None and tgt_vid is not None:
+                        kg._graph.add_edge(src_vid, tgt_vid, relations=edge_info.get("relations", []))
+            else:
+                # v1 format (legacy NetworkX node_link_data): reconstruct from nodes/links
+                for node in graph_data.get("nodes", []):
+                    node_name = node.get("id", node.get("name", ""))
+                    if node_name:
+                        kg._ensure_node(node_name, node.get("entity_type", "UNKNOWN"))
+                for link in graph_data.get("links", []):
+                    src = link.get("source", "")
+                    tgt = link.get("target", "")
+                    src_vid = kg._name_to_vid.get(src)
+                    tgt_vid = kg._name_to_vid.get(tgt)
+                    if src_vid is not None and tgt_vid is not None:
+                        kg._graph.add_edge(src_vid, tgt_vid, relations=link.get("relations", []))
 
         # Reconstruir indices invertidos de keywords (DTm-30)
         kg._rebuild_keyword_indices()
@@ -490,9 +551,12 @@ class KnowledgeGraph:
         for entity_name in self._entities:
             self._index_entity_tokens(entity_name)
 
-        for src, tgt, edge_data in self._graph.edges(data=True):
-            for rel_info in edge_data.get("relations", []):
-                self._index_relation_tokens(src, tgt, rel_info)
+        for eid in range(self._graph.ecount()):
+            edge = self._graph.es[eid]
+            src_name = self._graph.vs[edge.source]["name"]
+            tgt_name = self._graph.vs[edge.target]["name"]
+            for rel_info in edge["relations"]:
+                self._index_relation_tokens(src_name, tgt_name, rel_info)
 
     def save(self, path: Path) -> None:
         """Persiste el KG a un archivo JSON."""
@@ -539,6 +603,9 @@ class KnowledgeGraph:
     def get_stats(self) -> Dict[str, Any]:
         """Estadisticas del grafo para logging."""
         mem_bytes = self._estimate_memory_bytes()
+        components = 0
+        if self._graph.vcount() > 0:
+            components = len(self._graph.connected_components())
         return {
             "num_entities": self.num_entities,
             "num_relations": self.num_relations,
@@ -548,11 +615,7 @@ class KnowledgeGraph:
                 if self.num_docs > 0
                 else 0.0
             ),
-            "graph_connected_components": (
-                nx.number_connected_components(self._graph)
-                if self._graph.number_of_nodes() > 0
-                else 0
-            ),
+            "graph_connected_components": components,
             "entities_dropped": self._entities_dropped,
             "max_entities": self._max_entities,
             "approx_memory_mb": round(mem_bytes / (1024 * 1024), 2),
@@ -560,6 +623,7 @@ class KnowledgeGraph:
 
 
 __all__ = [
+    "HAS_IGRAPH",
     "HAS_NETWORKX",
     "KGEntity",
     "KGRelation",
