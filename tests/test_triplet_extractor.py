@@ -21,6 +21,7 @@ Cobertura:
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,15 +34,17 @@ from shared.retrieval.triplet_extractor import TripletExtractor
 # Helpers
 # =============================================================================
 
-def _make_extractor(mock_llm=None, max_text_chars=3000):
+def _make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
     """Crea TripletExtractor con LLM mockeado."""
     llm = mock_llm or MagicMock()
     ext = object.__new__(TripletExtractor)
     ext._llm = llm
     ext._max_text_chars = max_text_chars
+    ext._batch_size = batch_size
     ext._stats = {
         "docs_processed": 0, "docs_success": 0, "docs_failed": 0,
         "docs_empty_input": 0, "docs_empty_result": 0,
+        "docs_json_recovered": 0,
         "total_entities": 0, "total_relations": 0,
     }
     return ext
@@ -398,3 +401,181 @@ def test_stats_reset():
     ext.reset_stats()
     stats = ext.get_stats()
     assert all(v == 0 for v in stats.values())
+
+
+# =============================================================================
+# TE22-TE28: Multi-doc batch extraction (P2)
+# =============================================================================
+
+def test_group_docs_for_batch_basic():
+    """TE22: _group_docs_for_batch agrupa docs cortos en mini-batches."""
+    ext = _make_extractor(max_text_chars=3000)
+    docs = [{"doc_id": f"d{i}", "content": "short text"} for i in range(12)]
+    groups = ext._group_docs_for_batch(docs, batch_docs_per_call=5)
+    # 12 docs / 5 per batch = 3 groups (5, 5, 2)
+    assert len(groups) == 3
+    assert len(groups[0]) == 5
+    assert len(groups[1]) == 5
+    assert len(groups[2]) == 2
+
+
+def test_group_docs_for_batch_budget_limit():
+    """TE23: Docs largos se agrupan respetando presupuesto de chars."""
+    ext = _make_extractor(max_text_chars=100)
+    # Cada doc tiene 80 chars, budget = 100*3 = 300 chars
+    # 3 docs = 240 chars OK, 4th would be 320 > 300
+    docs = [{"doc_id": f"d{i}", "content": "x" * 80} for i in range(7)]
+    groups = ext._group_docs_for_batch(docs, batch_docs_per_call=3)
+    # All groups should have at most 3 docs
+    for g in groups:
+        assert len(g) <= 3
+
+
+def test_build_batch_prompt():
+    """TE24: _build_batch_prompt construye prompt con marcadores [DOC N]."""
+    ext = _make_extractor(max_text_chars=100)
+    docs = [
+        {"doc_id": "doc1", "content": "Alice works at MIT"},
+        {"doc_id": "doc2", "content": "Bob studies physics"},
+    ]
+    prompt = ext._build_batch_prompt(docs)
+    assert '[DOC 1 id="doc1"]' in prompt
+    assert '[DOC 2 id="doc2"]' in prompt
+    assert "Alice works at MIT" in prompt
+    assert "Bob studies physics" in prompt
+    assert "[/DOC 1]" in prompt
+    assert "[/DOC 2]" in prompt
+
+
+def test_parse_batch_extraction_json_valid():
+    """TE25: _parse_batch_extraction_json parsea respuesta multi-doc."""
+    ext = _make_extractor()
+    raw = json.dumps({
+        "documents": [
+            {
+                "doc_id": "doc1",
+                "entities": [{"name": "Alice", "type": "PERSON", "description": "researcher"}],
+                "relations": [{"source": "Alice", "target": "MIT", "relation": "works at"}],
+            },
+            {
+                "doc_id": "doc2",
+                "entities": [{"name": "Bob", "type": "PERSON", "description": "student"}],
+                "relations": [],
+            },
+        ]
+    })
+    docs = [{"doc_id": "doc1", "content": "..."}, {"doc_id": "doc2", "content": "..."}]
+    result = ext._parse_batch_extraction_json(raw, docs)
+    assert result is not None
+    assert "doc1" in result
+    assert "doc2" in result
+    assert len(result["doc1"][0]) == 1  # 1 entity
+    assert result["doc1"][0][0].name == "Alice"
+    assert len(result["doc1"][1]) == 1  # 1 relation
+    assert len(result["doc2"][0]) == 1  # 1 entity
+
+
+def test_parse_batch_extraction_json_invalid_returns_none():
+    """TE26: Non-batch JSON format returns None (triggers fallback)."""
+    ext = _make_extractor()
+    # Single-doc format (no "documents" key)
+    raw = '{"entities": [{"name": "Alice", "type": "PERSON"}], "relations": []}'
+    result = ext._parse_batch_extraction_json(raw, [])
+    assert result is None
+
+
+def test_extract_multi_doc_async_success():
+    """TE27: _extract_multi_doc_async processes multiple docs in one LLM call."""
+    batch_response = json.dumps({
+        "documents": [
+            {
+                "doc_id": "doc1",
+                "entities": [{"name": "Alice", "type": "PERSON"}],
+                "relations": [],
+            },
+            {
+                "doc_id": "doc2",
+                "entities": [{"name": "Bob", "type": "PERSON"}],
+                "relations": [],
+            },
+        ]
+    })
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value=batch_response)
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    docs = [
+        {"doc_id": "doc1", "content": "Alice is a researcher."},
+        {"doc_id": "doc2", "content": "Bob is a student."},
+    ]
+    results = asyncio.run(ext._extract_multi_doc_async(docs))
+
+    assert "doc1" in results
+    assert "doc2" in results
+    assert results["doc1"][0][0].name == "Alice"
+    assert results["doc2"][0][0].name == "Bob"
+    # Only 1 LLM call for 2 docs
+    assert mock_llm.invoke_async.call_count == 1
+
+
+def test_extract_multi_doc_async_fallback_on_bad_response():
+    """TE28: Falls back to single-doc extraction when batch parse fails."""
+    single_response = '{"entities": [{"name": "Alice", "type": "PERSON"}], "relations": []}'
+    mock_llm = MagicMock()
+    # First call returns non-batch format, subsequent calls return single-doc format
+    mock_llm.invoke_async = AsyncMock(return_value=single_response)
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    docs = [
+        {"doc_id": "doc1", "content": "Alice is a researcher."},
+        {"doc_id": "doc2", "content": "Bob is a student."},
+    ]
+    results = asyncio.run(ext._extract_multi_doc_async(docs))
+
+    assert "doc1" in results
+    assert "doc2" in results
+    # 1 batch call (failed parse) + 2 individual calls = 3 total
+    assert mock_llm.invoke_async.call_count == 3
+
+
+def test_extract_batch_async_multi_doc_mode():
+    """TE29: extract_batch_async with batch_docs_per_call > 1 uses multi-doc."""
+    batch_response = json.dumps({
+        "documents": [
+            {"doc_id": "d0", "entities": [{"name": "X", "type": "CONCEPT"}], "relations": []},
+            {"doc_id": "d1", "entities": [{"name": "Y", "type": "CONCEPT"}], "relations": []},
+        ]
+    })
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value=batch_response)
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    docs = [
+        {"doc_id": "d0", "content": "Doc about X."},
+        {"doc_id": "d1", "content": "Doc about Y."},
+    ]
+    results = asyncio.run(ext.extract_batch_async(docs, batch_docs_per_call=5))
+
+    assert "d0" in results
+    assert "d1" in results
+    # 2 docs in 1 group -> 1 LLM call
+    assert mock_llm.invoke_async.call_count == 1
+
+
+def test_extract_batch_async_legacy_mode():
+    """TE30: extract_batch_async with batch_docs_per_call=1 uses one call per doc."""
+    single_response = '{"entities": [{"name": "A", "type": "CONCEPT"}], "relations": []}'
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value=single_response)
+    ext = _make_extractor(mock_llm=mock_llm)
+
+    docs = [
+        {"doc_id": "d0", "content": "Doc A."},
+        {"doc_id": "d1", "content": "Doc B."},
+    ]
+    results = asyncio.run(ext.extract_batch_async(docs, batch_docs_per_call=1))
+
+    assert "d0" in results
+    assert "d1" in results
+    # 2 docs -> 2 LLM calls (one per doc)
+    assert mock_llm.invoke_async.call_count == 2
