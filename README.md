@@ -22,7 +22,7 @@ CH_LIRAG/
 │       ├── hybrid_retriever.py      # BM25 + Vector + RRF
 │       ├── hybrid_plus_retriever.py # BM25+Vector+RRF + NER cross-linking
 │       ├── lightrag_retriever.py    # Vector + Knowledge Graph dual-level (LIGHT_RAG)
-│       ├── knowledge_graph.py       # KG in-memory (NetworkX): entidades, relaciones, traversal
+│       ├── knowledge_graph.py       # KG in-memory (igraph): entidades, relaciones, traversal
 │       ├── triplet_extractor.py     # Extraccion tripletas y query keywords via LLM
 │       ├── entity_linker.py         # NER (spaCy) + indice invertido + cross-refs
 │       ├── reranker.py              # CrossEncoderReranker (NVIDIARerank)
@@ -79,9 +79,9 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 3. Graph traversal dual-level:
    - **Low-level**: BFS desde entidades de la query, scoring inversamente proporcional a hops (`1/(1+depth)`)
    - **High-level**: token matching en nombres de entidad y descripciones de relaciones (indice invertido por token, DTm-30)
-4. Fusion: `vector_weight * vector_score + graph_weight * graph_score` (scores normalizados a [0,1])
+4. Fusion via Reciprocal Rank Fusion (RRF) con pesos configurables (`KG_FUSION_METHOD=rrf`, default). Fusion lineal disponible como alternativa (`KG_FUSION_METHOD=linear`).
 
-**Fallback:** Sin `networkx` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
+**Fallback:** Sin `igraph` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
 
 **Hardening (produccion):**
 - Batching de coroutines en chunks de 500 docs para evitar presion de memoria en `extract_batch_async()` (DTm-22)
@@ -154,10 +154,10 @@ python -m spacy download en_core_web_sm
 Para `LIGHT_RAG` (knowledge graph):
 
 ```bash
-pip install networkx
+pip install python-igraph snowballstemmer
 ```
 
-> **Nota:** LIGHT_RAG requiere un LLM service activo (NIM) tanto para indexacion (extraccion de tripletas) como para retrieval (analisis de queries). Sin `networkx` o sin LLM, degrada a vector search puro.
+> **Nota:** LIGHT_RAG requiere un LLM service activo (NIM) tanto para indexacion (extraccion de tripletas) como para retrieval (analisis de queries). Sin `igraph` o sin LLM, degrada a vector search puro.
 
 ```bash
 python -m sandbox_mteb.run                  # Run con .env
@@ -214,6 +214,8 @@ KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
 KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
 KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 50K)
 KG_CACHE_DIR=./data/kg_cache          # Directorio para persistir KG entre runs (vacio = sin cache)
+KG_FUSION_METHOD=rrf                  # rrf (default) o linear
+KG_RRF_K=60                           # Constante k para RRF (default 60)
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -277,17 +279,17 @@ Ronda de mejoras identificadas por code review. 8 problemas agrupados en 5 fases
 
 | Fase | Objetivo | Problemas | Estado |
 |---|---|---|---|
-| **0. Bugs + limpieza** | Corregir errores de datos y eliminar codigo muerto | Fingerprint truncado en cache KG (P5), race conditions en TripletExtractor (P6), dead code: `get_subgraph_context`, `semantic_similarity`, `answer_relevance`, `context_utilization` (P7) | Pendiente |
-| **1. Calidad keyword search** | Stemming en indices de entidades/relaciones del KG | `_tokenize()` sin normalizacion morfologica — "mechanics" no matchea "mechanical" (P3) | Pendiente |
-| **2.1. Batch extraction** | Reducir llamadas LLM 3-5x en construccion del KG | 1 doc/llamada → N docs/llamada con prompt multi-documento (P2) | Pendiente |
-| **2.2. igraph** | Reemplazar NetworkX por igraph (C-backed, 10-100x BFS) | Grafo in-memory lento y memory-heavy con NetworkX (P1) | Pendiente |
-| **3. RRF fusion** | Reemplazar fusion lineal por Reciprocal Rank Fusion | Reusar `reciprocal_rank_fusion()` ya implementada en HYBRID_PLUS (P4) | Pendiente |
+| **0. Bugs + limpieza** | Corregir errores de datos y eliminar codigo muerto | Fingerprint truncado en cache KG (P5), race conditions en TripletExtractor (P6), dead code: `get_subgraph_context`, `context_utilization` (P7) | Completado |
+| **1. Calidad keyword search** | Stemming en indices de entidades/relaciones del KG | `_tokenize()` sin normalizacion morfologica — "mechanics" no matchea "mechanical" (P3) | Completado |
+| **2.1. Batch extraction** | Reducir llamadas LLM 3-5x en construccion del KG | 1 doc/llamada → N docs/llamada con prompt multi-documento (P2) | Completado |
+| **2.2. igraph** | Reemplazar NetworkX por igraph (C-backed, 10-100x BFS) | Grafo in-memory lento y memory-heavy con NetworkX (P1) | Completado |
+| **3. RRF fusion** | Reemplazar fusion lineal por Reciprocal Rank Fusion | Reusar `reciprocal_rank_fusion()` ya implementada en HYBRID_PLUS (P4) | Completado |
 | **4. Test coverage** | Tests para evaluator, loader y pipeline e2e mockeado | Sin cobertura de tests para orquestacion y carga de datos (P8) | Pendiente |
 
-Cambios esperados en dependencias al completar:
+Cambios en dependencias:
 - `networkx` → `python-igraph` (Fase 2.2)
 - Nuevo: `snowballstemmer` (Fase 1)
-- Fusion LIGHT_RAG pasara de combinacion lineal a RRF (Fase 3)
+- Fusion LIGHT_RAG: combinacion lineal → RRF (Fase 3, configurable via `KG_FUSION_METHOD`)
 
 ### Deuda tecnica abierta
 
