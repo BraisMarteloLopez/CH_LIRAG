@@ -38,7 +38,8 @@ MIN_ENTITY_NAME_LEN = 1
 
 TRIPLET_EXTRACTION_SYSTEM = """You are a knowledge graph extraction system.
 Extract entities and their relationships from the given text.
-Return ONLY valid JSON with no extra text."""
+Do NOT reason or think step-by-step. Do NOT use <think> tags.
+Respond with ONLY the JSON object, nothing else."""
 
 TRIPLET_EXTRACTION_PROMPT = """Extract entities and relationships from this text.
 
@@ -57,7 +58,8 @@ Text:
 
 QUERY_KEYWORDS_SYSTEM = """You are a query analysis system for knowledge graph retrieval.
 Extract specific entities and abstract themes from the query.
-Return ONLY valid JSON with no extra text."""
+Do NOT reason or think step-by-step. Do NOT use <think> tags.
+Respond with ONLY the JSON object, nothing else."""
 
 QUERY_KEYWORDS_PROMPT = """Analyze this search query and extract two types of keywords:
 

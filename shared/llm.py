@@ -40,6 +40,10 @@ except ImportError:
     SystemMessage = None
 
 
+class _ThinkingExhaustedError(ValueError):
+    """Model used all tokens for <think> reasoning, producing no content."""
+
+
 # =============================================================================
 # PERSISTENT EVENT LOOP (DTm-45)
 # =============================================================================
@@ -311,7 +315,7 @@ class AsyncLLMService:
                     )
 
                 if not content:
-                    raise ValueError(
+                    raise _ThinkingExhaustedError(
                         "LLM returned empty content after stripping reasoning tags"
                     )
                 return content
@@ -320,6 +324,18 @@ class AsyncLLMService:
                 last_error = e
                 retries += 1
                 latency_ms = (time.perf_counter() - start_time) * 1000
+
+                # If model used all tokens for thinking, double
+                # max_tokens on next attempt to leave room for the
+                # actual response (capped at 16384).
+                if isinstance(e, _ThinkingExhaustedError):
+                    new_limit = min(max_tokens * 2, 16384)
+                    if new_limit > max_tokens:
+                        logger.debug(
+                            f"Bumping max_tokens {max_tokens} -> {new_limit} "
+                            f"after thinking exhaustion"
+                        )
+                        max_tokens = new_limit
 
                 if attempt < self.max_retries:
                     wait_time = 2**attempt
