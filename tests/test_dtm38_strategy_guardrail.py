@@ -43,6 +43,8 @@ def _make_lightrag(has_graph=True):
     retriever._extractor = MagicMock() if has_graph else None
     retriever._has_graph = has_graph
     retriever._query_keywords_cache = {}
+    retriever._kg_fusion_method = "rrf"
+    retriever._kg_rrf_k = 60
     retriever._vector_retriever = MagicMock()
     # Vector retriever returns 20 docs
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(

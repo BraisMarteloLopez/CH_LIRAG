@@ -74,6 +74,8 @@ class RetrievalConfig:
     kg_graph_weight: float = 0.3
     kg_vector_weight: float = 0.7
     kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
+    kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
+    kg_rrf_k: int = 60  # Constante k para RRF (mismo default que HYBRID_PLUS)
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -97,6 +99,8 @@ class RetrievalConfig:
             kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),
             kg_vector_weight=_env_float("KG_VECTOR_WEIGHT", 0.7),
             kg_cache_dir=_env("KG_CACHE_DIR", ""),
+            kg_fusion_method=_env("KG_FUSION_METHOD", "rrf"),
+            kg_rrf_k=_env_int("KG_RRF_K", 60),
         )
 
 

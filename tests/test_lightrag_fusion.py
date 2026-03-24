@@ -35,6 +35,8 @@ def _make_lightrag(
     kg=None,
     extractor=None,
     vector_retriever=None,
+    fusion_method="rrf",
+    rrf_k=60,
 ):
     """Crea LightRAGRetriever con dependencias mockeadas."""
     retriever = object.__new__(LightRAGRetriever)
@@ -48,6 +50,8 @@ def _make_lightrag(
     retriever._has_graph = True
     retriever._query_keywords_cache = {}
     retriever._vector_retriever = vector_retriever or MagicMock()
+    retriever._kg_fusion_method = fusion_method
+    retriever._kg_rrf_k = rrf_k
     return retriever
 
 
@@ -118,8 +122,8 @@ def test_fuse_graph_only_docs_lookup():
 # =============================================================================
 
 def test_fuse_normalization():
-    """Scores se normalizan a [0,1]."""
-    r = _make_lightrag(graph_weight=0.5, vector_weight=0.5)
+    """Scores se normalizan a [0,1] (linear fusion)."""
+    r = _make_lightrag(graph_weight=0.5, vector_weight=0.5, fusion_method="linear")
     r._extractor.extract_query_keywords.return_value = (["x"], [])
 
     # Graph: d1=2.0, d2=1.0 -> normalized: d1=1.0, d2=0.5
@@ -162,8 +166,8 @@ def test_fuse_all_graph_scores_zero():
 # =============================================================================
 
 def test_fuse_weights():
-    """Fusion respeta vector_weight / graph_weight."""
-    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7)
+    """Fusion respeta vector_weight / graph_weight (linear)."""
+    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7, fusion_method="linear")
     r._extractor.extract_query_keywords.return_value = (["x"], [])
 
     # Only d1 in both graph and vector
@@ -179,8 +183,8 @@ def test_fuse_weights():
 
 
 def test_fuse_weights_graph_only_doc():
-    """Doc solo del grafo: v_score=0.0, fused = graph_weight * g_score."""
-    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7)
+    """Doc solo del grafo: v_score=0.0, fused = graph_weight * g_score (linear)."""
+    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7, fusion_method="linear")
     r._extractor.extract_query_keywords.return_value = (["x"], [])
 
     r._kg.query_entities.return_value = [("d_graph", 1.0)]
@@ -256,6 +260,73 @@ def test_fuse_high_level_only():
     result = r._fuse_with_graph("query", vr, top_k=5)
     assert "d1" in result.doc_ids
     r._kg.query_by_keywords.assert_called_once()
+
+
+# =============================================================================
+# F9a-F9c: RRF fusion
+# =============================================================================
+
+def test_fuse_rrf_default():
+    """RRF fusion es el default y produce ranking valido."""
+    r = _make_lightrag(graph_weight=0.5, vector_weight=0.5)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d1", 2.0), ("d2", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1", "d2"], ["c1", "c2"], [0.9, 0.8])
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+    # d1 is rank 1 in both -> highest RRF score
+    assert result.doc_ids[0] == "d1"
+    assert len(result.doc_ids) == 2
+    assert all(s > 0 for s in result.scores)
+
+
+def test_fuse_rrf_doc_in_one_ranking_only():
+    """RRF handles docs that appear in only one ranking."""
+    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    # d_graph only in graph, not in vector
+    r._kg.query_entities.return_value = [("d_graph", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d_vec"], ["content_vec"], [0.9])
+
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d_graph": "content_graph"
+    }
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+    assert "d_vec" in result.doc_ids
+    assert "d_graph" in result.doc_ids
+
+
+def test_fuse_rrf_respects_weights():
+    """RRF with higher vector_weight ranks vector-top docs higher."""
+    # High vector weight
+    r_vec = _make_lightrag(graph_weight=0.1, vector_weight=0.9)
+    r_vec._extractor.extract_query_keywords.return_value = (["x"], [])
+    r_vec._kg.query_entities.return_value = [("d2", 2.0), ("d1", 1.0)]
+    r_vec._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1", "d2"], ["c1", "c2"], [0.9, 0.1])
+    result_vec = r_vec._fuse_with_graph("query", vr, top_k=5)
+
+    # High graph weight
+    r_graph = _make_lightrag(graph_weight=0.9, vector_weight=0.1)
+    r_graph._extractor.extract_query_keywords.return_value = (["x"], [])
+    r_graph._kg.query_entities.return_value = [("d2", 2.0), ("d1", 1.0)]
+    r_graph._kg.query_by_keywords.return_value = []
+
+    vr2 = _make_vector_result(["d1", "d2"], ["c1", "c2"], [0.9, 0.1])
+    result_graph = r_graph._fuse_with_graph("query", vr2, top_k=5)
+
+    # With high vector weight: d1 (vector rank 1) should be top
+    assert result_vec.doc_ids[0] == "d1"
+    # With high graph weight: d2 (graph rank 1) should be top
+    assert result_graph.doc_ids[0] == "d2"
 
 
 # =============================================================================

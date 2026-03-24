@@ -39,6 +39,7 @@ from .core import (
     RetrievalStrategy,
     SimpleVectorRetriever,
 )
+from .hybrid_retriever import reciprocal_rank_fusion
 from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_NETWORKX
 from .triplet_extractor import TripletExtractor
 
@@ -83,6 +84,8 @@ class LightRAGRetriever(BaseRetriever):
         self._graph_weight = graph_weight
         self._vector_weight = vector_weight
         self._kg_cache_dir = Path(kg_cache_dir) if kg_cache_dir else None
+        self._kg_fusion_method = config.kg_fusion_method
+        self._kg_rrf_k = config.kg_rrf_k
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -320,7 +323,7 @@ class LightRAGRetriever(BaseRetriever):
         1. Extrae keywords de la query (low-level + high-level)
         2. Graph traversal por entidades (low-level)
         3. Graph traversal por temas (high-level)
-        4. Merge scores: vector_weight * vector_score + graph_weight * graph_score
+        4. Fusion via RRF (default) o linear weighted sum
         """
         assert self._kg is not None
         assert self._extractor is not None
@@ -363,27 +366,16 @@ class LightRAGRetriever(BaseRetriever):
             }
             return vector_result
 
-        # Paso 3: Normalizar scores del grafo a [0, 1]
-        max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
-        if max_graph_score > 0:
-            graph_docs = {
-                k: v / max_graph_score for k, v in graph_docs.items()
-            }
-
-        # Paso 4: Normalizar scores de vector a [0, 1]
+        # Paso 3: Build vector ranking and contents map
         vector_docs: Dict[str, float] = {}
         vector_contents: Dict[str, str] = {}
-        max_vector_score = max(vector_result.scores) if vector_result.scores else 1.0
-        if max_vector_score > 0:
-            for doc_id, content, score in zip(
-                vector_result.doc_ids, vector_result.contents, vector_result.scores
-            ):
-                vector_docs[doc_id] = score / max_vector_score
-                vector_contents[doc_id] = content
+        for doc_id, content, score in zip(
+            vector_result.doc_ids, vector_result.contents, vector_result.scores
+        ):
+            vector_docs[doc_id] = score
+            vector_contents[doc_id] = content
 
-        # Paso 5: Recuperar contenido de graph-only docs desde ChromaDB.
-        # El grafo puede descubrir docs que el vector search no retorno.
-        # En vez de descartarlos, hacemos lookup de su contenido real.
+        # Paso 4: Recuperar contenido de graph-only docs desde ChromaDB.
         graph_only_ids = [
             did for did in graph_docs if did not in vector_contents
         ]
@@ -397,17 +389,38 @@ class LightRAGRetriever(BaseRetriever):
                 graph_resolved += 1
         graph_unresolved = len(graph_only_ids) - graph_resolved
 
-        # Paso 6: Fusion — merge todos los doc_ids que tienen contenido
-        all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
-        fused_scores: List[Tuple[str, float]] = []
+        # Paso 5: Fusion
+        if self._kg_fusion_method == "linear":
+            # Legacy linear fusion: normalize + weighted sum
+            max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
+            if max_graph_score > 0:
+                graph_docs = {k: v / max_graph_score for k, v in graph_docs.items()}
+            max_vector_score = max(vector_docs.values()) if vector_docs else 1.0
+            if max_vector_score > 0:
+                vector_docs = {k: v / max_vector_score for k, v in vector_docs.items()}
 
-        for doc_id in all_doc_ids:
-            v_score = vector_docs.get(doc_id, 0.0)
-            g_score = graph_docs.get(doc_id, 0.0)
-            fused = self._vector_weight * v_score + self._graph_weight * g_score
-            fused_scores.append((doc_id, fused))
-
-        fused_scores.sort(key=lambda x: x[1], reverse=True)
+            all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
+            fused_scores: List[Tuple[str, float]] = []
+            for doc_id in all_doc_ids:
+                v_score = vector_docs.get(doc_id, 0.0)
+                g_score = graph_docs.get(doc_id, 0.0)
+                fused = self._vector_weight * v_score + self._graph_weight * g_score
+                fused_scores.append((doc_id, fused))
+            fused_scores.sort(key=lambda x: x[1], reverse=True)
+        else:
+            # RRF fusion (default): rank-based, robust to score scale differences
+            vector_ranking = sorted(
+                vector_docs.items(), key=lambda x: x[1], reverse=True
+            )
+            graph_ranking = sorted(
+                graph_docs.items(), key=lambda x: x[1], reverse=True
+            )
+            fused_scores = reciprocal_rank_fusion(
+                rankings=[vector_ranking, graph_ranking],
+                weights=[self._vector_weight, self._graph_weight],
+                k=self._kg_rrf_k,
+                top_n=top_k,
+            )
 
         # Paso 7: Construir resultado (solo docs con contenido)
         final_ids = []
