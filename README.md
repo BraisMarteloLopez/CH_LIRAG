@@ -284,7 +284,7 @@ Ronda de mejoras identificadas por code review. 8 problemas agrupados en 5 fases
 | **2.1. Batch extraction** | Reducir llamadas LLM 3-5x en construccion del KG | 1 doc/llamada → N docs/llamada con prompt multi-documento (P2) | Completado |
 | **2.2. igraph** | Reemplazar NetworkX por igraph (C-backed, 10-100x BFS) | Grafo in-memory lento y memory-heavy con NetworkX (P1) | Completado |
 | **3. RRF fusion** | Reemplazar fusion lineal por Reciprocal Rank Fusion | Reusar `reciprocal_rank_fusion()` ya implementada en HYBRID_PLUS (P4) | Completado |
-| **4. Test coverage** | Tests para evaluator, loader y pipeline e2e mockeado | Sin cobertura de tests para orquestacion y carga de datos (P8) | Pendiente |
+| **4. Test coverage** | Tests para evaluator, loader y pipeline e2e mockeado | Sin cobertura de tests para orquestacion y carga de datos (P8) | Completado |
 
 Cambios en dependencias:
 - `networkx` → `python-igraph` (Fase 2.2)
