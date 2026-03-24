@@ -48,7 +48,11 @@ def _make_lightrag(
     retriever._kg = kg or MagicMock(spec=KnowledgeGraph)
     retriever._extractor = extractor or MagicMock()
     retriever._has_graph = True
-    retriever._query_keywords_cache = {}
+    import threading
+    from collections import OrderedDict
+    retriever._query_keywords_cache = OrderedDict()
+    retriever._cache_lock = threading.Lock()
+    retriever._QUERY_CACHE_MAX_SIZE = 10_000
     retriever._vector_retriever = vector_retriever or MagicMock()
     retriever._kg_fusion_method = fusion_method
     retriever._kg_rrf_k = rrf_k

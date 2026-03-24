@@ -107,6 +107,8 @@ class KnowledgeGraph:
         self._doc_to_relations: Dict[str, List[KGRelation]] = defaultdict(list)
         # Contador de entidades nuevas rechazadas por cap
         self._entities_dropped = 0
+        # DTm-49: contador de tripletas completas descartadas por entity cap
+        self._triplets_dropped_by_cap = 0
         # Indices invertidos para query_by_keywords (DTm-30)
         # token -> set de entity names que contienen ese token
         self._kw_entity_index: Dict[str, Set[str]] = defaultdict(set)
@@ -148,7 +150,10 @@ class KnowledgeGraph:
         """Tokeniza texto en palabras lowercase con stemming para el indice invertido."""
         tokens = text.lower().split()
         if _STEMMER is not None:
-            tokens = _STEMMER.stemWords(tokens)
+            try:
+                tokens = _STEMMER.stemWords(tokens)
+            except Exception:
+                pass  # DTm-59: stemmer fallo, usar tokens sin stemming
         return tokens
 
     def _index_entity_tokens(self, entity_name: str) -> None:
@@ -236,12 +241,13 @@ class KnowledgeGraph:
             if not src_name or not tgt_name:
                 continue
 
-            # Registrar/actualizar entidades (con cap DTm-21)
+            # Registrar/actualizar entidades (con cap DTm-21, warning DTm-49)
             skip_triplet = False
             for name in (src_name, tgt_name):
                 if name not in self._entities:
                     if len(self._entities) >= self._max_entities:
                         self._entities_dropped += 1
+                        self._triplets_dropped_by_cap += 1
                         skip_triplet = True
                         break
                     self._entities[name] = KGEntity(
@@ -294,7 +300,8 @@ class KnowledgeGraph:
         if self._entities_dropped > 0:
             logger.warning(
                 f"KnowledgeGraph: {self._entities_dropped} entidades nuevas "
-                f"rechazadas (cap={self._max_entities})"
+                f"rechazadas (cap={self._max_entities}), "
+                f"{self._triplets_dropped_by_cap} tripletas descartadas"
             )
 
         return added
@@ -459,6 +466,7 @@ class KnowledgeGraph:
             "version": 2,
             "max_entities": self._max_entities,
             "entities_dropped": self._entities_dropped,
+            "triplets_dropped_by_cap": self._triplets_dropped_by_cap,
             "entities": entities_ser,
             "doc_to_relations": relations_ser,
             "entity_to_docs": {
@@ -478,6 +486,7 @@ class KnowledgeGraph:
         """Reconstruye un KnowledgeGraph desde un dict serializado."""
         kg = cls(max_entities=data.get("max_entities", 0))
         kg._entities_dropped = data.get("entities_dropped", 0)
+        kg._triplets_dropped_by_cap = data.get("triplets_dropped_by_cap", 0)
 
         # Reconstruir entidades
         for name, e_data in data.get("entities", {}).items():
@@ -617,6 +626,7 @@ class KnowledgeGraph:
             ),
             "graph_connected_components": components,
             "entities_dropped": self._entities_dropped,
+            "triplets_dropped_by_cap": self._triplets_dropped_by_cap,
             "max_entities": self._max_entities,
             "approx_memory_mb": round(mem_bytes / (1024 * 1024), 2),
         }

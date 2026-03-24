@@ -25,7 +25,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -114,8 +116,10 @@ class LightRAGRetriever(BaseRetriever):
                 f"Fallback a SimpleVector."
             )
 
-        # Cache de keywords de queries (para evitar re-extraccion)
-        self._query_keywords_cache: Dict[str, Tuple[List[str], List[str]]] = {}
+        # Cache de keywords de queries con limite (DTm-47) y lock (DTm-51)
+        self._QUERY_CACHE_MAX_SIZE = 10_000
+        self._query_keywords_cache: OrderedDict[str, Tuple[List[str], List[str]]] = OrderedDict()
+        self._cache_lock = threading.Lock()
 
     def index_documents(
         self,
@@ -325,8 +329,10 @@ class LightRAGRetriever(BaseRetriever):
         3. Graph traversal por temas (high-level)
         4. Fusion via RRF (default) o linear weighted sum
         """
-        assert self._kg is not None
-        assert self._extractor is not None
+        if self._kg is None:
+            raise RuntimeError("_fuse_with_graph llamado sin KnowledgeGraph")
+        if self._extractor is None:
+            raise RuntimeError("_fuse_with_graph llamado sin TripletExtractor")
 
         # Paso 1: Query analysis
         low_level, high_level = self._get_query_keywords(query)
@@ -390,8 +396,10 @@ class LightRAGRetriever(BaseRetriever):
         graph_unresolved = len(graph_only_ids) - graph_resolved
 
         # Paso 5: Fusion
-        if self._kg_fusion_method == "linear":
-            # Legacy linear fusion: normalize + weighted sum
+        use_rrf = (self._kg_fusion_method != "linear")
+
+        if not use_rrf:
+            # Linear fusion: normalize + weighted sum
             max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
             if max_graph_score > 0:
                 graph_docs = {k: v / max_graph_score for k, v in graph_docs.items()}
@@ -399,6 +407,15 @@ class LightRAGRetriever(BaseRetriever):
             if max_vector_score > 0:
                 vector_docs = {k: v / max_vector_score for k, v in vector_docs.items()}
 
+            # DTm-53: si ambos rankings son all-zero, fallback a RRF
+            if max_graph_score == 0 and max_vector_score == 0:
+                logger.warning(
+                    "Linear fusion: scores all-zero en ambos rankings, "
+                    "usando RRF como fallback"
+                )
+                use_rrf = True
+
+        if not use_rrf:
             all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
             fused_scores: List[Tuple[str, float]] = []
             for doc_id in all_doc_ids:
@@ -457,11 +474,16 @@ class LightRAGRetriever(BaseRetriever):
             },
         )
 
-        if graph_only_ids:
+        if graph_unresolved > 0:
+            # DTm-52: warn (not just debug) when graph docs can't be resolved
+            logger.warning(
+                f"LightRAG fusion: {graph_unresolved}/{len(graph_only_ids)} "
+                f"graph-only docs sin contenido en ChromaDB (excluidos)"
+            )
+        elif graph_only_ids:
             logger.debug(
                 f"LightRAG fusion: {len(graph_only_ids)} graph-only docs, "
-                f"{graph_resolved} recuperados via lookup, "
-                f"{graph_unresolved} sin contenido (excluidos). "
+                f"todos recuperados via lookup. "
                 f"Retornando {len(final_ids)} docs."
             )
 
@@ -470,13 +492,22 @@ class LightRAGRetriever(BaseRetriever):
     def _get_query_keywords(
         self, query: str,
     ) -> Tuple[List[str], List[str]]:
-        """Extrae keywords de query con cache."""
-        if query in self._query_keywords_cache:
-            return self._query_keywords_cache[query]
+        """Extrae keywords de query con cache thread-safe y LRU eviction (DTm-47/51)."""
+        with self._cache_lock:
+            if query in self._query_keywords_cache:
+                self._query_keywords_cache.move_to_end(query)
+                return self._query_keywords_cache[query]
 
-        assert self._extractor is not None
+        if self._extractor is None:
+            raise RuntimeError(
+                "LightRAGRetriever._get_query_keywords llamado sin extractor"
+            )
         low, high = self._extractor.extract_query_keywords(query)
-        self._query_keywords_cache[query] = (low, high)
+
+        with self._cache_lock:
+            self._query_keywords_cache[query] = (low, high)
+            if len(self._query_keywords_cache) > self._QUERY_CACHE_MAX_SIZE:
+                self._query_keywords_cache.popitem(last=False)
         return low, high
 
     def pre_extract_query_keywords(
@@ -489,8 +520,9 @@ class LightRAGRetriever(BaseRetriever):
         if not self._extractor:
             return
 
-        # Filtrar queries ya cacheadas
-        uncached = [q for q in queries if q not in self._query_keywords_cache]
+        # Filtrar queries ya cacheadas (DTm-51: thread-safe)
+        with self._cache_lock:
+            uncached = [q for q in queries if q not in self._query_keywords_cache]
         if not uncached:
             return
 
@@ -499,15 +531,19 @@ class LightRAGRetriever(BaseRetriever):
             f"{len(uncached)} queries..."
         )
         results = self._extractor.extract_query_keywords_batch(uncached)
-        for query, (low, high) in zip(uncached, results):
-            self._query_keywords_cache[query] = (low, high)
+        with self._cache_lock:
+            for query, (low, high) in zip(uncached, results):
+                self._query_keywords_cache[query] = (low, high)
+                if len(self._query_keywords_cache) > self._QUERY_CACHE_MAX_SIZE:
+                    self._query_keywords_cache.popitem(last=False)
 
     def clear_index(self) -> None:
         self._vector_retriever.clear_index()
         if self._kg:
             self._kg = KnowledgeGraph(max_entities=self._kg_max_entities)
         self._has_graph = False
-        self._query_keywords_cache.clear()
+        with self._cache_lock:
+            self._query_keywords_cache.clear()
         self._is_indexed = False
         logger.debug("LightRAGRetriever: indice y grafo limpiados")
 

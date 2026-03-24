@@ -449,13 +449,13 @@ class TripletExtractor:
                         results[doc_id] = ([], [])
                 return results
 
-            # Batch parsing failed — fallback to single-doc
-            logger.debug(
+            # DTm-54: batch parsing failed — fallback to single-doc (WARNING, not debug)
+            logger.warning(
                 f"Batch parse failed for {len(non_empty)} docs, "
                 f"falling back to single-doc extraction"
             )
         except Exception as e:
-            logger.debug(f"Batch LLM call failed: {e}, falling back to single-doc")
+            logger.warning(f"Batch LLM call failed: {e}, falling back to single-doc")
 
         # Fallback: extract each doc individually
         for doc in non_empty:
@@ -631,7 +631,8 @@ class TripletExtractor:
             Lista de (low_level, high_level) en mismo orden que queries.
         """
         t0 = time.perf_counter()
-        results: List[Tuple[List[str], List[str]]] = [([],[])] * len(queries)
+        # DTm-48: list comprehension (no mutable default sharing)
+        results: List[Tuple[List[str], List[str]]] = [([], []) for _ in range(len(queries))]
 
         async def _extract_one(
             idx: int, query: str,

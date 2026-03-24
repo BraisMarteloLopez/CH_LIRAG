@@ -291,25 +291,28 @@ Cambios en dependencias:
 - Nuevo: `snowballstemmer` (Fase 1)
 - Fusion LIGHT_RAG: combinacion lineal → RRF (Fase 3, configurable via `KG_FUSION_METHOD`)
 
+### Deuda tecnica resuelta (ronda de robustez LightRAG)
+
+Issues resueltos: DTm-47 a DTm-54, DTm-59.
+
+| ID | Fix |
+|---|---|
+| DTm-47 | Cache de query keywords con LRU eviction (OrderedDict, max 10K entries) |
+| DTm-48 | List comprehension en vez de `[([],[])]*n` (elimina sharing de refs mutables) |
+| DTm-49 | `_triplets_dropped_by_cap` contador + WARNING en log + expuesto en `get_stats()` |
+| DTm-50 | `assert` reemplazados por `raise RuntimeError` (safe con `-O`) |
+| DTm-51 | `threading.Lock` en cache de keywords (thread-safe read/write/evict) |
+| DTm-52 | WARNING cuando graph-only docs no se resuelven en ChromaDB |
+| DTm-53 | Fusion lineal con scores all-zero hace fallback automatico a RRF |
+| DTm-54 | Fallback batch→single-doc logueado como WARNING (no DEBUG) |
+| DTm-59 | `_stemmer.stemWords()` envuelto en try-except |
+
 ### Deuda tecnica abierta
-
-#### Alta — requieren fix antes de produccion
-
-| ID | Descripcion | Ubicacion |
-|---|---|---|
-| DTm-47 | **Cache de query keywords sin limite**: `_query_keywords_cache` crece indefinidamente, memory leak en runs largos. Fix: `functools.lru_cache` o dict con max-size + eviction. | `lightrag_retriever.py:118` |
-| DTm-48 | **Lista mutable compartida en batch init**: `[([],[])]*n` crea N refs al mismo objeto. Actualmente seguro (reasigna), pero un refactor con mutacion in-place corromperia todos los resultados. Fix: list comprehension `[([],[]) for _ in range(n)]`. | `triplet_extractor.py:634` |
-| DTm-49 | **Entity cap descarta tripletas silenciosamente**: si target excede cap, toda la tripleta se descarta sin warning visible. El KG queda incompleto sin diagnostico. Fix: log WARNING con conteo, exponer en `get_stats()`. | `knowledge_graph.py:242-258` |
 
 #### Media — afectan fiabilidad o diagnosticabilidad
 
 | ID | Descripcion | Ubicacion |
 |---|---|---|
-| DTm-50 | `assert` como guard en `_fuse_with_graph` — con `-O` se desactivan silenciosamente. Usar `if not x: raise RuntimeError(...)`. | `lightrag_retriever.py:328-329` |
-| DTm-51 | Cache de keywords no thread-safe (check-then-act). Multiples threads duplican llamadas LLM. | `lightrag_retriever.py:474-479` |
-| DTm-52 | Docs solo-del-grafo descartados silenciosamente si ChromaDB falla lookup. Deberia loguear WARNING. | `lightrag_retriever.py:430-437` |
-| DTm-53 | Fusion lineal con scores all-zero produce ranking sin sentido. RRF (default) no tiene este problema. | `lightrag_retriever.py:395-407` |
-| DTm-54 | Fallo parcial en batch extraction pierde docs sin retry ni warning. | `triplet_extractor.py:339-385` |
 | DTm-55 | Stats del extractor se corrompen si construccion del KG falla a mitad. | `lightrag_retriever.py:150-162` |
 | DTm-56 | Colision de fingerprint con corpus vacio (edge case teorico). | `lightrag_retriever.py:229-247` |
 
@@ -322,7 +325,6 @@ Cambios en dependencias:
 | DTm-24 | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. Semantica distinta, nombre similar. | `sandbox_mteb/config.py` |
 | DTm-57 | Normalizacion de entidades agresiva: pierde apostrofes, guiones. Puede causar colisiones raras. | `knowledge_graph.py:133-144` |
 | DTm-58 | No dedup de queries identicas en batch keyword extraction — LLM calls duplicadas. | `triplet_extractor.py:624-668` |
-| DTm-59 | `_stemmer.stemWords()` sin try-except — si snowballstemmer corrupto, crash en keyword search. | `knowledge_graph.py:148-151` |
 | DTm-60 | Stats del extractor acumulan entre llamadas; `reset_stats()` existe pero nunca se llama automaticamente. | `triplet_extractor.py:127-146` |
 | DTm-61 | No validacion de tamano de keywords del LLM — respuestas patologicas pasan sin limite. | `triplet_extractor.py:565-592` |
 
