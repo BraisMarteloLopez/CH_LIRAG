@@ -31,7 +31,14 @@ CH_LIRAG/
 ├── sandbox_mteb/                    # Evaluacion MTEB/BeIR
 │   ├── config.py                    # MTEBConfig: .env -> dataclass validada
 │   ├── loader.py                    # MinIO/Parquet -> LoadedDataset
-│   ├── evaluator.py                 # Pipeline: pre-embed + retrieval + gen async
+│   ├── evaluator.py                 # Pipeline orquestador (<600 LOC)
+│   ├── subset_selection.py          # Seleccion corpus: DEV_MODE, gold docs
+│   ├── retrieval_executor.py        # Loop retrieval sync + metricas
+│   ├── generation_executor.py       # Generacion async + metricas
+│   ├── embedding_service.py         # Pre-embed queries batch (NIM REST)
+│   ├── checkpoint.py                # Checkpoint/resume cada N queries
+│   ├── result_builder.py            # Construccion EvaluationRun final
+│   ├── preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
 │   ├── run.py                       # Entry point (--dry-run, -v, --resume)
 │   └── env.example                  # Plantilla .env
 │
@@ -83,6 +90,7 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 - Validacion post-parse del output LLM: entity types normalizados a enum (`PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER`), nombres >= 2 chars, descriptions truncadas a 200 chars (DTm-16)
 - Estimacion de memoria en `get_stats()` para observabilidad
 - Robustez para modelos de razonamiento (nemotron-3-nano thinking mode): strip de `<think>` tags en `llm.py` (incluye tags sin cerrar por truncamiento), `max_tokens` ampliados en extraccion (2048 tripletas, 512 keywords) para compensar tokens consumidos por razonamiento, y fallback `json.JSONDecoder.raw_decode()` para extraer JSON de respuestas con texto mixto
+- Trazas de depuracion (nivel DEBUG): log de chars eliminados por strip de `<think>` tags, y primeros 200 chars del raw response en fallos de parse JSON — permite diagnosticar problemas con NIM sin activar logging verboso en produccion
 
 **Optimizacion:** `pre_extract_query_keywords()` permite pre-extraer keywords de todas las queries en batch antes del loop de retrieval, analogo al pre-embed de vectores.
 
