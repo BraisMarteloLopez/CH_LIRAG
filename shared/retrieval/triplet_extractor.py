@@ -605,10 +605,13 @@ class TripletExtractor:
         prompt = QUERY_KEYWORDS_PROMPT.format(query=query)
 
         try:
+            # 1024 tokens: thinking-mode models need headroom beyond the
+            # ~50-token JSON response for their reasoning prefix.  512
+            # caused ~17% first-attempt failures (thinking exhaustion).
             raw = await self._llm.invoke_async(
                 prompt,
                 system_prompt=QUERY_KEYWORDS_SYSTEM,
-                max_tokens=512,
+                max_tokens=1024,
             )
             return self._parse_keywords_json(raw)
         except Exception as e:

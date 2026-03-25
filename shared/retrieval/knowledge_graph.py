@@ -234,6 +234,7 @@ class KnowledgeGraph:
             Numero de tripletas anadidas efectivamente.
         """
         added = 0
+        dropped_this_call = 0
         for triplet in triplets:
             src_name = self._normalize_name(triplet.source)
             tgt_name = self._normalize_name(triplet.target)
@@ -248,6 +249,7 @@ class KnowledgeGraph:
                     if len(self._entities) >= self._max_entities:
                         self._entities_dropped += 1
                         self._triplets_dropped_by_cap += 1
+                        dropped_this_call += 1
                         skip_triplet = True
                         break
                     self._entities[name] = KGEntity(
@@ -297,14 +299,27 @@ class KnowledgeGraph:
             self._doc_to_relations[doc_id].append(triplet)
             added += 1
 
-        if self._entities_dropped > 0:
+        if dropped_this_call > 0:
+            logger.debug(
+                f"KnowledgeGraph: {dropped_this_call} tripletas descartadas "
+                f"por entity cap en doc '{doc_id}' "
+                f"(total acumulado: {self._triplets_dropped_by_cap})"
+            )
+
+        return added
+
+    def log_entity_cap_summary(self) -> None:
+        """Emite un WARNING resumen si hubo entidades descartadas por cap.
+
+        Debe llamarse una vez al final de la construccion del KG,
+        no por cada doc (DTm-49).
+        """
+        if self._triplets_dropped_by_cap > 0:
             logger.warning(
                 f"KnowledgeGraph: {self._entities_dropped} entidades nuevas "
                 f"rechazadas (cap={self._max_entities}), "
                 f"{self._triplets_dropped_by_cap} tripletas descartadas"
             )
-
-        return added
 
     def add_entity_metadata(
         self, name: str, entity_type: str, description: str

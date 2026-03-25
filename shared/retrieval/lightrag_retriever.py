@@ -223,6 +223,9 @@ class LightRAGRetriever(BaseRetriever):
                     entity.name, entity.entity_type, entity.description
                 )
 
+        # DTm-49: emitir resumen una sola vez al final
+        self._kg.log_entity_cap_summary()
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             f"LightRAGRetriever: KG construido en {elapsed_ms:.0f}ms. "
