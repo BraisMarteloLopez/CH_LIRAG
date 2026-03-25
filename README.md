@@ -346,8 +346,12 @@ Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`
 
 | ID | Severidad | Descripcion | Ubicacion | Estado |
 |---|---|---|---|---|
+| DTm-66 | **Alta** | **`max_tokens=8192` en extraccion batch causa generacion masiva en thinking mode**: nemotron-3-nano genera ~6000 tokens de `<think>` + ~2000 de JSON por call. A ~30 tok/s, cada call tarda ~267s. Con 3,300 calls y 32 concurrencia = ~103 rondas × 267s = **7h 38min** (98% del tiempo de KG build). Fix: reducir a 4096 (configurable via `KG_EXTRACTION_MAX_TOKENS`). | `triplet_extractor.py:425` | Abierto |
+| DTm-67 | **Alta** | **Batch de 5 docs/call es conservador**: con 3000 chars/doc (~750 tokens) y context window 8K+, caben 10 docs/call. Reducir calls de 3,300 a 1,650 (50% menos). Hacer configurable via `KG_BATCH_DOCS_PER_CALL`. | `triplet_extractor.py:290` | Abierto |
 | DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. | `lightrag_retriever.py` fusion | Abierto |
 | DTm-63 | **Alta** | Entity cap 50K insuficiente: 34.5% entidades descartadas. Orden de indexacion introduce sesgo arbitrario por FIFO. | `knowledge_graph.py:247-252` | Abierto |
+| DTm-68 | **Media** | **Re-serializacion JSON innecesaria en batch parse**: `_parse_batch_extraction_json` hace `json.dumps(entry)` para pasarlo a `_parse_extraction_json(raw_str)`. Se puede refactorizar para aceptar dict directamente, eliminando serialize+deserialize por doc. | `triplet_extractor.py:379` | Abierto |
+| DTm-69 | **Media** | **Token indexing secuencial durante graph build**: `_index_entity_tokens()` y `_index_relation_tokens()` ejecutan stemming por cada tripleta durante `add_triplets()`. Con 80K+ iteraciones es CPU-bound. Se podria diferir a una fase post-build (`build_keyword_indices()`) para separar I/O-bound (LLM) de CPU-bound (stemming). | `knowledge_graph.py:267-293` | Abierto |
 | DTm-64 | **Media** | Normalizacion [0,1] incomparable entre canales: distribuciones vector (concentrada) vs graph (uniforme) generan scores engañosos. RRF mitiga parcialmente. | `lightrag_retriever.py:398-430` | Abierto |
 | DTm-65 | **Media** | Thinking-mode exhaustion: ~17% queries fallan en 1er intento. `KG_KEYWORD_MAX_TOKENS` configurable (default 1024). Puede requerir 2048 con modelos reasoning-heavy. | `triplet_extractor.py:608-612` | Mitigado |
 | DTm-55 | **Media** | Stats extractor se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. | `lightrag_retriever.py:150-162` | Abierto |
@@ -381,6 +385,24 @@ DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59 (31 issues). Ver historial git.
 **Criterio de exito:** Tabla de 3+ runs con mismas queries. Delta Hit@5 y MRR entre SIMPLE_VECTOR y LIGHT_RAG con mismo corpus determina la decision go/no-go para LIGHT_RAG.
 
 **Riesgo:** Si SIMPLE_VECTOR 16.5K iguala o supera LIGHT_RAG, el KG no aporta valor neto y las fases 6-7 pierden prioridad.
+
+### Fase 5b: Rendimiento KG build
+
+**Objetivo:** Reducir el tiempo de construccion del KG de ~8h a <2h para corpus 16.5K.
+
+**Contexto:** El 98% del tiempo de run es KG build (7h 51min de 8h). La causa raiz es que `max_tokens=8192` permite a nemotron-3-nano generar ~6000 tokens de `<think>` tags por call. Con 3,300 LLM calls a ~267s cada una, el cuello de botella es generacion de texto que se descarta.
+
+| Tarea | Descripcion | DTm | Impacto estimado |
+|---|---|---|---|
+| 5b.1 `KG_EXTRACTION_MAX_TOKENS` configurable | Reducir max_tokens de extraccion de 8192 a 4096 (configurable). El JSON de salida raramente excede 2000 tokens para 5 docs; el modelo generara menos thinking. | DTm-66 | ~2x mas rapido (4h→2h) |
+| 5b.2 `KG_BATCH_DOCS_PER_CALL` configurable | Subir de 5 a 10 docs/call. Reduce LLM calls de 3,300 a 1,650. Requiere validar que el parse JSON sigue robusto con 10 docs. | DTm-67 | ~1.5x adicional |
+| 5b.3 Eliminar re-serializacion JSON | `_parse_batch_extraction_json` hace `json.dumps(entry)` + `_parse_extraction_json(str)`. Refactorizar para pasar dict directamente. | DTm-68 | ~1-2 min menos |
+| 5b.4 Diferir token indexing | Separar `_index_entity_tokens()` del loop `add_triplets()`. Ejecutar como fase post-build (`build_keyword_indices()`). | DTm-69 | ~5-10 min menos |
+| 5b.5 Activar `KG_CACHE_DIR` | Configurar en .env. Runs subsiguientes con mismo corpus cargan KG en milisegundos. | — | Runs 2+ instantaneos |
+
+**Criterio de exito:** KG build < 2h para 16.5K docs. Con cache activo, < 5s en runs subsiguientes.
+
+**Prerrequisito:** Ninguno. Ejecutable en paralelo con Fase 5 (baselines). Mejora la viabilidad de Fase 6 (menos tiempo por run de sweep).
 
 ### Fase 6: Calibracion de fusion KG
 
@@ -437,15 +459,16 @@ KG_VECTOR_WEIGHT=0.90
 ### Resumen de dependencias entre fases
 
 ```
-Fase 5 (baselines)
-  │
-  ├── LIGHT_RAG no aporta valor → STOP (evaluar deprecar LIGHT_RAG)
-  │
-  └── LIGHT_RAG muestra potencial
-        │
-        ├── Fase 6 (calibracion fusion)
+Fase 5 (baselines) ─────────────────── Fase 5b (rendimiento KG build) [paralelo]
+  │                                       │
+  ├── LIGHT_RAG no aporta valor           │ 5b.1 max_tokens 8192→4096
+  │   → STOP                              │ 5b.2 batch 5→10 docs/call
+  │                                       │ 5b.3 eliminar re-serializacion
+  └── LIGHT_RAG muestra potencial         │ 5b.4 diferir token indexing
+        │                                 │ 5b.5 activar KG_CACHE_DIR
+        ├── Fase 6 (calibracion fusion) ←─┘ (runs mas rapidos)
         │     │
-        │     ├── No se encuentra peso optimo → STOP (RRF insuficiente, explorar alternativas)
+        │     ├── No se encuentra peso optimo → STOP
         │     │
         │     └── Peso optimo encontrado
         │           │
@@ -461,6 +484,8 @@ Anadidas en esta ronda, disponibles via .env:
 | Variable | Default | Descripcion |
 |---|---|---|
 | `KG_KEYWORD_MAX_TOKENS` | 1024 | Max tokens para LLM call de keyword extraction. Subir si thinking-mode exhaustion. |
+| `KG_EXTRACTION_MAX_TOKENS` | 4096 | Max tokens para LLM call de extraccion de tripletas. Antes hardcoded a 8192 (DTm-66). |
+| `KG_BATCH_DOCS_PER_CALL` | 5 | Docs por LLM call en batch extraction. Subir a 10 reduce calls 50% (DTm-67). |
 | `KG_GRAPH_OVERFETCH_FACTOR` | 2 | Multiplicador de candidatos en graph traversal (N * top_k). |
 | `KG_FUSION_METHOD` | rrf | Metodo de fusion: `rrf` (robusto) o `linear` (legacy, candidato a deprecar). |
 | `KG_RRF_K` | 60 | Constante k de Reciprocal Rank Fusion. |
