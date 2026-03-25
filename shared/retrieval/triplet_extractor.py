@@ -116,10 +116,12 @@ class TripletExtractor:
         llm_service: AsyncLLMService,
         max_text_chars: int = 3000,
         keyword_max_tokens: int = 1024,
+        extraction_max_tokens: int = 4096,
     ) -> None:
         self._llm = llm_service
         self._max_text_chars = max_text_chars
         self._keyword_max_tokens = keyword_max_tokens
+        self._extraction_max_tokens = extraction_max_tokens
         # DTm-25: batch size adaptativo al semaforo HTTP
         self._batch_size = max(
             self._MIN_BATCH_SIZE,
@@ -262,7 +264,7 @@ class TripletExtractor:
             raw = await self._llm.invoke_async(
                 prompt,
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
-                max_tokens=2048,
+                max_tokens=self._extraction_max_tokens,
             )
             entities, relations = self._parse_extraction_json(raw, doc_id)
             self._stats["docs_success"] += 1
@@ -421,8 +423,12 @@ class TripletExtractor:
 
         # Multi-doc batch call
         prompt = self._build_batch_prompt(non_empty)
-        # Scale max_tokens: 2048 per doc (same as single-doc)
-        max_tokens = min(2048 * len(non_empty), 8192)
+        # DTm-66: scale max_tokens per doc, capped at configured limit.
+        # Default 4096 (was 8192) — thinking-mode models waste tokens on <think>.
+        max_tokens = min(
+            self._extraction_max_tokens * len(non_empty),
+            self._extraction_max_tokens * 2,  # cap: no more than 2x single-doc
+        )
 
         try:
             raw = await self._llm.invoke_async(

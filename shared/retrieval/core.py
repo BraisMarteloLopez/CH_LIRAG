@@ -77,6 +77,7 @@ class RetrievalConfig:
     kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
     kg_rrf_k: int = 60  # Constante k para RRF (mismo default que HYBRID_PLUS)
     kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
+    kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
     kg_graph_overfetch_factor: int = 2  # graph traversal pide N * top_k candidatos
 
     @classmethod
@@ -104,6 +105,7 @@ class RetrievalConfig:
             kg_fusion_method=_env("KG_FUSION_METHOD", "rrf"),
             kg_rrf_k=_env_int("KG_RRF_K", 60),
             kg_keyword_max_tokens=_env_int("KG_KEYWORD_MAX_TOKENS", 1024),
+            kg_extraction_max_tokens=_env_int("KG_EXTRACTION_MAX_TOKENS", 4096),
             kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
         )
 

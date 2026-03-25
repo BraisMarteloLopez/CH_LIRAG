@@ -85,6 +85,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_fusion_method = config.kg_fusion_method
         self._kg_rrf_k = config.kg_rrf_k
         self._kg_keyword_max_tokens = config.kg_keyword_max_tokens
+        self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
         self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
 
         # Vector retriever (siempre disponible)
@@ -104,6 +105,7 @@ class LightRAGRetriever(BaseRetriever):
                 llm_service,
                 max_text_chars=kg_max_text_chars,
                 keyword_max_tokens=self._kg_keyword_max_tokens,
+                extraction_max_tokens=self._kg_extraction_max_tokens,
             )
         else:
             reasons = []

@@ -40,6 +40,8 @@ def _make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
     ext = object.__new__(TripletExtractor)
     ext._llm = llm
     ext._max_text_chars = max_text_chars
+    ext._keyword_max_tokens = 1024
+    ext._extraction_max_tokens = 4096
     ext._batch_size = batch_size
     ext._stats = {
         "docs_processed": 0, "docs_success": 0, "docs_failed": 0,
