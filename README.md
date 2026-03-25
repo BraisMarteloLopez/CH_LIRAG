@@ -210,12 +210,14 @@ RRF_VECTOR_WEIGHT=0.7
 # Knowledge Graph (solo LIGHT_RAG)
 KG_MAX_HOPS=2                         # Profundidad maxima BFS en graph traversal
 KG_MAX_TEXT_CHARS=3000                 # Max chars de documento enviados al LLM para extraccion
-KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
+KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion (DTm-62: probar 0.10-0.15)
 KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
-KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 50K)
+KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 50K; DTm-63: probar 100K)
 KG_CACHE_DIR=./data/kg_cache          # Directorio para persistir KG entre runs (vacio = sin cache)
-KG_FUSION_METHOD=rrf                  # rrf (default) o linear
+KG_FUSION_METHOD=rrf                  # rrf (default, robusto) o linear (legacy)
 KG_RRF_K=60                           # Constante k para RRF (default 60)
+KG_KEYWORD_MAX_TOKENS=1024            # Max tokens para keyword extraction LLM call
+KG_GRAPH_OVERFETCH_FACTOR=2           # Graph traversal pide N * top_k candidatos
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -260,90 +262,66 @@ pytest tests/ -m "not integration" # Solo unit
 pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 ```
 
-## Fases de implementacion
-### Completado
+## Historial de fases completadas
+
+<details>
+<summary>Fases 0-4: fundacion del sistema (completadas)</summary>
 
 | Fase | Objetivo | Resumen |
 |---|---|---|
-| **0. Reproducibilidad** | Config determinista entre runs | `requirements.lock` pinneado, `preflight.py` para validacion pre-run. **Pendiente:** baseline LIGHT_RAG end-to-end (requiere NIM). |
+| **0. Reproducibilidad** | Config determinista entre runs | `requirements.lock` pinneado, `preflight.py` para validacion pre-run. |
 | **1. Fiabilidad** | No perder runs de horas | Checkpoint/resume cada 50 queries (`--resume RUN_ID`). Counter de entidades descartadas por cap KG. |
 | **2. Calidad retrieval** | Mejorar Hit@5 y MRR | Apostrofes preservados en BM25, entity normalization alineada KG/linker, `MIN_ENTITY_NAME_LEN=1`. |
 | **3. Eficiencia** | Corpus 66K sin OOM | Batch adaptativo (`semaphore*4`), dedup memoria HYBRID_PLUS. |
 | **4. Mantenibilidad** | `evaluator.py` < 600 LOC | Descompuesto de 1225 a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py`, `checkpoint.py`, `result_builder.py`. |
 
-Issues resueltos: DTm-14 a DTm-38, DTm-45 (22 issues), DTm-46 (robustez thinking mode). Ver historial git para detalles de cada fix.
+Issues resueltos: DTm-14 a DTm-38, DTm-45, DTm-46. Ver historial git para detalles.
 
-### En progreso: mejoras LIGHT_RAG
+</details>
 
-Ronda de mejoras identificadas por code review. 8 problemas agrupados en 5 fases:
+<details>
+<summary>Mejoras LIGHT_RAG — ronda 1: arquitectura (completada)</summary>
 
-| Fase | Objetivo | Problemas | Estado |
-|---|---|---|---|
-| **0. Bugs + limpieza** | Corregir errores de datos y eliminar codigo muerto | Fingerprint truncado en cache KG (P5), race conditions en TripletExtractor (P6), dead code: `get_subgraph_context`, `context_utilization` (P7) | Completado |
-| **1. Calidad keyword search** | Stemming en indices de entidades/relaciones del KG | `_tokenize()` sin normalizacion morfologica — "mechanics" no matchea "mechanical" (P3) | Completado |
-| **2.1. Batch extraction** | Reducir llamadas LLM 3-5x en construccion del KG | 1 doc/llamada → N docs/llamada con prompt multi-documento (P2) | Completado |
-| **2.2. igraph** | Reemplazar NetworkX por igraph (C-backed, 10-100x BFS) | Grafo in-memory lento y memory-heavy con NetworkX (P1) | Completado |
-| **3. RRF fusion** | Reemplazar fusion lineal por Reciprocal Rank Fusion | Reusar `reciprocal_rank_fusion()` ya implementada en HYBRID_PLUS (P4) | Completado |
-| **4. Test coverage** | Tests para evaluator, loader y pipeline e2e mockeado | Sin cobertura de tests para orquestacion y carga de datos (P8) | Completado |
+8 problemas de code review, agrupados en 5 sub-fases:
 
-Cambios en dependencias:
-- `networkx` → `python-igraph` (Fase 2.2)
-- Nuevo: `snowballstemmer` (Fase 1)
-- Fusion LIGHT_RAG: combinacion lineal → RRF (Fase 3, configurable via `KG_FUSION_METHOD`)
+| Sub-fase | Objetivo | Estado |
+|---|---|---|
+| 0. Bugs + limpieza | Fingerprint truncado, race conditions, dead code | Completado |
+| 1. Keyword search | Stemming en indices invertidos del KG | Completado |
+| 2.1. Batch extraction | 1 doc/llamada → N docs/llamada (3-5x menos LLM calls) | Completado |
+| 2.2. igraph | NetworkX → igraph (C-backed, 10-100x BFS) | Completado |
+| 3. RRF fusion | Fusion lineal → Reciprocal Rank Fusion | Completado |
+| 4. Test coverage | Tests evaluator, loader, pipeline e2e mockeado | Completado |
 
-### Deuda tecnica resuelta (ronda de robustez LightRAG)
+Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`.
 
-Issues resueltos: DTm-47 a DTm-54, DTm-59.
+</details>
+
+<details>
+<summary>Mejoras LIGHT_RAG — ronda 2: robustez (completada)</summary>
+
+9 issues resueltos (DTm-47 a DTm-54, DTm-59):
 
 | ID | Fix |
 |---|---|
-| DTm-47 | Cache de query keywords con LRU eviction (OrderedDict, max 10K entries) |
-| DTm-48 | List comprehension en vez de `[([],[])]*n` (elimina sharing de refs mutables) |
-| DTm-49 | `_triplets_dropped_by_cap` contador + WARNING en log + expuesto en `get_stats()` |
-| DTm-50 | `assert` reemplazados por `raise RuntimeError` (safe con `-O`) |
-| DTm-51 | `threading.Lock` en cache de keywords (thread-safe read/write/evict) |
+| DTm-47 | Cache de query keywords con LRU eviction (OrderedDict, max 10K) |
+| DTm-48 | List comprehension en vez de `[([],[])]*n` (refs mutables) |
+| DTm-49 | `triplets_dropped_by_cap` contador + WARNING resumen + `get_stats()` |
+| DTm-50 | `assert` → `raise RuntimeError` (safe con `-O`) |
+| DTm-51 | `threading.Lock` en cache de keywords |
 | DTm-52 | WARNING cuando graph-only docs no se resuelven en ChromaDB |
-| DTm-53 | Fusion lineal con scores all-zero hace fallback automatico a RRF |
-| DTm-54 | Fallback batch→single-doc logueado como WARNING (no DEBUG) |
-| DTm-59 | `_stemmer.stemWords()` envuelto en try-except |
+| DTm-53 | Fusion lineal all-zero → fallback automatico a RRF |
+| DTm-54 | Fallback batch→single-doc logueado como WARNING |
+| DTm-59 | `stemWords()` envuelto en try-except |
 
-### Deuda tecnica abierta
+</details>
 
-#### Alta — degradan metricas de retrieval en produccion
+## Resultados comparativos LIGHT_RAG
 
-| ID | Descripcion | Ubicacion | Evidencia |
+### Run 1 (KG vacio) vs Run 2 (KG funcional) — 125 queries, mismo seed
+
+| Metrica | Run 1 (KG vacio, 33K corpus) | Run 2 (KG activo, 16.5K corpus) | Delta |
 |---|---|---|---|
-| DTm-62 | **Fusion KG destruye ranking**: MRR cae 33pp (0.864→0.531), NDCG@10 cae 25pp con KG activo. Scores del grafo normalizados compiten con scores vectoriales, desplazando docs relevantes de posicion 1-2 a 3-10. El reranker compensa (+30pp delta) pero no deberia ser necesario. **Fix**: reducir `KG_GRAPH_WEIGHT` a 0.1-0.15 (tiebreaker, no canal primario), o no normalizar scores del grafo y calibrar peso empiricamente. | `lightrag_retriever.py:398-430` | Run 2 vs Run 1 |
-| DTm-63 | **Entity cap 50K insuficiente**: 26382/76382 entidades descartadas (34.5%). El orden de indexacion (shuffle seed) determina que entidades entran, introduciendo sesgo arbitrario. Docs indexados tarde tienen KG incompleto. **Fix**: subir cap a 100K+ o implementar eviction por frecuencia de menciones en vez de FIFO. | `knowledge_graph.py:247-252` | Run 2 stats |
-
-#### Media — afectan fiabilidad o diagnosticabilidad
-
-| ID | Descripcion | Ubicacion |
-|---|---|---|
-| DTm-55 | Stats del extractor se corrompen si construccion del KG falla a mitad. | `lightrag_retriever.py:150-162` |
-| DTm-56 | Colision de fingerprint con corpus vacio (edge case teorico). | `lightrag_retriever.py:229-247` |
-| DTm-64 | **Normalizacion de scores incomparable entre canales**: fusion lineal normaliza vector y graph scores a [0,1] independientemente, pero las distribuciones son incomparables (graph: 40 candidatos uniformes vs vector: 20 candidatos concentrados en 0.95-0.99). Candidatos mediocres del grafo se inflan a valores competitivos. RRF (default) mitiga esto parcialmente pero no lo elimina. | `lightrag_retriever.py:398-430` |
-| DTm-65 | **Thinking-mode exhaustion en keyword extraction**: ~17% de queries fallan en primer intento (`LLM returned empty content after stripping reasoning tags`). El retry con max_tokens duplicado funciona pero anade latencia. `KG_KEYWORD_MAX_TOKENS` ahora configurable (default 1024, era 512 hardcoded). Subir a 2048 si el modelo piensa mucho. | `triplet_extractor.py:608-612` |
-
-#### Baja — mejoras menores o limitaciones aceptadas
-
-| ID | Descripcion | Ubicacion |
-|---|---|---|
-| DTm-12 | Sesgo LLM-judge en faithfulness para respuestas cortas (score 0.0-0.2 con F1=1.0). Inherente al LLM-judge, no actionable. | `shared/metrics.py` |
-| DTm-13 | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. Recall@K varia ±0.02 entre runs. | `shared/vector_store.py` |
-| DTm-24 | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. Semantica distinta, nombre similar. | `sandbox_mteb/config.py` |
-| DTm-57 | Normalizacion de entidades agresiva: pierde apostrofes, guiones. Puede causar colisiones raras. | `knowledge_graph.py:133-144` |
-| DTm-58 | No dedup de queries identicas en batch keyword extraction — LLM calls duplicadas. | `triplet_extractor.py:624-668` |
-| DTm-60 | Stats del extractor acumulan entre llamadas; `reset_stats()` existe pero nunca se llama automaticamente. | `triplet_extractor.py:127-146` |
-| DTm-61 | No validacion de tamano de keywords del LLM — respuestas patologicas pasan sin limite. | `triplet_extractor.py:565-592` |
-
-### Resultados comparativos LIGHT_RAG
-
-#### Run 1 (KG vacio) vs Run 2 (KG funcional) — mismas 125 queries, mismo seed
-
-| Metrica | Run 1 (KG vacio) | Run 2 (KG activo) | Delta |
-|---|---|---|---|
-| Corpus | 33000 | 16500 | -50% |
 | KG entidades | 1208 (1.1%) | 50000 (70%) | +4040% |
 | KG relaciones | 899 | 51841 | +5666% |
 | **Hit@5** | **0.896** | **0.848** | **-4.8pp** |
@@ -354,12 +332,135 @@ Issues resueltos: DTm-47 a DTm-54, DTm-59.
 | F1 | 0.756 | 0.784 | +2.8pp |
 | EM | 0.568 | 0.624 | +5.6pp |
 
-**Conclusion**: el KG activo degrada todas las metricas de ranking pero mejora generacion. El reranker compensa el desorden del KG (delta reranker: +12.4pp → +30.4pp). F1/EM mejoran porque Gen Recall sube ligeramente y el corpus mas pequeno reduce distractores.
+**Hallazgos clave:**
 
-### Acciones pendientes (prioridad por impacto en metricas)
+1. **El KG activo destruye el ranking.** MRR cae 33pp. Los scores normalizados del grafo desplazan docs vectoriales relevantes de posicion 1-2 a posiciones 3-10.
+2. **El reranker compensa la degradacion.** Delta reranker (Gen Recall - Recall@5) paso de +12.4pp a +30.4pp. Sin reranker, este run seria significativamente peor.
+3. **F1/EM mejoran pese a peor retrieval.** Gen Recall sube ligeramente (0.940→0.964) y el corpus mas pequeno reduce distractores. Recall@20=0.976 confirma mejor cobertura profunda.
+4. **Entity cap 50K es insuficiente.** 26382/76382 entidades descartadas (34.5%). El orden de indexacion determina que entidades entran, sesgo arbitrario.
+5. **Runs no comparables directamente.** Corpus distinto (33K vs 16.5K). Se necesita baseline SIMPLE_VECTOR con 16.5K para aislar efecto neto del KG.
 
-1. **[CRITICO] Calibrar KG_GRAPH_WEIGHT**: probar 0.10, 0.15, 0.20 con mismo corpus/queries. Reducir el peso del grafo de 0.3 a tiebreaker level. Configurable via `KG_GRAPH_WEIGHT` en .env.
-2. **[CRITICO] Baseline SIMPLE_VECTOR con corpus 16500**: aislar efecto neto del KG vs efecto de reduccion de corpus. Sin este dato no se puede validar si LIGHT_RAG aporta valor.
-3. **[ALTO] Subir KG_MAX_ENTITIES a 100K+**: 34.5% de entidades descartadas es inaceptable. Evaluar impacto en memoria (~42MB estimado para 100K).
-4. **[MEDIO] Evaluar fusion sin normalizacion**: usar scores raw del grafo con peso calibrado, en vez de normalizar a [0,1]. Alternativa: solo RRF (ya es default, pero linear sigue disponible).
-5. **[BAJO] Subir KG_KEYWORD_MAX_TOKENS a 2048** si nemotron sigue con thinking-mode exhaustion post-fix de 512→1024.
+## Deuda tecnica
+
+### Registro completo
+
+| ID | Severidad | Descripcion | Ubicacion | Estado |
+|---|---|---|---|---|
+| DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. | `lightrag_retriever.py` fusion | Abierto |
+| DTm-63 | **Alta** | Entity cap 50K insuficiente: 34.5% entidades descartadas. Orden de indexacion introduce sesgo arbitrario por FIFO. | `knowledge_graph.py:247-252` | Abierto |
+| DTm-64 | **Media** | Normalizacion [0,1] incomparable entre canales: distribuciones vector (concentrada) vs graph (uniforme) generan scores engañosos. RRF mitiga parcialmente. | `lightrag_retriever.py:398-430` | Abierto |
+| DTm-65 | **Media** | Thinking-mode exhaustion: ~17% queries fallan en 1er intento. `KG_KEYWORD_MAX_TOKENS` configurable (default 1024). Puede requerir 2048 con modelos reasoning-heavy. | `triplet_extractor.py:608-612` | Mitigado |
+| DTm-55 | **Media** | Stats extractor se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. | `lightrag_retriever.py:150-162` | Abierto |
+| DTm-56 | **Media** | Fingerprint collision con corpus vacio: `sha256("")[:16]` es determinista pero edge case si dos configs distintas producen mismo hash. | `lightrag_retriever.py:229-247` | Abierto |
+| DTm-12 | Baja | Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. | `shared/metrics.py` | Aceptado |
+| DTm-13 | Baja | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. | `shared/vector_store.py` | Aceptado |
+| DTm-24 | Baja | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. | `sandbox_mteb/config.py` | Aceptado |
+| DTm-57 | Baja | Normalizacion entidades agresiva: pierde apostrofes/guiones. Colisiones raras. | `knowledge_graph.py:133-144` | Abierto |
+| DTm-58 | Baja | No dedup queries identicas en batch keyword extraction: LLM calls duplicadas. | `triplet_extractor.py:624-668` | Abierto |
+| DTm-60 | Baja | Stats extractor acumulan entre llamadas. `reset_stats()` nunca se llama auto. | `triplet_extractor.py:127-146` | Abierto |
+| DTm-61 | Baja | No validacion tamano keywords del LLM: respuestas patologicas pasan sin limite. | `triplet_extractor.py:565-592` | Abierto |
+
+### Deuda resuelta (referencia)
+
+DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59 (31 issues). Ver historial git.
+
+## Plan de desarrollo por fases
+
+### Fase 5: Baselines comparativos
+
+**Objetivo:** Obtener datos que permitan decidir si LIGHT_RAG aporta valor y cuanto.
+
+**Contexto:** Run 2 muestra degradacion de ranking con KG activo, pero usa corpus distinto a Run 1 (16.5K vs 33K). Sin baseline no se puede aislar el efecto del KG del efecto del tamaño del corpus.
+
+| Tarea | Descripcion | Config .env | DTm |
+|---|---|---|---|
+| 5.1 Baseline SIMPLE_VECTOR 16.5K | Run con `RETRIEVAL_STRATEGY=SIMPLE_VECTOR`, mismo corpus/queries que Run 2 | `EVAL_MAX_CORPUS=16500`, `CORPUS_SHUFFLE_SEED=42`, `DEV_QUERIES=125` | — |
+| 5.2 Baseline SIMPLE_VECTOR 33K | Run con SIMPLE_VECTOR, corpus Run 1, para validar comparabilidad | `EVAL_MAX_CORPUS=33000` | — |
+| 5.3 Tabla comparativa | Documentar 4 runs: SV-33K, SV-16.5K, LR-16.5K (Run 2), LR-33K (si viable) | — | — |
+
+**Criterio de exito:** Tabla de 3+ runs con mismas queries. Delta Hit@5 y MRR entre SIMPLE_VECTOR y LIGHT_RAG con mismo corpus determina la decision go/no-go para LIGHT_RAG.
+
+**Riesgo:** Si SIMPLE_VECTOR 16.5K iguala o supera LIGHT_RAG, el KG no aporta valor neto y las fases 6-7 pierden prioridad.
+
+### Fase 6: Calibracion de fusion KG
+
+**Objetivo:** Que el KG mejore (o al menos no degrade) las metricas de ranking respecto a SIMPLE_VECTOR.
+
+**Prerrequisito:** Fase 5 completada. Solo proceder si LIGHT_RAG muestra potencial en al menos una metrica.
+
+| Tarea | Descripcion | DTm | Impacto esperado |
+|---|---|---|---|
+| 6.1 Sweep `KG_GRAPH_WEIGHT` | Runs con peso 0.05, 0.10, 0.15, 0.20 (actual=0.30). Mismo corpus/queries. | DTm-62 | MRR +10-30pp si el grafo pasa a tiebreaker |
+| 6.2 Evaluar fusion raw scores | Variante de fusion lineal sin normalizar scores del grafo (raw + peso calibrado). Comparar con RRF. | DTm-64 | Elimina inflacion de scores mediocres del grafo |
+| 6.3 Deprecar fusion lineal | Si RRF domina en todos los sweeps, eliminar `KG_FUSION_METHOD=linear` y el codigo asociado. Reduce superficie de bugs. | DTm-64 | Menos codigo, menos configuacion |
+
+**Criterio de exito:** Encontrar un `KG_GRAPH_WEIGHT` donde LIGHT_RAG >= SIMPLE_VECTOR en MRR y Hit@5.
+
+**Config de sweep sugerida:**
+```bash
+# Run para cada peso (solo cambia KG_GRAPH_WEIGHT):
+KG_GRAPH_WEIGHT=0.10  # tiebreaker minimo
+KG_VECTOR_WEIGHT=0.90
+# Mantener resto identico a Run 2 para comparabilidad
+```
+
+### Fase 7: Escalado del Knowledge Graph
+
+**Objetivo:** Eliminar el cuello de botella del entity cap y mejorar cobertura del grafo.
+
+**Prerrequisito:** Fase 6 muestra que LIGHT_RAG aporta valor con pesos calibrados.
+
+| Tarea | Descripcion | DTm | Impacto esperado |
+|---|---|---|---|
+| 7.1 Subir `KG_MAX_ENTITIES` a 100K | Duplicar cap. Memoria estimada: ~42MB (vs ~21MB actual). Medir impacto real en RSS. | DTm-63 | 0% entidades descartadas con corpus 16.5K (76K entidades < 100K cap) |
+| 7.2 Eviction por frecuencia | Si 100K no basta para corpus mayores: reemplazar FIFO por politica que priorice entidades mas referenciadas. Requiere `mention_count` en `KGEntity`. | DTm-63 | Entidades hub (alta conectividad) sobreviven, entidades singleton se descartan |
+| 7.3 Validar con corpus 33K+ | Re-run LIGHT_RAG con cap 100K y corpus grande. Verificar que no hay OOM y que metricas mejoran. | — | Confirmar viabilidad a escala |
+
+**Criterio de exito:** Entidades descartadas < 5% del total. Memoria KG < 100MB.
+
+### Fase 8: Deuda tecnica restante
+
+**Objetivo:** Limpiar issues medios y bajos que afectan diagnosticabilidad y robustez.
+
+**Prerrequisito:** Ninguno. Puede ejecutarse en paralelo con fases 5-7 si hay capacidad.
+
+| Tarea | Descripcion | DTm | Esfuerzo |
+|---|---|---|---|
+| 8.1 Stats extractor resilientes | Snapshot de stats antes de KG build, restaurar si falla. O: stats por doc, no acumulativas. | DTm-55 | Bajo |
+| 8.2 Fingerprint robusto | Incluir `len(documents)` y config hash en fingerprint. Retornar `None` si corpus vacio. | DTm-56 | Bajo |
+| 8.3 `KG_KEYWORD_MAX_TOKENS=2048` | Validar con run real si 1024 elimina retries. Si no, subir default. | DTm-65 | Trivial |
+| 8.4 Dedup queries en batch keywords | Filtrar queries duplicadas antes de enviarlas al LLM. Reasignar resultados post-extraccion. | DTm-58 | Bajo |
+| 8.5 Reset stats automatico | Llamar `reset_stats()` al inicio de `extract_batch()`. | DTm-60 | Trivial |
+| 8.6 Keyword size cap | Limitar a 20 keywords por nivel (low/high). Truncar si LLM devuelve mas. | DTm-61 | Trivial |
+| 8.7 Entity normalization preservar guiones | Ajustar regex en `_normalize_name` para mantener guiones internos. | DTm-57 | Bajo |
+
+### Resumen de dependencias entre fases
+
+```
+Fase 5 (baselines)
+  │
+  ├── LIGHT_RAG no aporta valor → STOP (evaluar deprecar LIGHT_RAG)
+  │
+  └── LIGHT_RAG muestra potencial
+        │
+        ├── Fase 6 (calibracion fusion)
+        │     │
+        │     ├── No se encuentra peso optimo → STOP (RRF insuficiente, explorar alternativas)
+        │     │
+        │     └── Peso optimo encontrado
+        │           │
+        │           └── Fase 7 (escalado KG)
+        │
+        └── Fase 8 (deuda tecnica) — en paralelo, sin bloqueo
+```
+
+### Variables de configuracion nuevas (referencia)
+
+Anadidas en esta ronda, disponibles via .env:
+
+| Variable | Default | Descripcion |
+|---|---|---|
+| `KG_KEYWORD_MAX_TOKENS` | 1024 | Max tokens para LLM call de keyword extraction. Subir si thinking-mode exhaustion. |
+| `KG_GRAPH_OVERFETCH_FACTOR` | 2 | Multiplicador de candidatos en graph traversal (N * top_k). |
+| `KG_FUSION_METHOD` | rrf | Metodo de fusion: `rrf` (robusto) o `linear` (legacy, candidato a deprecar). |
+| `KG_RRF_K` | 60 | Constante k de Reciprocal Rank Fusion. |
