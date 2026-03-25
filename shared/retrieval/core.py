@@ -76,6 +76,8 @@ class RetrievalConfig:
     kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
     kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
     kg_rrf_k: int = 60  # Constante k para RRF (mismo default que HYBRID_PLUS)
+    kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
+    kg_graph_overfetch_factor: int = 2  # graph traversal pide N * top_k candidatos
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -101,6 +103,8 @@ class RetrievalConfig:
             kg_cache_dir=_env("KG_CACHE_DIR", ""),
             kg_fusion_method=_env("KG_FUSION_METHOD", "rrf"),
             kg_rrf_k=_env_int("KG_RRF_K", 60),
+            kg_keyword_max_tokens=_env_int("KG_KEYWORD_MAX_TOKENS", 1024),
+            kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
         )
 
 

@@ -115,9 +115,11 @@ class TripletExtractor:
         self,
         llm_service: AsyncLLMService,
         max_text_chars: int = 3000,
+        keyword_max_tokens: int = 1024,
     ) -> None:
         self._llm = llm_service
         self._max_text_chars = max_text_chars
+        self._keyword_max_tokens = keyword_max_tokens
         # DTm-25: batch size adaptativo al semaforo HTTP
         self._batch_size = max(
             self._MIN_BATCH_SIZE,
@@ -605,13 +607,10 @@ class TripletExtractor:
         prompt = QUERY_KEYWORDS_PROMPT.format(query=query)
 
         try:
-            # 1024 tokens: thinking-mode models need headroom beyond the
-            # ~50-token JSON response for their reasoning prefix.  512
-            # caused ~17% first-attempt failures (thinking exhaustion).
             raw = await self._llm.invoke_async(
                 prompt,
                 system_prompt=QUERY_KEYWORDS_SYSTEM,
-                max_tokens=1024,
+                max_tokens=self._keyword_max_tokens,
             )
             return self._parse_keywords_json(raw)
         except Exception as e:

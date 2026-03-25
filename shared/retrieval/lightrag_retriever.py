@@ -60,10 +60,6 @@ class LightRAGRetriever(BaseRetriever):
     Sin NetworkX: fallback a SimpleVectorRetriever puro.
     """
 
-    # Factor de over-fetch para graph traversal: pedimos N * top_k
-    # candidatos al grafo para tener margen tras la fusion con vector.
-    _GRAPH_OVERFETCH_FACTOR = 2
-
     def __init__(
         self,
         config: RetrievalConfig,
@@ -88,6 +84,8 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_cache_dir = Path(kg_cache_dir) if kg_cache_dir else None
         self._kg_fusion_method = config.kg_fusion_method
         self._kg_rrf_k = config.kg_rrf_k
+        self._kg_keyword_max_tokens = config.kg_keyword_max_tokens
+        self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -103,7 +101,9 @@ class LightRAGRetriever(BaseRetriever):
         if llm_service and HAS_NETWORKX:
             self._kg = KnowledgeGraph(max_entities=kg_max_entities)
             self._extractor = TripletExtractor(
-                llm_service, max_text_chars=kg_max_text_chars,
+                llm_service,
+                max_text_chars=kg_max_text_chars,
+                keyword_max_tokens=self._kg_keyword_max_tokens,
             )
         else:
             reasons = []

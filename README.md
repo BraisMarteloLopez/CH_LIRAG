@@ -309,12 +309,21 @@ Issues resueltos: DTm-47 a DTm-54, DTm-59.
 
 ### Deuda tecnica abierta
 
+#### Alta — degradan metricas de retrieval en produccion
+
+| ID | Descripcion | Ubicacion | Evidencia |
+|---|---|---|---|
+| DTm-62 | **Fusion KG destruye ranking**: MRR cae 33pp (0.864→0.531), NDCG@10 cae 25pp con KG activo. Scores del grafo normalizados compiten con scores vectoriales, desplazando docs relevantes de posicion 1-2 a 3-10. El reranker compensa (+30pp delta) pero no deberia ser necesario. **Fix**: reducir `KG_GRAPH_WEIGHT` a 0.1-0.15 (tiebreaker, no canal primario), o no normalizar scores del grafo y calibrar peso empiricamente. | `lightrag_retriever.py:398-430` | Run 2 vs Run 1 |
+| DTm-63 | **Entity cap 50K insuficiente**: 26382/76382 entidades descartadas (34.5%). El orden de indexacion (shuffle seed) determina que entidades entran, introduciendo sesgo arbitrario. Docs indexados tarde tienen KG incompleto. **Fix**: subir cap a 100K+ o implementar eviction por frecuencia de menciones en vez de FIFO. | `knowledge_graph.py:247-252` | Run 2 stats |
+
 #### Media — afectan fiabilidad o diagnosticabilidad
 
 | ID | Descripcion | Ubicacion |
 |---|---|---|
 | DTm-55 | Stats del extractor se corrompen si construccion del KG falla a mitad. | `lightrag_retriever.py:150-162` |
 | DTm-56 | Colision de fingerprint con corpus vacio (edge case teorico). | `lightrag_retriever.py:229-247` |
+| DTm-64 | **Normalizacion de scores incomparable entre canales**: fusion lineal normaliza vector y graph scores a [0,1] independientemente, pero las distribuciones son incomparables (graph: 40 candidatos uniformes vs vector: 20 candidatos concentrados en 0.95-0.99). Candidatos mediocres del grafo se inflan a valores competitivos. RRF (default) mitiga esto parcialmente pero no lo elimina. | `lightrag_retriever.py:398-430` |
+| DTm-65 | **Thinking-mode exhaustion en keyword extraction**: ~17% de queries fallan en primer intento (`LLM returned empty content after stripping reasoning tags`). El retry con max_tokens duplicado funciona pero anade latencia. `KG_KEYWORD_MAX_TOKENS` ahora configurable (default 1024, era 512 hardcoded). Subir a 2048 si el modelo piensa mucho. | `triplet_extractor.py:608-612` |
 
 #### Baja — mejoras menores o limitaciones aceptadas
 
@@ -328,7 +337,29 @@ Issues resueltos: DTm-47 a DTm-54, DTm-59.
 | DTm-60 | Stats del extractor acumulan entre llamadas; `reset_stats()` existe pero nunca se llama automaticamente. | `triplet_extractor.py:127-146` |
 | DTm-61 | No validacion de tamano de keywords del LLM — respuestas patologicas pasan sin limite. | `triplet_extractor.py:565-592` |
 
-### Pendiente de infraestructura
+### Resultados comparativos LIGHT_RAG
 
-- Run baseline LIGHT_RAG end-to-end (requiere entorno con NIM activo)
-- Benchmarks comparativos entre estrategias (Hit@K, F1) — sin datos no se puede validar el valor de HYBRID_PLUS/LIGHT_RAG sobre SIMPLE_VECTOR
+#### Run 1 (KG vacio) vs Run 2 (KG funcional) — mismas 125 queries, mismo seed
+
+| Metrica | Run 1 (KG vacio) | Run 2 (KG activo) | Delta |
+|---|---|---|---|
+| Corpus | 33000 | 16500 | -50% |
+| KG entidades | 1208 (1.1%) | 50000 (70%) | +4040% |
+| KG relaciones | 899 | 51841 | +5666% |
+| **Hit@5** | **0.896** | **0.848** | **-4.8pp** |
+| **MRR** | **0.864** | **0.531** | **-33.3pp** |
+| Recall@5 | 0.816 | 0.660 | -15.6pp |
+| NDCG@10 | 0.806 | 0.557 | -24.9pp |
+| Gen Recall | 0.940 | 0.964 | +2.4pp |
+| F1 | 0.756 | 0.784 | +2.8pp |
+| EM | 0.568 | 0.624 | +5.6pp |
+
+**Conclusion**: el KG activo degrada todas las metricas de ranking pero mejora generacion. El reranker compensa el desorden del KG (delta reranker: +12.4pp → +30.4pp). F1/EM mejoran porque Gen Recall sube ligeramente y el corpus mas pequeno reduce distractores.
+
+### Acciones pendientes (prioridad por impacto en metricas)
+
+1. **[CRITICO] Calibrar KG_GRAPH_WEIGHT**: probar 0.10, 0.15, 0.20 con mismo corpus/queries. Reducir el peso del grafo de 0.3 a tiebreaker level. Configurable via `KG_GRAPH_WEIGHT` en .env.
+2. **[CRITICO] Baseline SIMPLE_VECTOR con corpus 16500**: aislar efecto neto del KG vs efecto de reduccion de corpus. Sin este dato no se puede validar si LIGHT_RAG aporta valor.
+3. **[ALTO] Subir KG_MAX_ENTITIES a 100K+**: 34.5% de entidades descartadas es inaceptable. Evaluar impacto en memoria (~42MB estimado para 100K).
+4. **[MEDIO] Evaluar fusion sin normalizacion**: usar scores raw del grafo con peso calibrado, en vez de normalizar a [0,1]. Alternativa: solo RRF (ya es default, pero linear sigue disponible).
+5. **[BAJO] Subir KG_KEYWORD_MAX_TOKENS a 2048** si nemotron sigue con thinking-mode exhaustion post-fix de 512→1024.

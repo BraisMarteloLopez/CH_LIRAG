@@ -198,6 +198,8 @@ class MTEBConfig:
         if self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
             lines.extend([
                 f"  KG weights: graph={self.retrieval.kg_graph_weight}, vector={self.retrieval.kg_vector_weight}",
+                f"  KG fusion:  {self.retrieval.kg_fusion_method} (rrf_k={self.retrieval.kg_rrf_k})",
+                f"  KG keyword: max_tokens={self.retrieval.kg_keyword_max_tokens}, overfetch={self.retrieval.kg_graph_overfetch_factor}x",
                 f"  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento "
                 f"para construir el knowledge graph (concurrencia={self.infra.nim_max_concurrent})",
             ])
