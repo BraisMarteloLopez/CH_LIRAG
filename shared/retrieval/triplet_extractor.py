@@ -288,8 +288,10 @@ class TripletExtractor:
     # MULTI-DOC BATCH EXTRACTION
     # -------------------------------------------------------------------------
 
-    # Default max documents per LLM call in batch mode.
-    _DEFAULT_BATCH_DOCS_PER_CALL = 5
+    # Default max documents per LLM call in batch mode (DTm-67).
+    # Used as fallback if batch_docs_per_call=0 is passed. Normally
+    # overridden by KG_BATCH_DOCS_PER_CALL from config (default 10).
+    _DEFAULT_BATCH_DOCS_PER_CALL = 10
 
     def _group_docs_for_batch(
         self,
@@ -561,10 +563,12 @@ class TripletExtractor:
         return results
 
     def extract_batch(
-        self, documents: List[Dict[str, Any]],
+        self,
+        documents: List[Dict[str, Any]],
+        batch_docs_per_call: int = 0,
     ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation]]]:
         """Wrapper sincrono de extract_batch_async."""
-        return run_sync(self.extract_batch_async(documents))
+        return run_sync(self.extract_batch_async(documents, batch_docs_per_call))
 
     # -------------------------------------------------------------------------
     # QUERY ANALYSIS

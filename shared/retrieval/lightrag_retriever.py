@@ -86,6 +86,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_rrf_k = config.kg_rrf_k
         self._kg_keyword_max_tokens = config.kg_keyword_max_tokens
         self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
+        self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
         self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
 
         # Vector retriever (siempre disponible)
@@ -210,7 +211,9 @@ class LightRAGRetriever(BaseRetriever):
         t0 = time.perf_counter()
 
         # Extraccion batch (async, controlada por semaphore del LLM)
-        extraction_results = self._extractor.extract_batch(documents)
+        extraction_results = self._extractor.extract_batch(
+            documents, batch_docs_per_call=self._kg_batch_docs_per_call,
+        )
 
         # Construir grafo
         total_triplets = 0

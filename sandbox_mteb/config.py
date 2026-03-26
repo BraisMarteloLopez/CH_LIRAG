@@ -200,7 +200,7 @@ class MTEBConfig:
                 f"  KG weights: graph={self.retrieval.kg_graph_weight}, vector={self.retrieval.kg_vector_weight}",
                 f"  KG fusion:  {self.retrieval.kg_fusion_method} (rrf_k={self.retrieval.kg_rrf_k})",
                 f"  KG tokens:  extraction={self.retrieval.kg_extraction_max_tokens}, keyword={self.retrieval.kg_keyword_max_tokens}",
-                f"  KG graph:   overfetch={self.retrieval.kg_graph_overfetch_factor}x",
+                f"  KG batch:   {self.retrieval.kg_batch_docs_per_call} docs/call, overfetch={self.retrieval.kg_graph_overfetch_factor}x",
                 f"  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento "
                 f"para construir el knowledge graph (concurrencia={self.infra.nim_max_concurrent})",
             ])
