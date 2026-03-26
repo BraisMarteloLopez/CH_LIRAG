@@ -24,7 +24,7 @@ from .hybrid_plus_retriever import HybridPlusRetriever
 from .lightrag_retriever import LightRAGRetriever
 from .tantivy_index import TantivyIndex
 from .entity_linker import HAS_SPACY
-from .knowledge_graph import HAS_NETWORKX
+from .knowledge_graph import HAS_IGRAPH, HAS_NETWORKX
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,10 @@ def get_retriever(
             embedding_batch_size=embedding_batch_size,
             kg_max_hops=config.kg_max_hops,
             kg_max_text_chars=config.kg_max_text_chars,
+            kg_max_entities=config.kg_max_entities,
             graph_weight=config.kg_graph_weight,
             vector_weight=config.kg_vector_weight,
+            kg_cache_dir=config.kg_cache_dir,
         )
 
     raise ValueError(f"Estrategia no soportada: {strategy}")
@@ -95,6 +97,7 @@ __all__ = [
     "HybridPlusRetriever",
     "LightRAGRetriever",
     "HAS_SPACY",
+    "HAS_IGRAPH",
     "HAS_NETWORKX",
     "get_retriever",
 ]

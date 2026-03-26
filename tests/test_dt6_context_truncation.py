@@ -1,8 +1,7 @@
 """
 Tests DT-6: contexto >4000 chars pasa integro al LLM judge (sin truncar).
 
-Cubre faithfulness (sync/async) y context_utilization (sync/async) en un
-solo archivo parametrizado. Adicionalmente: contexto vacio retorna 0.0
+Cubre faithfulness (sync/async). Adicionalmente: contexto vacio retorna 0.0
 sin invocar judge.
 """
 import asyncio
@@ -10,7 +9,7 @@ import asyncio
 import pytest
 
 import shared.metrics as metrics_mod
-from shared.metrics import faithfulness, context_utilization, MetricType
+from shared.metrics import faithfulness, MetricType
 
 
 class MockJudge:
@@ -34,8 +33,6 @@ class MockJudge:
 @pytest.mark.parametrize("method,is_async", [
     ("faithfulness", False),
     ("faithfulness_async", True),
-    ("context_utilization", False),
-    ("context_utilization_async", True),
 ])
 def test_context_passed_without_truncation(method, is_async):
     """Contexto de 8000 chars llega integro al judge (no se trunca a 4000)."""
@@ -43,10 +40,7 @@ def test_context_passed_without_truncation(method, is_async):
     context = "A" * 8000
 
     fn = getattr(metrics_mod, method)
-    if "context_utilization" in method:
-        args = ("some answer", context, "some question", judge)
-    else:
-        args = ("some answer", context, judge)
+    args = ("some answer", context, judge)
 
     if is_async:
         result = asyncio.run(fn(*args))
@@ -63,6 +57,4 @@ def test_empty_context_returns_zero_without_invoking_judge():
 
     r1 = faithfulness("answer", "", judge)
     assert r1.value == 0.0
-    r2 = context_utilization("answer", "", "query", judge)
-    assert r2.value == 0.0
     assert judge.call_count == 0

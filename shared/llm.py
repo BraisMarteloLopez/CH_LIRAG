@@ -7,18 +7,23 @@ Ubicacion: shared/llm.py
 Consolida llm.py + embeddings.py.
 
 Fixes aplicados:
-  - asyncio.Lock se crea en __post_init__ (no en default de dataclass)
-  - invoke() sync usa run_sync() con asyncio.run()
+  - _PersistentLoop: un unico event loop en thread daemon, elimina el ciclo
+    crear/destruir loops de asyncio.run() que causaba "Semaphore bound to a
+    different event loop" (DTm-45).
+  - LLMMetrics._lock: threading.Lock en vez de asyncio.Lock (no hay awaits
+    dentro de la seccion critica, y elimina el binding a event loop).
+  - run_sync() usa run_coroutine_threadsafe al loop persistente.
   - Eliminados from_env() y from_settings() (el sandbox construye explicitamente)
   - load_embedding_model acepta solo parametros explicitos (sin fallback)
 """
 
 import asyncio
-import copy
 import logging
+import re
+import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Coroutine, Optional, TypeVar
 
 from shared.types import EmbeddingModelProtocol
 
@@ -35,26 +40,103 @@ except ImportError:
     SystemMessage = None
 
 
+class _ThinkingExhaustedError(ValueError):
+    """Model used all tokens for <think> reasoning, producing no content."""
+
+
+# =============================================================================
+# PERSISTENT EVENT LOOP (DTm-45)
+# =============================================================================
+
+class _PersistentLoop:
+    """Singleton: un unico event loop en un thread daemon.
+
+    Problema original: run_sync() llamaba asyncio.run() repetidamente,
+    creando y destruyendo loops. Los asyncio.Semaphore/Lock se vinculan
+    al primer loop que los usa, y al cambiar de loop lanzan
+    "bound to a different event loop".
+
+    Solucion: un unico loop persistente. Todas las coroutines se envian
+    via run_coroutine_threadsafe(), que es thread-safe por diseno.
+    """
+
+    def __init__(self) -> None:
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+
+    def _run_loop(self) -> None:
+        """Target del thread daemon: crea loop y lo ejecuta forever."""
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._ready.set()
+        self._loop.run_forever()
+
+    def _ensure_started(self) -> asyncio.AbstractEventLoop:
+        """Arranca el thread+loop si no existe. Thread-safe."""
+        if self._loop is not None and self._loop.is_running():
+            return self._loop
+
+        with self._lock:
+            # Double-check dentro del lock
+            if self._loop is not None and self._loop.is_running():
+                return self._loop
+
+            self._ready.clear()
+            self._thread = threading.Thread(
+                target=self._run_loop, daemon=True, name="persistent-async-loop"
+            )
+            self._thread.start()
+            self._ready.wait()
+            assert self._loop is not None
+            return self._loop
+
+    def run(self, coro: Coroutine[Any, Any, Any]) -> Any:
+        """Envia una coroutine al loop persistente y bloquea hasta resultado.
+
+        Thread-safe: puede llamarse desde cualquier thread.
+        Raises si se llama desde el thread del loop (deadlock).
+        """
+        loop = self._ensure_started()
+
+        if threading.current_thread() is self._thread:
+            raise RuntimeError(
+                "run_sync() llamado desde dentro del loop persistente. "
+                "Usa 'await' directamente en codigo async."
+            )
+
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
+
+
+# Singleton global
+_persistent_loop = _PersistentLoop()
+
+
 # =============================================================================
 # METRICAS
 # =============================================================================
 
 @dataclass
 class LLMMetrics:
-    """Metricas de rendimiento del servicio LLM."""
+    """Metricas de rendimiento del servicio LLM.
+
+    Usa threading.Lock en vez de asyncio.Lock: la seccion critica no
+    contiene awaits, y threading.Lock no tiene binding a event loop.
+    """
     total_requests: int = 0
     successful_requests: int = 0
     failed_requests: int = 0
     total_latency_ms: float = 0
     retries_total: int = 0
 
-    # asyncio.Lock() no requiere event loop activo para instanciarse (Python 3.10+)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     async def record_request(
         self, success: bool, latency_ms: float, retries: int = 0
     ) -> None:
-        async with self._lock:
+        with self._lock:
             self.total_requests += 1
             self.total_latency_ms += latency_ms
             self.retries_total += retries
@@ -83,8 +165,6 @@ class LLMMetrics:
             f"Retries: {self.retries_total}"
         )
 
-    # FIX DTm-11: crear Lock nuevo en copias para evitar compartir
-    # estado de sincronizacion entre instancias independientes.
     def __copy__(self) -> "LLMMetrics":
         return LLMMetrics(
             total_requests=self.total_requests,
@@ -102,8 +182,6 @@ class LLMMetrics:
 # HELPER: ejecutar coroutine de forma segura
 # =============================================================================
 
-from typing import Any, Coroutine, TypeVar
-
 _T = TypeVar("_T")
 
 
@@ -111,28 +189,15 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     """
     Ejecuta una coroutine de forma sincrona.
 
-    - Sin event loop activo (CLI normal): usa asyncio.run().
-    - Con event loop activo (Jupyter, frameworks async): crea un thread
-      dedicado con su propio loop para evitar el error
-      "cannot be called from a running event loop".
+    Envia la coroutine al loop persistente (_PersistentLoop) via
+    run_coroutine_threadsafe. Funciona desde cualquier thread,
+    con o sin event loop activo (CLI, Jupyter, frameworks async).
 
-    FIX DTm-3: detecta loop activo y ejecuta en thread auxiliar.
+    El loop persistente garantiza que asyncio.Semaphore/Lock siempre
+    se usan desde el mismo event loop, eliminando el error
+    "bound to a different event loop".
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is None:
-        # Caso normal (CLI): no hay loop, asyncio.run() funciona directamente.
-        return asyncio.run(coro)
-
-    # Caso con loop activo (Jupyter, frameworks async):
-    # ejecutar la coroutine en un thread dedicado con su propio loop.
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, coro)
-        return future.result()
+    return _persistent_loop.run(coro)
 
 
 # =============================================================================
@@ -170,7 +235,9 @@ class AsyncLLMService:
         self.max_retries = max_retries
         self.temperature = temperature
 
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
         self._client = ChatNVIDIA(
             base_url=base_url,
             model=model_name,
@@ -182,6 +249,18 @@ class AsyncLLMService:
             f"AsyncLLMService: {model_name} @ {base_url} "
             f"(max_concurrent={max_concurrent})"
         )
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Return a Semaphore bound to the current event loop.
+
+        With the persistent loop, the loop never changes, so this creates
+        the semaphore exactly once. The loop-check is kept as a safety net.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self._max_concurrent)
+            self._semaphore_loop = loop
+        return self._semaphore
 
     async def __aenter__(self) -> "AsyncLLMService":
         return self
@@ -202,7 +281,7 @@ class AsyncLLMService:
         for attempt in range(self.max_retries + 1):
             start_time = time.perf_counter()
             try:
-                async with self._semaphore:
+                async with self._get_semaphore():
                     response = await self._client.ainvoke(
                         messages,
                         max_tokens=max_tokens,
@@ -221,28 +300,42 @@ class AsyncLLMService:
                         for part in content
                     )
 
-                # Reasoning models (e.g. nemotron-3-nano) may return
-                # content in reasoning_content while leaving content empty.
-                if not content or not str(content).strip():
-                    extra = getattr(response, "additional_kwargs", {})
-                    reasoning = (
-                        extra.get("reasoning_content")
-                        or extra.get("reasoning")
+                # Strip reasoning tags from thinking-mode models
+                # (e.g. nemotron-3-nano). Two passes: closed tags, then
+                # unclosed tags (model hit max_tokens mid-thought).
+                content = str(content)
+                original_len = len(content)
+                content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+                content = re.sub(r'<think>[\s\S]*$', '', content).strip()
+                stripped = original_len - len(content)
+                if stripped > 0:
+                    logger.debug(
+                        f"Stripped {stripped} chars of <think> tags "
+                        f"({original_len} -> {len(content)})"
                     )
-                    if reasoning and str(reasoning).strip():
-                        logger.debug(
-                            "Content empty, using reasoning_content as fallback"
-                        )
-                        content = str(reasoning)
 
-                if not content or not str(content).strip():
-                    raise ValueError("LLM returned empty/null content")
-                return str(content).strip()
+                if not content:
+                    raise _ThinkingExhaustedError(
+                        "LLM returned empty content after stripping reasoning tags"
+                    )
+                return content
 
             except Exception as e:
                 last_error = e
                 retries += 1
                 latency_ms = (time.perf_counter() - start_time) * 1000
+
+                # If model used all tokens for thinking, double
+                # max_tokens on next attempt to leave room for the
+                # actual response (capped at 16384).
+                if isinstance(e, _ThinkingExhaustedError):
+                    new_limit = min(max_tokens * 2, 16384)
+                    if new_limit > max_tokens:
+                        logger.debug(
+                            f"Bumping max_tokens {max_tokens} -> {new_limit} "
+                            f"after thinking exhaustion"
+                        )
+                        max_tokens = new_limit
 
                 if attempt < self.max_retries:
                     wait_time = 2**attempt

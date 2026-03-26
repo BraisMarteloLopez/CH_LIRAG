@@ -21,8 +21,8 @@ from shared.types import (
     DatasetType,
     MetricType,
 )
-from sandbox_mteb.evaluator import MTEBEvaluator
 from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
+from sandbox_mteb.subset_selection import select_subset_dev
 from shared.config_base import InfraConfig, RerankerConfig
 from shared.retrieval.core import RetrievalConfig
 
@@ -31,13 +31,13 @@ from shared.retrieval.core import RetrievalConfig
 # Helpers
 # =================================================================
 
-def _make_evaluator(
+def _make_config(
     dev_mode: bool = True,
     dev_queries: int = 5,
     dev_corpus_size: int = 20,
     seed: int = 42,
-) -> MTEBEvaluator:
-    config = MTEBConfig(
+) -> MTEBConfig:
+    return MTEBConfig(
         infra=InfraConfig(),
         storage=MinIOStorageConfig(),
         retrieval=RetrievalConfig(),
@@ -48,7 +48,6 @@ def _make_evaluator(
         dev_corpus_size=dev_corpus_size,
         corpus_shuffle_seed=seed,
     )
-    return MTEBEvaluator(config)
 
 
 def _make_dataset(
@@ -100,10 +99,10 @@ def _make_dataset(
 
 def test_gold_docs_present_in_corpus():
     """Todos los gold docs de las queries seleccionadas estan en el corpus."""
-    evaluator = _make_evaluator(dev_queries=5, dev_corpus_size=30)
+    config = _make_config(dev_queries=5, dev_corpus_size=30)
     dataset = _make_dataset(n_queries=20, n_corpus=100, gold_per_query=2)
 
-    queries, corpus = evaluator._select_subset_dev(dataset)
+    queries, corpus = select_subset_dev(dataset, config)
 
     for q in queries:
         for gold_id in q.relevant_doc_ids:
@@ -117,10 +116,10 @@ def test_gold_docs_present_in_corpus():
 def test_distractors_fill_to_dev_corpus_size():
     """Corpus resultante tiene exactamente dev_corpus_size docs."""
     dev_corpus_size = 30
-    evaluator = _make_evaluator(dev_queries=5, dev_corpus_size=dev_corpus_size)
+    config = _make_config(dev_queries=5, dev_corpus_size=dev_corpus_size)
     dataset = _make_dataset(n_queries=20, n_corpus=100, gold_per_query=2)
 
-    queries, corpus = evaluator._select_subset_dev(dataset)
+    queries, corpus = select_subset_dev(dataset, config)
 
     assert len(corpus) == dev_corpus_size, (
         f"Esperado {dev_corpus_size} docs, obtenido {len(corpus)}"
@@ -130,10 +129,10 @@ def test_distractors_fill_to_dev_corpus_size():
 def test_correct_number_of_queries():
     """Se seleccionan exactamente dev_queries queries."""
     dev_queries = 5
-    evaluator = _make_evaluator(dev_queries=dev_queries, dev_corpus_size=30)
+    config = _make_config(dev_queries=dev_queries, dev_corpus_size=30)
     dataset = _make_dataset(n_queries=20, n_corpus=100)
 
-    queries, corpus = evaluator._select_subset_dev(dataset)
+    queries, corpus = select_subset_dev(dataset, config)
 
     assert len(queries) == dev_queries, (
         f"Esperado {dev_queries} queries, obtenido {len(queries)}"
@@ -145,11 +144,11 @@ def test_seed_deterministic():
     seed = 42
     dataset = _make_dataset(n_queries=20, n_corpus=100)
 
-    ev1 = _make_evaluator(dev_queries=5, dev_corpus_size=30, seed=seed)
-    queries1, corpus1 = ev1._select_subset_dev(dataset)
+    cfg1 = _make_config(dev_queries=5, dev_corpus_size=30, seed=seed)
+    queries1, corpus1 = select_subset_dev(dataset, cfg1)
 
-    ev2 = _make_evaluator(dev_queries=5, dev_corpus_size=30, seed=seed)
-    queries2, corpus2 = ev2._select_subset_dev(dataset)
+    cfg2 = _make_config(dev_queries=5, dev_corpus_size=30, seed=seed)
+    queries2, corpus2 = select_subset_dev(dataset, cfg2)
 
     ids1 = [q.query_id for q in queries1]
     ids2 = [q.query_id for q in queries2]
@@ -164,11 +163,11 @@ def test_different_seed_different_result():
     """Seeds diferentes producen diferentes selecciones."""
     dataset = _make_dataset(n_queries=20, n_corpus=100)
 
-    ev1 = _make_evaluator(dev_queries=5, dev_corpus_size=30, seed=42)
-    queries1, _ = ev1._select_subset_dev(dataset)
+    cfg1 = _make_config(dev_queries=5, dev_corpus_size=30, seed=42)
+    queries1, _ = select_subset_dev(dataset, cfg1)
 
-    ev2 = _make_evaluator(dev_queries=5, dev_corpus_size=30, seed=99)
-    queries2, _ = ev2._select_subset_dev(dataset)
+    cfg2 = _make_config(dev_queries=5, dev_corpus_size=30, seed=99)
+    queries2, _ = select_subset_dev(dataset, cfg2)
 
     ids1 = [q.query_id for q in queries1]
     ids2 = [q.query_id for q in queries2]
@@ -179,19 +178,19 @@ def test_different_seed_different_result():
 def test_gold_exceeds_corpus_size_raises_error():
     """Si gold docs > dev_corpus_size, lanza ValueError."""
     # 10 queries * 2 gold = 20 gold docs, pero dev_corpus_size=10
-    evaluator = _make_evaluator(dev_queries=10, dev_corpus_size=10)
+    config = _make_config(dev_queries=10, dev_corpus_size=10)
     dataset = _make_dataset(n_queries=10, n_corpus=100, gold_per_query=2)
 
     with pytest.raises(ValueError, match="gold docs"):
-        evaluator._select_subset_dev(dataset)
+        select_subset_dev(dataset, config)
 
 
 def test_dev_queries_exceeds_total_uses_all():
     """Si dev_queries >= total queries, usa todas las queries."""
-    evaluator = _make_evaluator(dev_queries=100, dev_corpus_size=200)
+    config = _make_config(dev_queries=100, dev_corpus_size=200)
     dataset = _make_dataset(n_queries=10, n_corpus=200)
 
-    queries, corpus = evaluator._select_subset_dev(dataset)
+    queries, corpus = select_subset_dev(dataset, config)
 
     assert len(queries) == 10, (
         f"Esperado todas (10) queries, obtenido {len(queries)}"
@@ -200,7 +199,7 @@ def test_dev_queries_exceeds_total_uses_all():
 
 def test_gold_docs_missing_from_corpus_handled():
     """Gold docs que no existen en corpus no causan fallo."""
-    evaluator = _make_evaluator(dev_queries=3, dev_corpus_size=20)
+    config = _make_config(dev_queries=3, dev_corpus_size=20)
     dataset = _make_dataset(n_queries=5, n_corpus=50)
 
     # Agregar un query con gold doc inexistente
@@ -212,16 +211,16 @@ def test_gold_docs_missing_from_corpus_handled():
     ))
 
     # No debe fallar
-    queries, corpus = evaluator._select_subset_dev(dataset)
-    assert len(queries) <= evaluator.config.dev_queries
+    queries, corpus = select_subset_dev(dataset, config)
+    assert len(queries) <= config.dev_queries
 
 
 def test_corpus_contains_mix_of_gold_and_distractors():
     """Corpus tiene gold docs + distractores (no solo gold)."""
-    evaluator = _make_evaluator(dev_queries=3, dev_corpus_size=20)
+    config = _make_config(dev_queries=3, dev_corpus_size=20)
     dataset = _make_dataset(n_queries=20, n_corpus=100, gold_per_query=2)
 
-    queries, corpus = evaluator._select_subset_dev(dataset)
+    queries, corpus = select_subset_dev(dataset, config)
 
     gold_ids = set()
     for q in queries:

@@ -55,7 +55,6 @@ class MetricType(Enum):
     # Sin referencia (LLM-Judge)
     FAITHFULNESS = "faithfulness"
     ANSWER_RELEVANCE = "answer_relevance"
-    CONTEXT_UTILIZATION = "context_utilization"
 
 
 class EvaluationStatus(Enum):
@@ -265,6 +264,10 @@ class QueryRetrievalDetail:
     # que generation_doc_ids provienen del pool de candidatos, y analizar
     # que posiciones originales fueron promovidas por el reranker.
     pre_rerank_candidate_ids: List[str] = field(default_factory=list)
+
+    # Metadata del retriever (strategy-specific). Ej: LIGHT_RAG graph stats,
+    # HYBRID_PLUS RRF params. Viaja con el retrieval, no en lista paralela.
+    retrieval_metadata: Dict[str, Any] = field(default_factory=dict)
 
     # Metricas de retrieval efectivo (post-rerank). Solo cuando reranker activo.
     # Miden la calidad de los docs que realmente llegan al LLM de generacion.

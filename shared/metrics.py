@@ -6,7 +6,7 @@ Ubicacion: shared/metrics.py
 
 Dos categorias:
   A) Con referencia: exact_match, f1_score, accuracy, semantic_similarity
-  B) Sin referencia (LLM-Judge): faithfulness, answer_relevance, context_utilization
+  B) Sin referencia (LLM-Judge): faithfulness, answer_relevance
 
 Todas retornan valores en [0.0, 1.0] via MetricResult.
 """
@@ -401,24 +401,6 @@ Respond ONLY with valid JSON:
 {"score": <number between 0.0 and 1.0>, "justification": "<brief explanation>"}
 """
 
-_CONTEXT_UTILIZATION_SYSTEM_PROMPT = """You are an expert RAG system evaluator.
-Your task is to assess how much of the provided CONTEXT was UTILIZED to generate the ANSWER.
-
-EVALUATION CRITERIA:
-- SCORE 1.0: The answer synthesizes and uses most of the relevant context.
-- SCORE 0.7-0.9: The answer uses a good portion of the available context.
-- SCORE 0.4-0.6: The answer uses only a fraction of the context.
-- SCORE 0.1-0.3: The answer barely references the context.
-- SCORE 0.0: The answer completely ignores the provided context.
-
-NOTE: Do not penalize if the context contains information irrelevant to the question.
-Only evaluate the use of RELEVANT context.
-
-RESPONSE FORMAT (MANDATORY):
-Respond ONLY with valid JSON:
-{"score": <number between 0.0 and 1.0>, "justification": "<brief explanation>"}
-"""
-
 
 # -- Preparadores de prompt (unifica validacion + prompt building) -----------
 
@@ -463,26 +445,6 @@ Evaluate the relevance of the ANSWER with respect to the QUESTION."""
 
     return (_ANSWER_RELEVANCE_SYSTEM_PROMPT, user_prompt, MetricType.ANSWER_RELEVANCE)
 
-
-def _prepare_context_utilization(
-    generated: str, context: str, query: str
-) -> Union[MetricResult, Tuple[str, str, MetricType]]:
-    """Valida inputs y construye prompt para context_utilization."""
-    if not generated or not context:
-        return MetricResult(metric_type=MetricType.CONTEXT_UTILIZATION, value=0.0, details={"reason": "empty_input"})
-
-    user_prompt = f"""ORIGINAL QUESTION:
-{query}
-
-PROVIDED CONTEXT:
-{context}
-
-GENERATED ANSWER:
-{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}
-
-Evaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
-
-    return (_CONTEXT_UTILIZATION_SYSTEM_PROMPT, user_prompt, MetricType.CONTEXT_UTILIZATION)
 
 
 # -- Invocacion del judge --------------------------------------------------
@@ -667,18 +629,6 @@ def answer_relevance(
     return _invoke_judge(llm_judge, *prep)
 
 
-def context_utilization(
-    generated: str,
-    context: str,
-    query: str,
-    llm_judge: LLMJudgeProtocol
-) -> MetricResult:
-    """Evalua que proporcion del contexto relevante se uso en la respuesta."""
-    prep = _prepare_context_utilization(generated, context, query)
-    if isinstance(prep, MetricResult):
-        return prep
-    return _invoke_judge(llm_judge, *prep)
-
 
 # -- Funciones publicas LLM-Judge (async) ----------------------------------
 
@@ -701,15 +651,6 @@ async def answer_relevance_async(
         return prep
     return await _invoke_judge_async(llm_judge, *prep)
 
-
-async def context_utilization_async(
-    generated: str, context: str, query: str, llm_judge: LLMJudgeProtocol
-) -> MetricResult:
-    """Version async de context_utilization."""
-    prep = _prepare_context_utilization(generated, context, query)
-    if isinstance(prep, MetricResult):
-        return prep
-    return await _invoke_judge_async(llm_judge, *prep)
 
 
 # =============================================================================
@@ -778,13 +719,6 @@ class MetricsCalculator:
                 raise ValueError("ANSWER_RELEVANCE requiere llm_judge configurado")
             return answer_relevance(generated, query, self.llm_judge)
 
-        elif metric_type == MetricType.CONTEXT_UTILIZATION:
-            if context is None or query is None:
-                raise ValueError("CONTEXT_UTILIZATION requiere 'context' y 'query'")
-            if self.llm_judge is None:
-                raise ValueError("CONTEXT_UTILIZATION requiere llm_judge configurado")
-            return context_utilization(generated, context, query, self.llm_judge)
-
         else:
             raise ValueError(f"Tipo de metrica no soportado: {metric_type}")
 
@@ -835,8 +769,7 @@ class MetricsCalculator:
             "accuracy": True,
             "semantic_similarity": self.embedding_model is not None,
             "faithfulness": self.llm_judge is not None,
-            "answer_relevance": self.llm_judge is not None,
-            "context_utilization": self.llm_judge is not None
+            "answer_relevance": self.llm_judge is not None
         }
 
     async def calculate_async(
@@ -870,13 +803,6 @@ class MetricsCalculator:
             if query is None:
                 raise ValueError("ANSWER_RELEVANCE requiere 'query'")
             return await answer_relevance_async(generated, query, self.llm_judge)
-
-        elif metric_type == MetricType.CONTEXT_UTILIZATION:
-            if context is None or query is None:
-                raise ValueError("CONTEXT_UTILIZATION requiere 'context' y 'query'")
-            return await context_utilization_async(
-                generated, context, query, self.llm_judge
-            )
 
         else:
             raise ValueError(f"Tipo de metrica no soportado: {metric_type}")

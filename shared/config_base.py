@@ -141,6 +141,7 @@ class RerankerConfig:
     base_url: str = ""
     model_name: str = ""
     top_n: int = 20
+    fetch_k: int = 0  # Candidatos a recuperar para el reranker (0 = top_n * 3) (DTm-35)
 
     @classmethod
     def from_env(cls) -> "RerankerConfig":
@@ -149,6 +150,7 @@ class RerankerConfig:
             base_url=_env("RERANKER_BASE_URL"),
             model_name=_env("RERANKER_MODEL_NAME"),
             top_n=_env_int("RERANKER_TOP_N", 20),
+            fetch_k=_env_int("RERANKER_FETCH_K", 0),
         )
 
     def validate(self) -> List[str]:

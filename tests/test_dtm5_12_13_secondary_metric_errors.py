@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 from shared.types import DatasetType, MetricType, get_dataset_config
 from shared.metrics import MetricsCalculator, MetricResult
+from sandbox_mteb.generation_executor import GenerationExecutor
 
 
 # ---------------------------------------------------------------
@@ -36,25 +37,15 @@ class FailingMetricsCalculator(MetricsCalculator):
 
 
 # ---------------------------------------------------------------
-# Helper: ejecutar _calculate_metrics_async aislado
+# Helper: crear GenerationExecutor con calculator fallido
 # ---------------------------------------------------------------
 
-def _make_evaluator_with_failing_calc():
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.config_base import InfraConfig, RerankerConfig
-    from shared.retrieval.core import RetrievalConfig
-
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(),
-        reranker=RerankerConfig(enabled=False),
-        generation_enabled=True,
+def _make_executor_with_failing_calc():
+    return GenerationExecutor(
+        llm_service=MagicMock(),
+        metrics_calculator=FailingMetricsCalculator(),
+        max_context_chars=4000,
     )
-    evaluator = MTEBEvaluator(config)
-    evaluator._metrics_calculator = FailingMetricsCalculator()
-    return evaluator
 
 
 # ---------------------------------------------------------------
@@ -66,10 +57,10 @@ def test_failed_secondary_metric_produces_result():
     #12: Cuando faithfulness falla como metrica secundaria,
     el resultado debe contener la key con value=0.0 (no desaparecer).
     """
-    evaluator = _make_evaluator_with_failing_calc()
+    executor = _make_executor_with_failing_calc()
 
     primary, secondary = asyncio.run(
-        evaluator._calculate_metrics_async(
+        executor._calculate_metrics_async(
             generated="yes",
             expected_answer="yes",
             answer_type="label",          # primary = ACCURACY
@@ -129,19 +120,19 @@ def test_failed_secondary_metric_logs_warning():
     #13: El fallo de metrica secundaria emite logger.warning
     con el tipo de metrica y fragmento de la query.
     """
-    evaluator = _make_evaluator_with_failing_calc()
+    executor = _make_executor_with_failing_calc()
 
     # Capturar logs
     log_records = []
     handler = logging.Handler()
     handler.emit = lambda record: log_records.append(record)
-    eval_logger = logging.getLogger("sandbox_mteb.evaluator")
-    eval_logger.addHandler(handler)
-    eval_logger.setLevel(logging.WARNING)
+    gen_logger = logging.getLogger("sandbox_mteb.generation_executor")
+    gen_logger.addHandler(handler)
+    gen_logger.setLevel(logging.WARNING)
 
     try:
         asyncio.run(
-            evaluator._calculate_metrics_async(
+            executor._calculate_metrics_async(
                 generated="yes",
                 expected_answer="yes",
                 answer_type="label",
@@ -174,7 +165,7 @@ def test_failed_secondary_metric_logs_warning():
         print("PASS: fallo de metrica secundaria emite warning con tipo y query")
 
     finally:
-        eval_logger.removeHandler(handler)
+        gen_logger.removeHandler(handler)
 
 
 def test_all_secondary_fail_returns_all_with_errors():
@@ -194,23 +185,14 @@ def test_all_secondary_fail_returns_all_with_errors():
                 return MetricResult(metric_type=MetricType.ACCURACY, value=1.0)
             raise RuntimeError(f"Fallo simulado en {metric_type.value}")
 
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.config_base import InfraConfig, RerankerConfig
-    from shared.retrieval.core import RetrievalConfig
-
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(),
-        reranker=RerankerConfig(enabled=False),
-        generation_enabled=True,
+    executor = GenerationExecutor(
+        llm_service=MagicMock(),
+        metrics_calculator=AllFailCalculator(),
+        max_context_chars=4000,
     )
-    evaluator = MTEBEvaluator(config)
-    evaluator._metrics_calculator = AllFailCalculator()
 
     primary, secondary = asyncio.run(
-        evaluator._calculate_metrics_async(
+        executor._calculate_metrics_async(
             generated="yes",
             expected_answer="yes",
             answer_type="label",

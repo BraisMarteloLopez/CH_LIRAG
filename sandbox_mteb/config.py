@@ -139,6 +139,7 @@ class MTEBConfig:
         VALID_STRATEGIES = (
             RetrievalStrategy.SIMPLE_VECTOR,
             RetrievalStrategy.HYBRID_PLUS,
+            RetrievalStrategy.LIGHT_RAG,
         )
         if self.retrieval.strategy not in VALID_STRATEGIES:
             valid_names = ", ".join(s.name for s in VALID_STRATEGIES)
@@ -147,12 +148,17 @@ class MTEBConfig:
                 f"en sandbox_mteb. Valores validos: {valid_names}"
             )
 
-        # LLM requerido solo si generacion activa
-        if self.generation_enabled:
+        # LLM requerido si generacion activa O si LIGHT_RAG
+        _needs_llm = (
+            self.generation_enabled
+            or self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG
+        )
+        if _needs_llm:
+            _reason = "LIGHT_RAG" if self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG else "GENERATION_ENABLED=true"
             if not self.infra.llm_base_url:
-                errors.append("LLM_BASE_URL requerido (GENERATION_ENABLED=true)")
+                errors.append(f"LLM_BASE_URL requerido ({_reason})")
             if not self.infra.llm_model_name:
-                errors.append("LLM_MODEL_NAME requerido")
+                errors.append(f"LLM_MODEL_NAME requerido ({_reason})")
 
         if self.max_queries < 0:
             errors.append(f"EVAL_MAX_QUERIES={self.max_queries} debe ser >= 0 (0=all)")
@@ -188,6 +194,16 @@ class MTEBConfig:
         else:
             lines.append(f"  Queries:    {self.max_queries if self.max_queries > 0 else 'ALL'}")
             lines.append(f"  Corpus:     {self.max_corpus if self.max_corpus > 0 else 'ALL'}")
+        from shared.retrieval.core import RetrievalStrategy
+        if self.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
+            lines.extend([
+                f"  KG weights: graph={self.retrieval.kg_graph_weight}, vector={self.retrieval.kg_vector_weight}",
+                f"  KG fusion:  {self.retrieval.kg_fusion_method} (rrf_k={self.retrieval.kg_rrf_k})",
+                f"  KG tokens:  extraction={self.retrieval.kg_extraction_max_tokens}, keyword={self.retrieval.kg_keyword_max_tokens}",
+                f"  KG batch:   {self.retrieval.kg_batch_docs_per_call} docs/call, overfetch={self.retrieval.kg_graph_overfetch_factor}x",
+                f"  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento "
+                f"para construir el knowledge graph (concurrencia={self.infra.nim_max_concurrent})",
+            ])
         lines.extend([
             f"  Shuffle:    seed={self.corpus_shuffle_seed}" if self.corpus_shuffle_seed is not None else "  Shuffle:    OFF (WARNING: ordering bias risk)",
             f"  MinIO:      {self.storage.minio_endpoint}/{self.storage.minio_bucket}",
@@ -204,7 +220,9 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
     "hotpotqa": {
         "system": (
             "You are a helpful assistant. Use the provided context to answer the question. "
-            "Be concise and direct. For yes/no questions, start with yes or no."
+            "Answer in as few words as possible — ideally a single entity, name, date, or number. "
+            "For yes/no questions, answer only 'yes' or 'no'. "
+            "Do not explain, elaborate, or add extra context."
         ),
         "user_template": "CONTEXT:\n{context}\n\nQUESTION: {query}\n\nANSWER:",
     },

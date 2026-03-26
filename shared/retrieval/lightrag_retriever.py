@@ -22,8 +22,13 @@ Flujo:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import threading
 import time
+from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.llm import AsyncLLMService, run_sync
@@ -36,6 +41,7 @@ from .core import (
     RetrievalStrategy,
     SimpleVectorRetriever,
 )
+from .hybrid_retriever import reciprocal_rank_fusion
 from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_NETWORKX
 from .triplet_extractor import TripletExtractor
 
@@ -48,7 +54,7 @@ class LightRAGRetriever(BaseRetriever):
     Requiere:
       - AsyncLLMService para extraccion de tripletas y query analysis
       - EmbeddingModel para busqueda vectorial (ChromaDB)
-      - NetworkX para knowledge graph
+      - igraph para knowledge graph
 
     Sin LLM service: fallback a SimpleVectorRetriever puro.
     Sin NetworkX: fallback a SimpleVectorRetriever puro.
@@ -63,14 +69,25 @@ class LightRAGRetriever(BaseRetriever):
         embedding_batch_size: int = 0,
         kg_max_hops: int = 2,
         kg_max_text_chars: int = 3000,
+        kg_max_entities: int = 0,
         graph_weight: float = 0.3,
         vector_weight: float = 0.7,
+        kg_cache_dir: str = "",
     ):
         super().__init__(config)
         self._llm_service = llm_service
         self._kg_max_hops = kg_max_hops
+        self._kg_max_text_chars = kg_max_text_chars
+        self._kg_max_entities = kg_max_entities
         self._graph_weight = graph_weight
         self._vector_weight = vector_weight
+        self._kg_cache_dir = Path(kg_cache_dir) if kg_cache_dir else None
+        self._kg_fusion_method = config.kg_fusion_method
+        self._kg_rrf_k = config.kg_rrf_k
+        self._kg_keyword_max_tokens = config.kg_keyword_max_tokens
+        self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
+        self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
+        self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -84,9 +101,12 @@ class LightRAGRetriever(BaseRetriever):
         self._has_graph = False
 
         if llm_service and HAS_NETWORKX:
-            self._kg = KnowledgeGraph()
+            self._kg = KnowledgeGraph(max_entities=kg_max_entities)
             self._extractor = TripletExtractor(
-                llm_service, max_text_chars=kg_max_text_chars,
+                llm_service,
+                max_text_chars=kg_max_text_chars,
+                keyword_max_tokens=self._kg_keyword_max_tokens,
+                extraction_max_tokens=self._kg_extraction_max_tokens,
             )
         else:
             reasons = []
@@ -99,8 +119,10 @@ class LightRAGRetriever(BaseRetriever):
                 f"Fallback a SimpleVector."
             )
 
-        # Cache de keywords de queries (para evitar re-extraccion)
-        self._query_keywords_cache: Dict[str, Tuple[List[str], List[str]]] = {}
+        # Cache de keywords de queries con limite (DTm-47) y lock (DTm-51)
+        self._QUERY_CACHE_MAX_SIZE = 10_000
+        self._query_keywords_cache: OrderedDict[str, Tuple[List[str], List[str]]] = OrderedDict()
+        self._cache_lock = threading.Lock()
 
     def index_documents(
         self,
@@ -133,7 +155,17 @@ class LightRAGRetriever(BaseRetriever):
         # Paso 2: Knowledge graph (si disponible)
         if self._kg and self._extractor:
             try:
-                self._build_knowledge_graph(documents)
+                cache_path = self._resolve_cache_path(documents)
+                if cache_path and cache_path.exists():
+                    self._kg = KnowledgeGraph.load(cache_path)
+                    logger.info(
+                        f"LightRAGRetriever: KG cargado desde cache "
+                        f"({self._kg.num_entities} entidades)"
+                    )
+                else:
+                    self._build_knowledge_graph(documents)
+                    if cache_path:
+                        self._kg.save(cache_path)
                 self._has_graph = True
             except Exception as e:
                 logger.error(
@@ -150,6 +182,23 @@ class LightRAGRetriever(BaseRetriever):
             f"LightRAGRetriever: indexacion {elapsed_ms:.0f}ms. "
             f"Graph: {self._has_graph}. KG stats: {kg_stats}"
         )
+
+        # DTm-26: alerta si el cap de entidades descarto un porcentaje significativo
+        if kg_stats:
+            dropped = kg_stats.get("entities_dropped", 0)
+            kept = kg_stats.get("num_entities", 0)
+            total_seen = kept + dropped
+            if dropped > 0 and total_seen > 0:
+                pct = dropped / total_seen * 100
+                msg = (
+                    f"KG entity cap activo: {dropped}/{total_seen} entidades "
+                    f"descartadas ({pct:.1f}%). cap={kg_stats.get('max_entities')}. "
+                    f"Documentos indexados tarde tendran KG incompleto."
+                )
+                if pct > 10:
+                    logger.error(f"DTm-26 ALERT: {msg}")
+                else:
+                    logger.warning(f"DTm-26: {msg}")
         return True
 
     def _build_knowledge_graph(
@@ -162,7 +211,9 @@ class LightRAGRetriever(BaseRetriever):
         t0 = time.perf_counter()
 
         # Extraccion batch (async, controlada por semaphore del LLM)
-        extraction_results = self._extractor.extract_batch(documents)
+        extraction_results = self._extractor.extract_batch(
+            documents, batch_docs_per_call=self._kg_batch_docs_per_call,
+        )
 
         # Construir grafo
         total_triplets = 0
@@ -177,11 +228,53 @@ class LightRAGRetriever(BaseRetriever):
                     entity.name, entity.entity_type, entity.description
                 )
 
+        # DTm-49: emitir resumen una sola vez al final
+        self._kg.log_entity_cap_summary()
+
+        # DTm-69: construir indices invertidos de keywords en fase post-build
+        # (antes se hacia por cada tripleta, entrelazado con I/O del grafo)
+        t_idx = time.perf_counter()
+        self._kg.build_keyword_indices()
+        idx_ms = (time.perf_counter() - t_idx) * 1000
+        logger.info(f"LightRAGRetriever: keyword indices construidos en {idx_ms:.0f}ms")
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             f"LightRAGRetriever: KG construido en {elapsed_ms:.0f}ms. "
             f"{total_triplets} tripletas de {len(documents)} docs."
         )
+
+    @staticmethod
+    def _corpus_fingerprint(
+        documents: List[Dict[str, Any]],
+        max_text_chars: int = 0,
+    ) -> str:
+        """Hash determinista del corpus para invalidar cache si cambia.
+
+        Incluye max_text_chars en el hash para que cambios en
+        KG_MAX_TEXT_CHARS invaliden el cache (el KG resultante difiere).
+        """
+        h = hashlib.sha256()
+        for doc in sorted(documents, key=lambda d: d.get("doc_id", "")):
+            h.update(doc.get("doc_id", "").encode())
+            content = doc.get("content", "")
+            h.update(content.encode())
+        h.update(str(len(documents)).encode())
+        # max_text_chars afecta cuanto texto ve el LLM para extraccion
+        if max_text_chars:
+            h.update(f"mtc={max_text_chars}".encode())
+        return h.hexdigest()[:16]
+
+    def _resolve_cache_path(
+        self, documents: List[Dict[str, Any]],
+    ) -> Optional[Path]:
+        """Determina la ruta del cache del KG, o None si no hay cache dir."""
+        if not self._kg_cache_dir:
+            return None
+        fingerprint = self._corpus_fingerprint(
+            documents, max_text_chars=self._kg_max_text_chars,
+        )
+        return self._kg_cache_dir / f"kg_cache_{fingerprint}.json"
 
     def retrieve(
         self,
@@ -202,7 +295,11 @@ class LightRAGRetriever(BaseRetriever):
             result = vector_result
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
-        result.strategy_used = RetrievalStrategy.LIGHT_RAG
+        result.strategy_used = (
+            RetrievalStrategy.LIGHT_RAG if self._has_graph
+            else RetrievalStrategy.SIMPLE_VECTOR
+        )
+        result.metadata["graph_active"] = self._has_graph
         return result
 
     def retrieve_by_vector(
@@ -227,7 +324,11 @@ class LightRAGRetriever(BaseRetriever):
             result = vector_result
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
-        result.strategy_used = RetrievalStrategy.LIGHT_RAG
+        result.strategy_used = (
+            RetrievalStrategy.LIGHT_RAG if self._has_graph
+            else RetrievalStrategy.SIMPLE_VECTOR
+        )
+        result.metadata["graph_active"] = self._has_graph
         return result
 
     def _fuse_with_graph(
@@ -241,10 +342,12 @@ class LightRAGRetriever(BaseRetriever):
         1. Extrae keywords de la query (low-level + high-level)
         2. Graph traversal por entidades (low-level)
         3. Graph traversal por temas (high-level)
-        4. Merge scores: vector_weight * vector_score + graph_weight * graph_score
+        4. Fusion via RRF (default) o linear weighted sum
         """
-        assert self._kg is not None
-        assert self._extractor is not None
+        if self._kg is None:
+            raise RuntimeError("_fuse_with_graph llamado sin KnowledgeGraph")
+        if self._extractor is None:
+            raise RuntimeError("_fuse_with_graph llamado sin TripletExtractor")
 
         # Paso 1: Query analysis
         low_level, high_level = self._get_query_keywords(query)
@@ -263,7 +366,7 @@ class LightRAGRetriever(BaseRetriever):
             entity_results = self._kg.query_entities(
                 low_level,
                 max_hops=self._kg_max_hops,
-                max_docs=top_k * 2,
+                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
             )
             for doc_id, score in entity_results:
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
@@ -272,7 +375,7 @@ class LightRAGRetriever(BaseRetriever):
         if high_level:
             theme_results = self._kg.query_by_keywords(
                 high_level,
-                max_docs=top_k * 2,
+                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
             )
             for doc_id, score in theme_results:
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
@@ -284,65 +387,99 @@ class LightRAGRetriever(BaseRetriever):
             }
             return vector_result
 
-        # Paso 3: Normalizar scores del grafo a [0, 1]
-        max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
-        if max_graph_score > 0:
-            graph_docs = {
-                k: v / max_graph_score for k, v in graph_docs.items()
-            }
-
-        # Paso 4: Normalizar scores de vector a [0, 1]
+        # Paso 3: Build vector ranking and contents map
         vector_docs: Dict[str, float] = {}
         vector_contents: Dict[str, str] = {}
-        max_vector_score = max(vector_result.scores) if vector_result.scores else 1.0
-        if max_vector_score > 0:
-            for doc_id, content, score in zip(
-                vector_result.doc_ids, vector_result.contents, vector_result.scores
-            ):
-                vector_docs[doc_id] = score / max_vector_score
-                vector_contents[doc_id] = content
+        for doc_id, content, score in zip(
+            vector_result.doc_ids, vector_result.contents, vector_result.scores
+        ):
+            vector_docs[doc_id] = score
+            vector_contents[doc_id] = content
 
-        # Paso 5: Fusion — merge todos los doc_ids
-        all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
-        fused_scores: List[Tuple[str, float]] = []
+        # Paso 4: Recuperar contenido de graph-only docs desde ChromaDB.
+        graph_only_ids = [
+            did for did in graph_docs if did not in vector_contents
+        ]
+        graph_resolved = 0
+        if graph_only_ids:
+            looked_up = self._vector_retriever.get_documents_by_ids(
+                graph_only_ids
+            )
+            for did, content in looked_up.items():
+                vector_contents[did] = content
+                graph_resolved += 1
+        graph_unresolved = len(graph_only_ids) - graph_resolved
 
-        for doc_id in all_doc_ids:
-            v_score = vector_docs.get(doc_id, 0.0)
-            g_score = graph_docs.get(doc_id, 0.0)
-            fused = self._vector_weight * v_score + self._graph_weight * g_score
-            fused_scores.append((doc_id, fused))
+        # Paso 5: Fusion
+        use_rrf = (self._kg_fusion_method != "linear")
 
-        # Ordenar por score fusionado
-        fused_scores.sort(key=lambda x: x[1], reverse=True)
+        if not use_rrf:
+            # Linear fusion: normalize + weighted sum
+            max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
+            if max_graph_score > 0:
+                graph_docs = {k: v / max_graph_score for k, v in graph_docs.items()}
+            max_vector_score = max(vector_docs.values()) if vector_docs else 1.0
+            if max_vector_score > 0:
+                vector_docs = {k: v / max_vector_score for k, v in vector_docs.items()}
 
-        # Paso 6: Construir resultado
+            # DTm-53: si ambos rankings son all-zero, fallback a RRF
+            if max_graph_score == 0 and max_vector_score == 0:
+                logger.warning(
+                    "Linear fusion: scores all-zero en ambos rankings, "
+                    "usando RRF como fallback"
+                )
+                use_rrf = True
+
+        if not use_rrf:
+            all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
+            fused_scores: List[Tuple[str, float]] = []
+            for doc_id in all_doc_ids:
+                v_score = vector_docs.get(doc_id, 0.0)
+                g_score = graph_docs.get(doc_id, 0.0)
+                fused = self._vector_weight * v_score + self._graph_weight * g_score
+                fused_scores.append((doc_id, fused))
+            fused_scores.sort(key=lambda x: x[1], reverse=True)
+        else:
+            # RRF fusion (default): rank-based, robust to score scale differences
+            vector_ranking = sorted(
+                vector_docs.items(), key=lambda x: x[1], reverse=True
+            )
+            graph_ranking = sorted(
+                graph_docs.items(), key=lambda x: x[1], reverse=True
+            )
+            fused_scores = reciprocal_rank_fusion(
+                rankings=[vector_ranking, graph_ranking],
+                weights=[self._vector_weight, self._graph_weight],
+                k=self._kg_rrf_k,
+                top_n=top_k,
+            )
+
+        # Paso 7: Construir resultado (solo docs con contenido)
         final_ids = []
         final_contents = []
         final_scores = []
-        graph_added = 0
 
-        for doc_id, score in fused_scores[:top_k + self.config.max_graph_expansion]:
-            final_ids.append(doc_id)
-            final_scores.append(score)
-
+        for doc_id, score in fused_scores:
             if doc_id in vector_contents:
+                final_ids.append(doc_id)
                 final_contents.append(vector_contents[doc_id])
-            else:
-                # Doc solo del grafo — necesitamos el contenido
-                # No lo tenemos en memoria; lo marcamos para que el
-                # reranker/evaluator lo maneje
-                final_contents.append("")
-                graph_added += 1
+                final_scores.append(score)
+
+            if len(final_ids) >= top_k:
+                break
 
         result = RetrievalResult(
             doc_ids=final_ids,
             contents=final_contents,
             scores=final_scores,
+            # 0.0 para docs que provienen solo del grafo (sin similarity score).
             vector_scores=[vector_docs.get(d, 0.0) for d in final_ids],
             retrieval_time_ms=0.0,  # Se actualiza en el caller
             strategy_used=RetrievalStrategy.LIGHT_RAG,
             metadata={
-                "graph_docs_added": graph_added,
+                "graph_only_candidates": len(graph_only_ids),
+                "graph_resolved": graph_resolved,
+                "graph_unresolved": graph_unresolved,
                 "query_keywords": {
                     "low": low_level,
                     "high": high_level,
@@ -352,10 +489,17 @@ class LightRAGRetriever(BaseRetriever):
             },
         )
 
-        if graph_added > 0:
+        if graph_unresolved > 0:
+            # DTm-52: warn (not just debug) when graph docs can't be resolved
+            logger.warning(
+                f"LightRAG fusion: {graph_unresolved}/{len(graph_only_ids)} "
+                f"graph-only docs sin contenido en ChromaDB (excluidos)"
+            )
+        elif graph_only_ids:
             logger.debug(
-                f"LightRAG fusion: +{graph_added} docs del grafo "
-                f"(total {len(final_ids)} candidatos)"
+                f"LightRAG fusion: {len(graph_only_ids)} graph-only docs, "
+                f"todos recuperados via lookup. "
+                f"Retornando {len(final_ids)} docs."
             )
 
         return result
@@ -363,13 +507,22 @@ class LightRAGRetriever(BaseRetriever):
     def _get_query_keywords(
         self, query: str,
     ) -> Tuple[List[str], List[str]]:
-        """Extrae keywords de query con cache."""
-        if query in self._query_keywords_cache:
-            return self._query_keywords_cache[query]
+        """Extrae keywords de query con cache thread-safe y LRU eviction (DTm-47/51)."""
+        with self._cache_lock:
+            if query in self._query_keywords_cache:
+                self._query_keywords_cache.move_to_end(query)
+                return self._query_keywords_cache[query]
 
-        assert self._extractor is not None
+        if self._extractor is None:
+            raise RuntimeError(
+                "LightRAGRetriever._get_query_keywords llamado sin extractor"
+            )
         low, high = self._extractor.extract_query_keywords(query)
-        self._query_keywords_cache[query] = (low, high)
+
+        with self._cache_lock:
+            self._query_keywords_cache[query] = (low, high)
+            if len(self._query_keywords_cache) > self._QUERY_CACHE_MAX_SIZE:
+                self._query_keywords_cache.popitem(last=False)
         return low, high
 
     def pre_extract_query_keywords(
@@ -382,8 +535,9 @@ class LightRAGRetriever(BaseRetriever):
         if not self._extractor:
             return
 
-        # Filtrar queries ya cacheadas
-        uncached = [q for q in queries if q not in self._query_keywords_cache]
+        # Filtrar queries ya cacheadas (DTm-51: thread-safe)
+        with self._cache_lock:
+            uncached = [q for q in queries if q not in self._query_keywords_cache]
         if not uncached:
             return
 
@@ -392,15 +546,19 @@ class LightRAGRetriever(BaseRetriever):
             f"{len(uncached)} queries..."
         )
         results = self._extractor.extract_query_keywords_batch(uncached)
-        for query, (low, high) in zip(uncached, results):
-            self._query_keywords_cache[query] = (low, high)
+        with self._cache_lock:
+            for query, (low, high) in zip(uncached, results):
+                self._query_keywords_cache[query] = (low, high)
+                if len(self._query_keywords_cache) > self._QUERY_CACHE_MAX_SIZE:
+                    self._query_keywords_cache.popitem(last=False)
 
     def clear_index(self) -> None:
         self._vector_retriever.clear_index()
         if self._kg:
-            self._kg = KnowledgeGraph()
+            self._kg = KnowledgeGraph(max_entities=self._kg_max_entities)
         self._has_graph = False
-        self._query_keywords_cache.clear()
+        with self._cache_lock:
+            self._query_keywords_cache.clear()
         self._is_indexed = False
         logger.debug("LightRAGRetriever: indice y grafo limpiados")
 

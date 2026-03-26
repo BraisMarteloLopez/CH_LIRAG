@@ -329,7 +329,7 @@ class HybridRetriever(BaseRetriever):
         # RRF fusion
         fused = reciprocal_rank_fusion(
             rankings=[vector_ranking, bm25_ranking],
-            weights=[self.config.vector_weight, self.config.bm25_weight],
+            weights=[self.config.rrf_vector_weight, self.config.rrf_bm25_weight],
             k=self.config.rrf_k,
             top_n=k,
         )
@@ -356,6 +356,7 @@ class HybridRetriever(BaseRetriever):
                         break
             contents.append(content)
 
+            # 0.0 para docs que solo aparecen en el otro canal (BM25/vector).
             per_doc_vector.append(vector_scores_map.get(doc_id, 0.0))
             per_doc_bm25.append(bm25_scores_map.get(doc_id, 0.0))
 
@@ -372,8 +373,8 @@ class HybridRetriever(BaseRetriever):
             metadata={
                 "rrf_k": self.config.rrf_k,
                 "pre_fusion_k": pre_k,
-                "vector_weight": self.config.vector_weight,
-                "bm25_weight": self.config.bm25_weight,
+                "rrf_vector_weight": self.config.rrf_vector_weight,
+                "rrf_bm25_weight": self.config.rrf_bm25_weight,
                 "vector_candidates": len(vector_ranking),
                 "bm25_candidates": len(bm25_ranking),
                 "bm25_backend": self._bm25_backend,

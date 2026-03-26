@@ -148,15 +148,18 @@ class TestEntityExtractorBasic:
         assert result[0][0] == "scott derrickson"
 
     def test_min_length_filter(self):
+        """DTm-27: MIN_ENTITY_LENGTH=1 allows single-char entities."""
         extractor = _make_mock_extractor([
-            ("I", "PERSON"),      # len 1 -> filtrado
+            ("I", "PERSON"),      # len 1 -> pasa (DTm-27)
             ("AI", "ORG"),        # len 2 -> pasa
-            ("US", "GPE"),        # len 2 -> pasa (tras normalizar u.s.)
+            ("US", "GPE"),        # len 2 -> pasa
+            ("", "PERSON"),       # vacio -> filtrado
         ])
         result = extractor.extract("Some text")
         names = [name for name, _type in result]
-        assert "i" not in names
+        assert "i" in names
         assert "ai" in names
+        assert "" not in names
 
 
 # =========================================================================

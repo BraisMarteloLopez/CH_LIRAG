@@ -45,9 +45,9 @@ class RetrievalConfig:
     strategy: RetrievalStrategy = RetrievalStrategy.SIMPLE_VECTOR
     retrieval_k: int = 20
 
-    # Pesos RRF (HYBRID_PLUS)
-    bm25_weight: float = 0.5
-    vector_weight: float = 0.5
+    # Pesos RRF (HYBRID_PLUS) — DTm-24: renombrados para distinguir de kg_*_weight
+    rrf_bm25_weight: float = 0.5
+    rrf_vector_weight: float = 0.5
     rrf_k: int = 60
     pre_fusion_k: int = 150
 
@@ -70,8 +70,16 @@ class RetrievalConfig:
     # Knowledge graph (LIGHT_RAG)
     kg_max_hops: int = 2
     kg_max_text_chars: int = 3000
+    kg_max_entities: int = 0
     kg_graph_weight: float = 0.3
     kg_vector_weight: float = 0.7
+    kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
+    kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
+    kg_rrf_k: int = 60  # Constante k para RRF (mismo default que HYBRID_PLUS)
+    kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
+    kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
+    kg_batch_docs_per_call: int = 10  # docs por LLM call en batch extraction (DTm-67)
+    kg_graph_overfetch_factor: int = 2  # graph traversal pide N * top_k candidatos
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -79,8 +87,8 @@ class RetrievalConfig:
         return cls(
             strategy=RetrievalStrategy[_env("RETRIEVAL_STRATEGY", "SIMPLE_VECTOR")],
             retrieval_k=_env_int("RETRIEVAL_K", 20),
-            bm25_weight=_env_float("RETRIEVAL_BM25_WEIGHT", 0.5),
-            vector_weight=_env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5),
+            rrf_bm25_weight=_env_float("RRF_BM25_WEIGHT", _env_float("RETRIEVAL_BM25_WEIGHT", 0.5)),
+            rrf_vector_weight=_env_float("RRF_VECTOR_WEIGHT", _env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5)),
             pre_fusion_k=_env_int("RETRIEVAL_PRE_FUSION_K", 150),
             rrf_k=_env_int("RETRIEVAL_RRF_K", 60),
             bm25_language=_env("RETRIEVAL_BM25_LANGUAGE", "en"),
@@ -91,8 +99,16 @@ class RetrievalConfig:
             max_graph_expansion=_env_int("MAX_GRAPH_EXPANSION", 30),
             kg_max_hops=_env_int("KG_MAX_HOPS", 2),
             kg_max_text_chars=_env_int("KG_MAX_TEXT_CHARS", 3000),
+            kg_max_entities=_env_int("KG_MAX_ENTITIES", 0),
             kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),
             kg_vector_weight=_env_float("KG_VECTOR_WEIGHT", 0.7),
+            kg_cache_dir=_env("KG_CACHE_DIR", ""),
+            kg_fusion_method=_env("KG_FUSION_METHOD", "rrf"),
+            kg_rrf_k=_env_int("KG_RRF_K", 60),
+            kg_keyword_max_tokens=_env_int("KG_KEYWORD_MAX_TOKENS", 1024),
+            kg_extraction_max_tokens=_env_int("KG_EXTRACTION_MAX_TOKENS", 4096),
+            kg_batch_docs_per_call=_env_int("KG_BATCH_DOCS_PER_CALL", 10),
+            kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
         )
 
 
@@ -327,6 +343,15 @@ class SimpleVectorRetriever(BaseRetriever):
                 strategy_used=RetrievalStrategy.SIMPLE_VECTOR,
                 metadata={"error": str(e)},
             )
+
+    def get_documents_by_ids(self, doc_ids: List[str]) -> Dict[str, str]:
+        """Recupera contenido de docs por doc_id desde el vector store.
+
+        Retorna {doc_id: content}. Vacio si store no inicializado.
+        """
+        if not self._vector_store or not doc_ids:
+            return {}
+        return self._vector_store.get_documents_by_ids(doc_ids)
 
     def clear_index(self) -> None:
         if self._vector_store:

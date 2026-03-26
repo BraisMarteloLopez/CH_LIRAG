@@ -187,6 +187,49 @@ class ChromaVectorStore:
             for doc, _ in self.similarity_search_with_score(query, k, filter)
         ]
 
+    # Limite de IDs por consulta $in para evitar queries SQLite excesivas.
+    _CHROMA_IN_BATCH_SIZE = 100
+
+    def get_documents_by_ids(
+        self,
+        doc_ids: List[str],
+    ) -> Dict[str, str]:
+        """
+        Recupera contenido de documentos por sus doc_id (metadata).
+
+        Usa la API nativa de ChromaDB (collection.get con filtro where).
+        Retorna {doc_id: page_content} solo para docs encontrados.
+        Si len(doc_ids) > _CHROMA_IN_BATCH_SIZE, parte en chunks.
+        """
+        if not doc_ids:
+            return {}
+
+        try:
+            collection = self._client.get_collection(self.collection_name)
+            output: Dict[str, str] = {}
+
+            # Batch para evitar queries $in demasiado grandes
+            for start in range(0, len(doc_ids), self._CHROMA_IN_BATCH_SIZE):
+                chunk = doc_ids[start:start + self._CHROMA_IN_BATCH_SIZE]
+                results = collection.get(
+                    where={"doc_id": {"$in": chunk}},
+                    include=["documents", "metadatas"],
+                )
+
+                if results and results["ids"]:
+                    for i, _chroma_id in enumerate(results["ids"]):
+                        metadata = results["metadatas"][i] if results["metadatas"] else {}
+                        content = results["documents"][i] if results["documents"] else ""
+                        did = metadata.get("doc_id", "")
+                        if did and content:
+                            output[did] = content
+
+            return output
+
+        except Exception as e:
+            logger.error(f"Error en get_documents_by_ids: {e}")
+            return {}
+
     def delete_all_documents(self) -> None:
         """
         Limpia la coleccion eliminandola y recreandola.

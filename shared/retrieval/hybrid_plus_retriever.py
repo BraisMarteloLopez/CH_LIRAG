@@ -183,6 +183,13 @@ class HybridPlusRetriever(BaseRetriever):
                 bm25_documents=bm25_arg,
             )
 
+            # DTm-31: compartir dict de contenidos en vez de duplicar.
+            # HybridRetriever._doc_map y _original_contents almacenan lo
+            # mismo (contenido original por doc_id). Reusar una sola copia.
+            from .hybrid_retriever import HybridRetriever
+            if isinstance(self._inner_retriever, HybridRetriever):
+                self._inner_retriever._doc_map = self._original_contents
+
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             self._is_indexed = result
 
@@ -261,6 +268,7 @@ class HybridPlusRetriever(BaseRetriever):
         result.contents.extend(expanded_contents)
         result.scores.extend(expanded_scores)
 
+        # Docs expandidos via entity linking no tienen score original -> 0.0.
         if result.vector_scores:
             result.vector_scores.extend([0.0] * len(expanded_ids))
         if result.bm25_scores:

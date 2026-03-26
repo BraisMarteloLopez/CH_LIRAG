@@ -62,6 +62,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Logging verbose (DEBUG)",
     )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        metavar="RUN_ID",
+        help="Reanudar un run previo desde su checkpoint (DTm-36)",
+    )
     return parser.parse_args()
 
 
@@ -98,7 +104,7 @@ def main() -> int:
 
     # 5. Ejecutar
     evaluator = MTEBEvaluator(config)
-    run_result = evaluator.run()
+    run_result = evaluator.run(resume_run_id=args.resume)
 
     # 6. Exportar
     exporter = RunExporter(output_dir=config.storage.evaluation_results_dir)
