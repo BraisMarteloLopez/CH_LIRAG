@@ -265,10 +265,6 @@ class KnowledgeGraph:
             if skip_triplet:
                 continue
 
-            # Indexar tokens de entidades (DTm-30)
-            self._index_entity_tokens(src_name)
-            self._index_entity_tokens(tgt_name)
-
             # Anadir nodos y arista al grafo
             src_vid = self._ensure_node(src_name, self._entities[src_name].entity_type)
             tgt_vid = self._ensure_node(tgt_name, self._entities[tgt_name].entity_type)
@@ -292,9 +288,6 @@ class KnowledgeGraph:
                     existing.append(new_rel)
             else:
                 self._graph.add_edge(src_vid, tgt_vid, relations=[new_rel])
-
-            # Indexar tokens de relacion (DTm-30)
-            self._index_relation_tokens(src_name, tgt_name, new_rel)
 
             self._doc_to_relations[doc_id].append(triplet)
             added += 1
@@ -335,8 +328,7 @@ class KnowledgeGraph:
             vid = self._name_to_vid.get(norm)
             if vid is not None:
                 self._graph.vs[vid]["entity_type"] = self._entities[norm].entity_type
-            # Re-indexar tokens con nueva descripcion (DTm-30)
-            self._index_entity_tokens(norm)
+            # DTm-69: token indexing diferido a build_keyword_indices()
 
     def query_entities(
         self,
@@ -567,8 +559,20 @@ class KnowledgeGraph:
 
         return kg
 
+    def build_keyword_indices(self) -> None:
+        """Construye indices invertidos de keywords para query_by_keywords (DTm-30/69).
+
+        Debe llamarse una vez despues de que todos los add_triplets() hayan
+        terminado (fase post-build). Llamar durante add_triplets() por cada
+        tripleta era O(n*stemming) entrelazado con I/O — diferirlo reduce
+        el tiempo de build del KG.
+
+        Tambien se llama desde from_dict() al cargar desde cache.
+        """
+        self._rebuild_keyword_indices()
+
     def _rebuild_keyword_indices(self) -> None:
-        """Reconstruye _kw_entity_index y _kw_relation_index desde el estado actual (DTm-30)."""
+        """Reconstruye _kw_entity_index y _kw_relation_index desde el estado actual."""
         self._kw_entity_index = defaultdict(set)
         self._kw_relation_index = defaultdict(set)
 

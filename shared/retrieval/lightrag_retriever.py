@@ -231,6 +231,13 @@ class LightRAGRetriever(BaseRetriever):
         # DTm-49: emitir resumen una sola vez al final
         self._kg.log_entity_cap_summary()
 
+        # DTm-69: construir indices invertidos de keywords en fase post-build
+        # (antes se hacia por cada tripleta, entrelazado con I/O del grafo)
+        t_idx = time.perf_counter()
+        self._kg.build_keyword_indices()
+        idx_ms = (time.perf_counter() - t_idx) * 1000
+        logger.info(f"LightRAGRetriever: keyword indices construidos en {idx_ms:.0f}ms")
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             f"LightRAGRetriever: KG construido en {elapsed_ms:.0f}ms. "

@@ -46,6 +46,7 @@ def _build_chain_graph() -> KnowledgeGraph:
         _rel("B", "C", "works with"),
         _rel("C", "D", "manages"),
     ])
+    kg.build_keyword_indices()
     return kg
 
 
@@ -203,6 +204,7 @@ def test_query_by_keywords():
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("Machine Learning", "Neural Networks", "r")])
     kg.add_triplets("doc2", [_rel("Deep Learning", "CNN", "r")])
+    kg.build_keyword_indices()
 
     results = kg.query_by_keywords(["learning"], max_docs=10)
     result_dict = dict(results)
@@ -231,6 +233,7 @@ def test_query_by_keywords_in_relations():
     kg.add_triplets("doc1", [
         _rel("X", "Y", "funds", desc="provides financial support", doc_id="doc1"),
     ])
+    kg.build_keyword_indices()
 
     results = kg.query_by_keywords(["financial"], max_docs=10)
     result_dict = dict(results)
@@ -248,6 +251,7 @@ def test_query_by_keywords_stemming():
         _rel("quantum mechanics", "physics", "branch of",
              desc="study of subatomic particles", doc_id="doc1"),
     ])
+    kg.build_keyword_indices()
     # "mechanical" stems to same root as "mechanics"
     results = kg.query_by_keywords(["mechanical"], max_docs=10)
     result_dict = dict(results)
@@ -518,9 +522,10 @@ def test_roundtrip_preserves_edge_relations():
 
 
 def test_keyword_index_populated_on_add():
-    """KG24: _kw_entity_index se puebla al anadir tripletas (DTm-30)."""
+    """KG24: _kw_entity_index se puebla tras build_keyword_indices (DTm-30/69)."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "studied")])
+    kg.build_keyword_indices()
     # Tokens de entity names deben estar en el indice (stemmed)
     assert "albert" in kg._kw_entity_index
     assert "einstein" in kg._kw_entity_index
@@ -533,12 +538,13 @@ def test_keyword_index_populated_on_add():
 
 
 def test_keyword_index_relations():
-    """KG25: _kw_relation_index se puebla con tokens de relacion (DTm-30)."""
+    """KG25: _kw_relation_index se puebla tras build_keyword_indices (DTm-30/69)."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [
         KGRelation(source="Alice", target="MIT", relation="works at",
                    description="employed since 2020", source_doc_id="doc1"),
     ])
+    kg.build_keyword_indices()
     stemmed_works = KnowledgeGraph._tokenize("works")[0]
     stemmed_employed = KnowledgeGraph._tokenize("employed")[0]
     assert stemmed_works in kg._kw_relation_index
@@ -549,14 +555,16 @@ def test_keyword_index_relations():
 
 
 def test_keyword_index_metadata_update():
-    """KG26: Re-indexa tokens al actualizar metadata de entidad (DTm-30)."""
+    """KG26: Descripcion de metadata se indexa tras build_keyword_indices (DTm-30/69)."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("Quantum", "Physics", "branch of")])
-    # Antes de metadata, "mechanics" (stemmed) no esta indexado
-    stemmed_mechanics = KnowledgeGraph._tokenize("mechanics")[0]
-    assert stemmed_mechanics not in kg._kw_entity_index
     # Actualizar con descripcion que contiene "mechanics"
     kg.add_entity_metadata("Quantum", "CONCEPT", "quantum mechanics theory")
+    # Antes de build, indices vacios
+    stemmed_mechanics = KnowledgeGraph._tokenize("mechanics")[0]
+    assert stemmed_mechanics not in kg._kw_entity_index
+    # Despues de build, descripcion indexada
+    kg.build_keyword_indices()
     assert stemmed_mechanics in kg._kw_entity_index
     assert "quantum" in kg._kw_entity_index[stemmed_mechanics]
 
@@ -592,6 +600,7 @@ def test_keyword_query_uses_index():
                    relation="discovered law",
                    description="gravitational force", source_doc_id="doc2"),
     ])
+    kg.build_keyword_indices()
 
     # Keyword "relativity" debe encontrar doc1
     results = kg.query_by_keywords(["relativity"])
