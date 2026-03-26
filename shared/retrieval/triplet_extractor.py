@@ -302,8 +302,10 @@ class TripletExtractor:
 
     # Default max documents per LLM call in batch mode (DTm-67).
     # Used as fallback if batch_docs_per_call=0 is passed. Normally
-    # overridden by KG_BATCH_DOCS_PER_CALL from config (default 10).
-    _DEFAULT_BATCH_DOCS_PER_CALL = 10
+    # overridden by KG_BATCH_DOCS_PER_CALL from config (default 5).
+    # Reduced from 10 to 5: thinking-mode models (e.g. nemotron-3-nano)
+    # exhaust output tokens on <think> tags with large batches.
+    _DEFAULT_BATCH_DOCS_PER_CALL = 5
 
     def _group_docs_for_batch(
         self,
@@ -436,11 +438,13 @@ class TripletExtractor:
 
         # Multi-doc batch call
         prompt = self._build_batch_prompt(non_empty)
-        # DTm-66: scale max_tokens per doc, capped at configured limit.
-        # Default 4096 (was 8192) — thinking-mode models waste tokens on <think>.
+        # DTm-66: scale max_tokens per doc. Thinking-mode models need
+        # headroom for <think> tags, so we allow up to 3x single-doc limit
+        # (e.g. 4096 * 3 = 12288) instead of the old 2x cap that caused
+        # thinking exhaustion with batches of 5+ docs.
         max_tokens = min(
             self._extraction_max_tokens * len(non_empty),
-            self._extraction_max_tokens * 2,  # cap: no more than 2x single-doc
+            self._extraction_max_tokens * 3,
         )
 
         try:
