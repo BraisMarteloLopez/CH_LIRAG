@@ -169,9 +169,6 @@ class TripletExtractor:
         self, raw: str, doc_id: str
     ) -> Tuple[List[KGEntity], List[KGRelation]]:
         """Parsea JSON de extraccion de tripletas con fallback robusto."""
-        entities: List[KGEntity] = []
-        relations: List[KGRelation] = []
-
         try:
             # Limpiar markdown code blocks si los hay
             text = raw.strip()
@@ -196,46 +193,61 @@ class TripletExtractor:
                     f"(respuesta comenzaba con: {text[:80]!r})"
                 )
 
-            rejected = 0
-            for e in data.get("entities", []):
-                if not isinstance(e, dict):
-                    continue
-                name = (e.get("name") or "").strip()
-                if not name or len(name) < MIN_ENTITY_NAME_LEN:
-                    rejected += 1
-                    continue
-                etype = (e.get("type") or "OTHER").upper()
-                if etype not in VALID_ENTITY_TYPES:
-                    etype = "OTHER"
-                desc = (e.get("description") or "")[:MAX_DESCRIPTION_CHARS]
-                entities.append(KGEntity(
-                    name=name,
-                    entity_type=etype,
-                    description=desc,
-                    source_doc_ids={doc_id},
-                ))
-
-            if rejected:
-                logger.debug(
-                    f"Doc {doc_id}: {rejected} entidades rechazadas por validacion"
-                )
-
-            for r in data.get("relations", []):
-                if isinstance(r, dict) and r.get("source") and r.get("target"):
-                    rel_desc = (r.get("description") or "")[:MAX_DESCRIPTION_CHARS]
-                    relations.append(KGRelation(
-                        source=r["source"],
-                        target=r["target"],
-                        relation=r.get("relation", "related to"),
-                        description=rel_desc,
-                        source_doc_id=doc_id,
-                    ))
+            return self._build_entities_relations(data, doc_id)
 
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.debug(
                 f"Error parseando JSON de doc {doc_id}: {e} "
                 f"| raw (first 200 chars): {raw[:200]!r}"
             )
+
+        return [], []
+
+    def _build_entities_relations(
+        self, data: Dict[str, Any], doc_id: str,
+    ) -> Tuple[List[KGEntity], List[KGRelation]]:
+        """Construye entidades y relaciones desde un dict ya parseado.
+
+        Usado tanto por _parse_extraction_json (single-doc, desde string)
+        como por _parse_batch_extraction_json (multi-doc, dict directo).
+        """
+        entities: List[KGEntity] = []
+        relations: List[KGRelation] = []
+
+        rejected = 0
+        for e in data.get("entities", []):
+            if not isinstance(e, dict):
+                continue
+            name = (e.get("name") or "").strip()
+            if not name or len(name) < MIN_ENTITY_NAME_LEN:
+                rejected += 1
+                continue
+            etype = (e.get("type") or "OTHER").upper()
+            if etype not in VALID_ENTITY_TYPES:
+                etype = "OTHER"
+            desc = (e.get("description") or "")[:MAX_DESCRIPTION_CHARS]
+            entities.append(KGEntity(
+                name=name,
+                entity_type=etype,
+                description=desc,
+                source_doc_ids={doc_id},
+            ))
+
+        if rejected:
+            logger.debug(
+                f"Doc {doc_id}: {rejected} entidades rechazadas por validacion"
+            )
+
+        for r in data.get("relations", []):
+            if isinstance(r, dict) and r.get("source") and r.get("target"):
+                rel_desc = (r.get("description") or "")[:MAX_DESCRIPTION_CHARS]
+                relations.append(KGRelation(
+                    source=r["source"],
+                    target=r["target"],
+                    relation=r.get("relation", "related to"),
+                    description=rel_desc,
+                    source_doc_id=doc_id,
+                ))
 
         return entities, relations
 
@@ -379,9 +391,8 @@ class TripletExtractor:
                 doc_id = entry.get("doc_id", "")
                 if not doc_id:
                     continue
-                # Reusar el parser single-doc con JSON del entry
-                entry_json = json.dumps(entry)
-                entities, relations = self._parse_extraction_json(entry_json, doc_id)
+                # DTm-68: pass dict directly, no re-serialization
+                entities, relations = self._build_entities_relations(entry, doc_id)
                 results[doc_id] = (entities, relations)
 
             return results
