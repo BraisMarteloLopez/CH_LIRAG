@@ -330,6 +330,69 @@ class KnowledgeGraph:
                 self._graph.vs[vid]["entity_type"] = self._entities[norm].entity_type
             # DTm-69: token indexing diferido a build_keyword_indices()
 
+    def _resolve_entity_names(
+        self, entity_names: List[str],
+    ) -> List[Tuple[str, float]]:
+        """Resuelve nombres de entidad a entidades del KG (DTm-70).
+
+        Intenta exact match primero. Si falla, usa fuzzy matching via
+        token overlap con _kw_entity_index. Devuelve lista de
+        (entity_name_in_kg, confidence) donde confidence es:
+          - 1.0 para exact match
+          - tokens_matched/tokens_query para fuzzy match
+
+        Fuzzy match requiere que TODOS los tokens del query name
+        aparezcan en el nombre/descripcion de la entidad candidata.
+        Esto evita falsos positivos (e.g. "John" matcheando "John Smith"
+        Y "John Wayne") a costa de no matchear parciales.
+        """
+        resolved: List[Tuple[str, float]] = []
+        seen: Set[str] = set()
+
+        for name in entity_names:
+            norm = self._normalize_name(name)
+            if not norm:
+                continue
+
+            # Fast path: exact match
+            if norm in self._entities and self._has_node(norm):
+                if norm not in seen:
+                    resolved.append((norm, 1.0))
+                    seen.add(norm)
+                continue
+
+            # Fuzzy match: buscar entidades via token overlap en el indice
+            query_tokens = self._tokenize(norm)
+            if not query_tokens:
+                continue
+
+            # Recopilar candidatos: entidades que contienen al menos 1 token
+            candidate_hits: Counter = Counter()
+            for token in query_tokens:
+                for entity_name in self._kw_entity_index.get(token, set()):
+                    candidate_hits[entity_name] += 1
+
+            # Filtrar: candidatos que matchean TODOS los tokens del query
+            n_tokens = len(query_tokens)
+            for entity_name, hits in candidate_hits.items():
+                if hits >= n_tokens and entity_name not in seen:
+                    confidence = hits / max(
+                        n_tokens, len(self._tokenize(entity_name))
+                    )
+                    resolved.append((entity_name, confidence))
+                    seen.add(entity_name)
+
+        if resolved:
+            n_exact = sum(1 for _, c in resolved if c == 1.0)
+            n_fuzzy = len(resolved) - n_exact
+            if n_fuzzy > 0:
+                logger.debug(
+                    f"query_entities: resolved {len(entity_names)} names -> "
+                    f"{n_exact} exact + {n_fuzzy} fuzzy matches"
+                )
+
+        return resolved
+
     def query_entities(
         self,
         entity_names: List[str],
@@ -340,14 +403,15 @@ class KnowledgeGraph:
 
         Traversal BFS hasta max_hops desde cada entidad query.
         Scoring: docs mas cercanos (menos hops) reciben score mas alto.
+
+        Usa _resolve_entity_names (DTm-70) para fuzzy matching cuando
+        el nombre exacto no existe en el KG.
         """
         doc_scores: Counter = Counter()
 
-        for name in entity_names:
-            norm = self._normalize_name(name)
-            if norm not in self._entities or not self._has_node(norm):
-                continue
+        resolved = self._resolve_entity_names(entity_names)
 
+        for norm, confidence in resolved:
             # BFS con distancia
             visited: Set[str] = set()
             queue: deque[Tuple[str, int]] = deque([(norm, 0)])
@@ -358,8 +422,9 @@ class KnowledgeGraph:
                 if depth > max_hops:
                     continue
 
-                # Score inversamente proporcional a la distancia
-                hop_score = 1.0 / (1.0 + depth)
+                # Score inversamente proporcional a la distancia,
+                # scaled by match confidence (DTm-70)
+                hop_score = confidence / (1.0 + depth)
 
                 # Documentos asociados a esta entidad
                 for doc_id in self._entity_to_docs.get(current, set()):

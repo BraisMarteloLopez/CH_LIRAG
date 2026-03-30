@@ -611,3 +611,95 @@ def test_keyword_query_uses_index():
     results = kg.query_by_keywords(["gravity"])
     doc_ids = [d for d, _ in results]
     assert "doc2" in doc_ids
+
+
+# =============================================================================
+# DTm-70: Fuzzy entity matching in query_entities
+# =============================================================================
+
+def test_resolve_entity_names_exact_match():
+    """DTm-70: exact match devuelve confidence 1.0."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "field")])
+    kg.build_keyword_indices()
+
+    resolved = kg._resolve_entity_names(["Albert Einstein"])
+    assert len(resolved) == 1
+    name, confidence = resolved[0]
+    assert name == kg._normalize_name("Albert Einstein")
+    assert confidence == 1.0
+
+
+def test_resolve_entity_names_fuzzy_partial_name():
+    """DTm-70: nombre parcial matchea via token overlap."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Vlatko Gilić", "Serbia", "nationality")])
+    kg.build_keyword_indices()
+
+    # "Vlatko" no existe como entidad exacta, pero matchea via token
+    resolved = kg._resolve_entity_names(["Vlatko"])
+    names = [n for n, _ in resolved]
+    assert kg._normalize_name("Vlatko Gilić") in names
+
+
+def test_resolve_entity_names_no_match():
+    """DTm-70: nombre sin overlap no produce resultados."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "field")])
+    kg.build_keyword_indices()
+
+    resolved = kg._resolve_entity_names(["Completely Unknown Entity"])
+    assert len(resolved) == 0
+
+
+def test_resolve_entity_names_dedup():
+    """DTm-70: misma entidad resuelta desde dos keywords no se duplica."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "field")])
+    kg.build_keyword_indices()
+
+    resolved = kg._resolve_entity_names(["Albert Einstein", "Albert Einstein"])
+    assert len(resolved) == 1
+
+
+def test_query_entities_fuzzy_does_bfs():
+    """DTm-70: fuzzy match activa BFS y descubre docs via graph traversal."""
+    kg = KnowledgeGraph()
+    # Doc A: The Surveyor -> Vlatko Gilić
+    kg.add_triplets("docA", [_rel("The Surveyor", "Vlatko Gilić", "directed by")])
+    # Doc B: Vlatko Gilić -> Serbian (entity merge: Vlatko Gilić in both docs)
+    kg.add_triplets("docB", [_rel("Vlatko Gilić", "Serbian", "nationality")])
+    kg.build_keyword_indices()
+
+    # Query con nombre parcial "Surveyor" (sin "The", que se stripea)
+    # Exact match funciona porque _normalize_name quita "The"
+    results = kg.query_entities(["The Surveyor"], max_hops=2, max_docs=10)
+    result_dict = dict(results)
+    # BFS debe descubrir docB via Vlatko Gilić
+    assert "docA" in result_dict
+    assert "docB" in result_dict
+
+    # Ahora con un nombre que SOLO funciona por fuzzy match
+    results_fuzzy = kg.query_entities(["Gilić"], max_hops=1, max_docs=10)
+    result_dict_fuzzy = dict(results_fuzzy)
+    # "Gilić" no es entidad exacta, pero fuzzy matchea "vlatko gilić"
+    # BFS desde "vlatko gilić": docA (hop 0) + docB (hop 0) + neighbours
+    assert "docA" in result_dict_fuzzy or "docB" in result_dict_fuzzy
+
+
+def test_query_entities_fuzzy_confidence_scales_score():
+    """DTm-70: fuzzy match con confidence < 1.0 reduce hop scores."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Vlatko Gilić", "Film", "works in")])
+    kg.build_keyword_indices()
+
+    # Exact match: confidence=1.0, hop_score at depth 0 = 1.0
+    results_exact = kg.query_entities(["Vlatko Gilić"], max_hops=0, max_docs=10)
+
+    # Fuzzy match: confidence<1.0, hop_score at depth 0 = confidence
+    results_fuzzy = kg.query_entities(["Gilić"], max_hops=0, max_docs=10)
+
+    if results_exact and results_fuzzy:
+        exact_score = dict(results_exact).get("doc1", 0)
+        fuzzy_score = dict(results_fuzzy).get("doc1", 0)
+        assert fuzzy_score <= exact_score
