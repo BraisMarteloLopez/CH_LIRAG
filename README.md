@@ -344,6 +344,47 @@ Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`
 
 ## Deuda tecnica
 
+### Deuda arquitectonica mayor (vs LightRAG original)
+
+Analisis comparativo con [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) (EMNLP 2025).
+CH_LIRAG se inspira en el paper pero diverge en decisiones arquitectonicas clave que
+explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro).
+
+| ID | Severidad | Divergencia vs Original | Impacto en CH_LIRAG | Estado |
+|---|---|---|---|---|
+| DAM-1 | **Critica** | **Sin entity VDB**: el original indexa nombre+descripcion de cada entidad como embeddings en un vector DB (`entities_vdb`) y usa similarity search para resolver entidades en queries. CH_LIRAG usa matching lexico (exact + token overlap con stemming). Esto causa fallo sistematico cuando query y entidad difieren lexicamente ("Obama" vs "Barack Obama", "44th president" vs "Obama"). | Causa raiz de DTm-70, DTm-73. Explica fragmentacion (473 componentes/500 docs) y fallo de bridging. | Abierto |
+| DAM-2 | **Critica** | **Sin relationship VDB**: el original indexa keywords+descripcion de cada relacion como embeddings en un segundo vector DB (`relationships_vdb`). El high-level retrieval busca relaciones por semantic similarity. CH_LIRAG usa token matching contra un indice invertido — mucho menos flexible. | Causa raiz de DTm-71, DTm-74. El high-level path esta castrado sin semantic search. | Abierto |
+| DAM-3 | **Alta** | **Grafo como suplemento vs retriever primario**: en el original, los modos local/global/hybrid usan el grafo como mecanismo principal de retrieval (las entidades/relaciones apuntan a source chunks). En CH_LIRAG, vector search es siempre primario y el grafo intenta sumar via RRF — invirtiendo la arquitectura. | Causa raiz de DTm-62. El grafo inyecta candidatos ruidosos que degradan el ranking vectorial en vez de reemplazarlo con un ranking mejor. | Abierto |
+| DAM-4 | **Alta** | **Sin merging de descripciones via LLM**: el original implementa `_merge_nodes_then_upsert()` — cuando la misma entidad aparece en N docs, un LLM sintetiza una descripcion unificada (map-reduce). CH_LIRAG sobrescribe con la ultima descripcion vista. | Entidades tienen descripciones pobres (parciales, de un solo doc). Embedding de entity VDB (si se implementa DAM-1) seria menos efectivo sin descripciones ricas. | Abierto |
+| DAM-5 | **Media** | **Sin acumulacion de edge weights**: el original suma pesos en relaciones duplicadas (15 docs mencionan "Obama → president_of → USA" = weight 15) y usa weight como senal de importancia para scoring. CH_LIRAG deduplica pero no acumula ni usa weights. | Scoring no distingue relaciones frecuentes (importantes) de raras (ruido). Contribuye a DTm-72. | Abierto |
+| DAM-6 | **Media** | **Sin gleaning (re-extraccion)**: el original soporta N pasadas de extraccion con prompt de continuacion para capturar entidades perdidas en la primera pasada. CH_LIRAG hace una sola pasada. | Entidades menos frecuentes o mencionadas indirectamente se pierden. Contribuye a fragmentacion (DTm-73). | Abierto |
+| DAM-7 | **Media** | **BFS profundo (2 hops) vs 1-hop con matching semantico**: el original usa solo 1-hop pero compensa con entity/relationship VDBs. CH_LIRAG usa BFS hasta 2 hops con matching lexico — mas profundidad con peor precision introduce mas ruido. | Contribuye a DTm-62 (inundacion de candidatos irrelevantes). Contraintuitivamente, reducir a 1-hop podria mejorar resultados si se implementa DAM-1. | Abierto |
+| DAM-8 | **Baja** | **Contexto raw vs estructurado para generacion**: el original pasa tablas CSV de entidades, relaciones y source chunks al LLM. CH_LIRAG pasa texto plano concatenado de los docs recuperados. | Menor impacto en retrieval pero afecta calidad de generacion. El LLM recibe menos estructura para razonar. | Abierto |
+
+**Cadena causal:**
+
+```
+DAM-1 (sin entity VDB) + DAM-2 (sin relationship VDB)
+    → Matching lexico falla en variaciones (DTm-70)
+    → Grafo fragmentado en islas (DTm-73, 473 componentes)
+    → BFS no puede cruzar islas
+    → Graph candidates = ruido
+
+DAM-3 (grafo como suplemento)
+    → Ruido del grafo se fusiona con vector search via RRF
+    → Candidatos irrelevantes desplazan gold docs en ranking
+    → MRR baja de ~0.86 a 0.52 (DTm-62)
+    → Reranker compensa (+29pp recall) pero enmascara el problema
+
+DAM-4 (sin merging) + DAM-5 (sin edge weights) + DAM-6 (sin gleaning)
+    → Entidades con descripciones pobres, relaciones sin pesos, extraccion incompleta
+    → Grafo de menor calidad incluso si se resuelve DAM-1/DAM-2
+```
+
+**Priorizacion:** DAM-1 y DAM-2 son los cambios de mayor impacto. Requieren 2 colecciones adicionales
+en ChromaDB (o vector store equivalente) para entidades y relaciones. El resto son mejoras incrementales
+que aportan valor solo si la base semantica (VDBs) esta resuelta.
+
 ### Registro completo
 
 | ID | Severidad | Descripcion | Ubicacion | Estado |
@@ -368,7 +409,7 @@ Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`
 | DTm-70 | **Alta** | **Entity matching exacto en `query_entities` impide bridging**: BFS solo arranca si el keyword del LLM matchea exactamente el nombre normalizado de la entidad. Si el LLM extrae "Vlatko" pero la entidad es "vlatko gilić", el BFS no arranca y el bridging se pierde. Fix: fuzzy matching via token overlap usando `_kw_entity_index` existente como fallback cuando el exact match falla. | `lightrag/knowledge_graph.py` | Abierto |
 | DTm-71 | **Alta** | **`query_by_keywords` no hace graph traversal**: encuentra entidades por keyword pero solo devuelve sus docs directos (`source_doc_ids`), sin recorrer el grafo via BFS. El bridging multi-hop solo funciona en `query_entities` (low-level), no en high-level. Fix: BFS limitado (1 hop) desde entidades matcheadas por keywords. | `lightrag/knowledge_graph.py` | Abierto |
 | DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Una relacion `directed_by` pesa igual que `same_year_as`. Para queries como "nationality of the director", la relacion `directed_by` deberia puntuar mas. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `lightrag/knowledge_graph.py` | Abierto |
-| DTm-73 | **Media** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-73 | **Alta** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `lightrag/knowledge_graph.py` | Abierto |
 | DTm-74 | Baja | **Scoring flat en `query_by_keywords`**: entidad match siempre puntua 1.0, relacion match siempre 0.5, sin distinguir proporcion de tokens matcheados. Una entidad que matchea 3/3 keywords deberia puntuar mas que 1/3. Fix: scoring proporcional a token overlap (TF-like). | `lightrag/knowledge_graph.py` | Abierto |
 
 ### Deuda resuelta (referencia)
