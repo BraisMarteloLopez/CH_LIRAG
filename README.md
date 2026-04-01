@@ -70,6 +70,13 @@ Durante indexacion, spaCy NER extrae entidades, construye indice invertido in-me
 
 Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM, sin BM25 — el grafo reemplaza la funcion de bridging lexical.
 
+> **Limitaciones conocidas (ver DAM-1 a DAM-8 en deuda tecnica):**
+> Esta implementacion diverge del original en decisiones arquitectonicas clave.
+> El original usa **embedding similarity** (vector DBs) para resolver entidades y
+> relaciones; CH_LIRAG usa **string matching**. Resultado: el grafo actual degrada
+> el ranking (MRR ~0.52 vs ~0.86 con vector puro). El plan de Fases C-D aborda
+> la alineacion arquitectonica.
+
 **Indexacion:**
 1. Extrae tripletas (entidad, relacion, entidad) de cada documento via LLM (`TripletExtractor`)
 2. Construye un `KnowledgeGraph` in-memory (igraph) con entidades, relaciones e indices invertidos
@@ -79,8 +86,10 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 1. Vector search (ChromaDB) → top_k candidatos con cosine similarity
 2. Query analysis via LLM → extrae keywords de bajo nivel (entidades especificas) y alto nivel (temas abstractos)
 3. Graph traversal dual-level:
-   - **Low-level**: BFS desde entidades de la query, scoring inversamente proporcional a hops (`1/(1+depth)`)
-   - **High-level**: token matching en nombres de entidad y descripciones de relaciones (indice invertido por token, DTm-30)
+   - **Low-level**: BFS desde entidades de la query, scoring inversamente proporcional a hops (`1/(1+depth)`).
+     *Limitacion actual:* entity matching es lexico (exact + token overlap). Falla cuando query y entidad difieren lexicamente (DTm-70). El original usa embedding similarity. Fix planificado en Fase C.
+   - **High-level**: token matching en nombres de entidad y descripciones de relaciones (indice invertido por token, DTm-30).
+     *Limitacion actual:* devuelve docs directos sin graph traversal — no hace BFS desde entidades matcheadas, limitando bridging multi-hop (DTm-71). El original usa relationship VDB con semantic search. Fix planificado en Fase D.
 4. Fusion via Reciprocal Rank Fusion (RRF) con pesos configurables (`KG_FUSION_METHOD=rrf`, default). Fusion lineal disponible como alternativa (`KG_FUSION_METHOD=linear`).
 
 **Fallback:** Sin `igraph` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
@@ -318,7 +327,42 @@ Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`
 
 </details>
 
-## Resultados comparativos LIGHT_RAG
+## Resultados comparativos
+
+### Run 3: LIGHT_RAG post-refactor — 29 queries, 500 docs, DEV_MODE
+
+| Metrica | Valor |
+|---|---|
+| Hit@5 | 0.793 |
+| MRR | 0.518 |
+| Recall@5 | 0.690 |
+| Recall@10 | 0.931 |
+| Recall@20 | 0.983 |
+| Gen Recall | 0.983 |
+| Gen Hit | 1.000 |
+| F1 | 0.776 |
+| EM | 0.586 |
+| KG entidades | 3265 |
+| KG relaciones | 2825 |
+| KG componentes | 473 |
+| KG build time | 850s (94% del run) |
+| Reranker delta | +29.3pp (Recall@5 → Gen Recall) |
+
+Config: `KG_GRAPH_WEIGHT=0.4, KG_VECTOR_WEIGHT=0.6, KG_FUSION_METHOD=rrf, RERANKER=ON`.
+Embedding: llama-embed-nemotron-8b. LLM: nemotron-3-nano.
+
+### Baseline pendiente: SIMPLE_VECTOR — mismas 29 queries, 500 docs
+
+| Metrica | SIMPLE_VECTOR | LIGHT_RAG (Run 3) | Delta |
+|---|---|---|---|
+| Hit@5 | *pendiente* | 0.793 | — |
+| MRR | *pendiente* | 0.518 | — |
+| Recall@5 | *pendiente* | 0.690 | — |
+| Gen Recall | *pendiente* | 0.983 | — |
+| F1 | *pendiente* | 0.776 | — |
+
+> Para completar esta tabla, ejecutar con `RETRIEVAL_STRATEGY=SIMPLE_VECTOR`
+> manteniendo `DEV_MODE=true, DEV_QUERIES=29, DEV_CORPUS_SIZE=500, CORPUS_SHUFFLE_SEED=42, RERANKER_ENABLED=true`.
 
 ### Run 1 (KG vacio) vs Run 2 (KG funcional) — 125 queries, mismo seed
 
