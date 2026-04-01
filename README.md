@@ -18,15 +18,17 @@ CH_LIRAG/
 │   ├── structured_logging.py        # Logging JSONL estructurado
 │   └── retrieval/
 │       ├── __init__.py              # Factory get_retriever()
-│       ├── core.py                  # BaseRetriever, SimpleVectorRetriever, RetrievalConfig
-│       ├── hybrid_retriever.py      # BM25 + Vector + RRF
-│       ├── hybrid_plus_retriever.py # BM25+Vector+RRF + NER cross-linking
-│       ├── lightrag_retriever.py    # Vector + Knowledge Graph dual-level (LIGHT_RAG)
-│       ├── knowledge_graph.py       # KG in-memory (igraph): entidades, relaciones, traversal
-│       ├── triplet_extractor.py     # Extraccion tripletas y query keywords via LLM
-│       ├── entity_linker.py         # NER (spaCy) + indice invertido + cross-refs
+│       ├── core.py                  # BaseRetriever, SimpleVectorRetriever, RetrievalConfig, RRF
 │       ├── reranker.py              # CrossEncoderReranker (NVIDIARerank)
-│       └── tantivy_index.py         # BM25 via Tantivy (Rust, fallback rank-bm25)
+│       ├── hybrid/                  # Estrategia HYBRID_PLUS
+│       │   ├── retriever.py         # BM25 + Vector + RRF (HybridRetriever)
+│       │   ├── plus_retriever.py    # BM25+Vector+RRF + NER cross-linking
+│       │   ├── entity_linker.py     # NER (spaCy) + indice invertido + cross-refs
+│       │   └── tantivy_index.py     # BM25 via Tantivy (Rust, fallback rank-bm25)
+│       └── lightrag/                # Estrategia LIGHT_RAG
+│           ├── retriever.py         # Vector + Knowledge Graph dual-level
+│           ├── knowledge_graph.py   # KG in-memory (igraph): entidades, relaciones, traversal
+│           └── triplet_extractor.py # Extraccion tripletas y query keywords via LLM
 │
 ├── sandbox_mteb/                    # Evaluacion MTEB/BeIR
 │   ├── config.py                    # MTEBConfig: .env -> dataclass validada
@@ -346,28 +348,28 @@ Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`
 
 | ID | Severidad | Descripcion | Ubicacion | Estado |
 |---|---|---|---|---|
-| DTm-66 | **Alta** | **`max_tokens=8192` en extraccion batch causa generacion masiva en thinking mode**: nemotron-3-nano genera ~6000 tokens de `<think>` + ~2000 de JSON por call. A ~30 tok/s, cada call tarda ~267s. Con 3,300 calls y 32 concurrencia = ~103 rondas × 267s = **7h 38min** (98% del tiempo de KG build). Fix: reducir a 4096 (configurable via `KG_EXTRACTION_MAX_TOKENS`). | `triplet_extractor.py:425` | Abierto |
-| DTm-67 | **Alta** | **Batch de 5 docs/call es conservador**: con 3000 chars/doc (~750 tokens) y context window 8K+, caben 10 docs/call. Reducir calls de 3,300 a 1,650 (50% menos). Hacer configurable via `KG_BATCH_DOCS_PER_CALL`. | `triplet_extractor.py:290` | Abierto |
-| DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. | `lightrag_retriever.py` fusion | Abierto |
-| DTm-63 | **Alta** | Entity cap 50K insuficiente: 34.5% entidades descartadas. Orden de indexacion introduce sesgo arbitrario por FIFO. | `knowledge_graph.py:247-252` | Abierto |
-| DTm-68 | **Media** | **Re-serializacion JSON innecesaria en batch parse**: `_parse_batch_extraction_json` hace `json.dumps(entry)` para pasarlo a `_parse_extraction_json(raw_str)`. Se puede refactorizar para aceptar dict directamente, eliminando serialize+deserialize por doc. | `triplet_extractor.py:379` | Abierto |
-| DTm-69 | **Media** | **Token indexing secuencial durante graph build**: `_index_entity_tokens()` y `_index_relation_tokens()` ejecutan stemming por cada tripleta durante `add_triplets()`. Con 80K+ iteraciones es CPU-bound. Se podria diferir a una fase post-build (`build_keyword_indices()`) para separar I/O-bound (LLM) de CPU-bound (stemming). | `knowledge_graph.py:267-293` | Abierto |
-| DTm-64 | **Media** | Normalizacion [0,1] incomparable entre canales: distribuciones vector (concentrada) vs graph (uniforme) generan scores engañosos. RRF mitiga parcialmente. | `lightrag_retriever.py:398-430` | Abierto |
-| DTm-65 | **Media** | Thinking-mode exhaustion: ~17% queries fallan en 1er intento. `KG_KEYWORD_MAX_TOKENS` configurable (default 1024). Puede requerir 2048 con modelos reasoning-heavy. | `triplet_extractor.py:608-612` | Mitigado |
-| DTm-55 | **Media** | Stats extractor se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. | `lightrag_retriever.py:150-162` | Abierto |
-| DTm-56 | **Media** | Fingerprint collision con corpus vacio: `sha256("")[:16]` es determinista pero edge case si dos configs distintas producen mismo hash. | `lightrag_retriever.py:229-247` | Abierto |
+| DTm-66 | **Alta** | **`max_tokens=8192` en extraccion batch causa generacion masiva en thinking mode**: nemotron-3-nano genera ~6000 tokens de `<think>` + ~2000 de JSON por call. A ~30 tok/s, cada call tarda ~267s. Con 3,300 calls y 32 concurrencia = ~103 rondas × 267s = **7h 38min** (98% del tiempo de KG build). Fix: reducir a 4096 (configurable via `KG_EXTRACTION_MAX_TOKENS`). | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-67 | **Alta** | **Batch de 5 docs/call es conservador**: con 3000 chars/doc (~750 tokens) y context window 8K+, caben 10 docs/call. Reducir calls de 3,300 a 1,650 (50% menos). Hacer configurable via `KG_BATCH_DOCS_PER_CALL`. | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. | `lightrag/retriever.py` fusion | Abierto |
+| DTm-63 | **Alta** | Entity cap 50K insuficiente: 34.5% entidades descartadas. Orden de indexacion introduce sesgo arbitrario por FIFO. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-68 | **Media** | **Re-serializacion JSON innecesaria en batch parse**: `_parse_batch_extraction_json` hace `json.dumps(entry)` para pasarlo a `_parse_extraction_json(raw_str)`. Se puede refactorizar para aceptar dict directamente, eliminando serialize+deserialize por doc. | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-69 | **Media** | **Token indexing secuencial durante graph build**: `_index_entity_tokens()` y `_index_relation_tokens()` ejecutan stemming por cada tripleta durante `add_triplets()`. Con 80K+ iteraciones es CPU-bound. Se podria diferir a una fase post-build (`build_keyword_indices()`) para separar I/O-bound (LLM) de CPU-bound (stemming). | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-64 | **Media** | Normalizacion [0,1] incomparable entre canales: distribuciones vector (concentrada) vs graph (uniforme) generan scores engañosos. RRF mitiga parcialmente. | `lightrag/retriever.py` | Abierto |
+| DTm-65 | **Media** | Thinking-mode exhaustion: ~17% queries fallan en 1er intento. `KG_KEYWORD_MAX_TOKENS` configurable (default 1024). Puede requerir 2048 con modelos reasoning-heavy. | `lightrag/triplet_extractor.py` | Mitigado |
+| DTm-55 | **Media** | Stats extractor se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. | `lightrag/retriever.py` | Abierto |
+| DTm-56 | **Media** | Fingerprint collision con corpus vacio: `sha256("")[:16]` es determinista pero edge case si dos configs distintas producen mismo hash. | `lightrag/retriever.py` | Abierto |
 | DTm-12 | Baja | Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. | `shared/metrics.py` | Aceptado |
 | DTm-13 | Baja | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. | `shared/vector_store.py` | Aceptado |
 | DTm-24 | Baja | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. | `sandbox_mteb/config.py` | Aceptado |
-| DTm-57 | Baja | Normalizacion entidades agresiva: pierde apostrofes/guiones. Colisiones raras. | `knowledge_graph.py:133-144` | Abierto |
-| DTm-58 | Baja | No dedup queries identicas en batch keyword extraction: LLM calls duplicadas. | `triplet_extractor.py:624-668` | Abierto |
-| DTm-60 | Baja | Stats extractor acumulan entre llamadas. `reset_stats()` nunca se llama auto. | `triplet_extractor.py:127-146` | Abierto |
-| DTm-61 | Baja | No validacion tamano keywords del LLM: respuestas patologicas pasan sin limite. | `triplet_extractor.py:565-592` | Abierto |
-| DTm-70 | **Alta** | **Entity matching exacto en `query_entities` impide bridging**: BFS solo arranca si el keyword del LLM matchea exactamente el nombre normalizado de la entidad. Si el LLM extrae "Vlatko" pero la entidad es "vlatko gilić", el BFS no arranca y el bridging se pierde. Fix: fuzzy matching via token overlap usando `_kw_entity_index` existente como fallback cuando el exact match falla. | `knowledge_graph.py:346-349` | Abierto |
-| DTm-71 | **Alta** | **`query_by_keywords` no hace graph traversal**: encuentra entidades por keyword pero solo devuelve sus docs directos (`source_doc_ids`), sin recorrer el grafo via BFS. El bridging multi-hop solo funciona en `query_entities` (low-level), no en high-level. Fix: BFS limitado (1 hop) desde entidades matcheadas por keywords. | `knowledge_graph.py:402-407` | Abierto |
-| DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Una relacion `directed_by` pesa igual que `same_year_as`. Para queries como "nationality of the director", la relacion `directed_by` deberia puntuar mas. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `knowledge_graph.py:362` | Abierto |
-| DTm-73 | **Media** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `knowledge_graph.py` | Abierto |
-| DTm-74 | Baja | **Scoring flat en `query_by_keywords`**: entidad match siempre puntua 1.0, relacion match siempre 0.5, sin distinguir proporcion de tokens matcheados. Una entidad que matchea 3/3 keywords deberia puntuar mas que 1/3. Fix: scoring proporcional a token overlap (TF-like). | `knowledge_graph.py:406-418` | Abierto |
+| DTm-57 | Baja | Normalizacion entidades agresiva: pierde apostrofes/guiones. Colisiones raras. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-58 | Baja | No dedup queries identicas en batch keyword extraction: LLM calls duplicadas. | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-60 | Baja | Stats extractor acumulan entre llamadas. `reset_stats()` nunca se llama auto. | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-61 | Baja | No validacion tamano keywords del LLM: respuestas patologicas pasan sin limite. | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-70 | **Alta** | **Entity matching exacto en `query_entities` impide bridging**: BFS solo arranca si el keyword del LLM matchea exactamente el nombre normalizado de la entidad. Si el LLM extrae "Vlatko" pero la entidad es "vlatko gilić", el BFS no arranca y el bridging se pierde. Fix: fuzzy matching via token overlap usando `_kw_entity_index` existente como fallback cuando el exact match falla. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-71 | **Alta** | **`query_by_keywords` no hace graph traversal**: encuentra entidades por keyword pero solo devuelve sus docs directos (`source_doc_ids`), sin recorrer el grafo via BFS. El bridging multi-hop solo funciona en `query_entities` (low-level), no en high-level. Fix: BFS limitado (1 hop) desde entidades matcheadas por keywords. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Una relacion `directed_by` pesa igual que `same_year_as`. Para queries como "nationality of the director", la relacion `directed_by` deberia puntuar mas. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-73 | **Media** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-74 | Baja | **Scoring flat en `query_by_keywords`**: entidad match siempre puntua 1.0, relacion match siempre 0.5, sin distinguir proporcion de tokens matcheados. Una entidad que matchea 3/3 keywords deberia puntuar mas que 1/3. Fix: scoring proporcional a token overlap (TF-like). | `lightrag/knowledge_graph.py` | Abierto |
 
 ### Deuda resuelta (referencia)
 
