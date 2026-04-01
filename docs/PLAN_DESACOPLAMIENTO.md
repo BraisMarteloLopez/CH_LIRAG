@@ -284,3 +284,88 @@ código hasta aprobación explícita.** Las opciones son:
 
 La recomendación técnica es **opción A**, ejecutando fase a fase con validación
 entre cada una.
+
+---
+
+## 11. Observaciones adicionales del análisis
+
+Puntos que van más allá del refactor de carpetas pero conviene dejar
+documentados porque afectan a decisiones futuras:
+
+### 11.1 Acoplamiento cruzado: RRF entre estrategias
+
+`lightrag_retriever.py` importa `reciprocal_rank_fusion` directamente desde
+`hybrid_retriever.py`. Esto crea una **dependencia lateral** entre dos
+estrategias que deberían ser independientes.
+
+**Acción durante Fase 2**: Mover `reciprocal_rank_fusion()` a `core.py`
+(donde pertenece como utilidad compartida). Es un cambio de ~15 líneas que
+elimina la dependencia cruzada entre subpaquetes. Sin esto, `lightrag/`
+seguiría importando desde `hybrid/`, anulando parte del beneficio del split.
+
+### 11.2 Vigilancia sobre `types.py`
+
+Con 612 LOC hoy no es un problema. Pero es el fichero con **mayor riesgo de
+crecimiento descontrolado** porque cada nueva feature tiende a añadir tipos ahí.
+
+**Umbral de alerta**: Si supera las ~800 LOC, considerar una separación
+por dominio (`types_retrieval.py`, `types_evaluation.py`). No antes — partirlo
+hoy crearía 5+ ficheros pequeños con imports cruzados que empeorarían la
+situación.
+
+### 11.3 El evaluator como cuello de botella
+
+`sandbox_mteb/evaluator.py` tiene **15 dependencias salientes** — es el módulo
+más acoplado del proyecto. Esto es normal para un orquestador, pero si crece
+más (nuevas estrategias, nuevos tipos de evaluación, más métricas), valdría la
+pena considerar un patrón de **pipeline builder** que componga los pasos
+declarativamente en vez de importar todo directamente.
+
+No es urgente hoy. Pero si el evaluator supera las ~800 LOC o las 20
+dependencias, es señal de que necesita descomposición.
+
+### 11.4 CI/CD: la ausencia más relevante
+
+**Este es el hallazgo más importante del análisis de complejidad**, por encima
+de la estructura de carpetas.
+
+El proyecto tiene buena cobertura de tests (~7,255 LOC, ratio >1:1) y tipado
+estricto con mypy. Pero todo se ejecuta manualmente. No hay GitHub Actions,
+ni pipeline de CI, ni checks automáticos en PRs.
+
+Un refactor como el propuesto aquí es seguro *precisamente porque hay tests*.
+Pero esos tests solo sirven si alguien los ejecuta. Un pipeline básico:
+
+```yaml
+# .github/workflows/ci.yml (ejemplo mínimo)
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+      - run: pip install -r requirements.txt
+      - run: pytest -m "not integration" --tb=short
+      - run: mypy shared/types.py shared/metrics.py shared/retrieval/core.py
+```
+
+**Si hay que priorizar entre este refactor y añadir CI/CD, CI/CD gana.**
+Un pipeline de 20 líneas aporta más robustez operativa que cualquier
+reorganización de ficheros.
+
+### 11.5 Naturaleza del cambio
+
+Este refactor es **cosmético-organizativo, no funcional**. La robustez
+técnica del proyecto ya es sólida:
+
+- 0 dependencias circulares
+- Interfaces basadas en protocols
+- Degradación graceful ante dependencias ausentes
+- Ratio test/código >1:1
+- Tipado estricto en módulos core
+
+El desacoplamiento propuesto **mejora la mantenibilidad y la claridad**,
+no la corrección. El código ya funciona bien — se trata de que sea más
+fácil de navegar, entender y extender para quien venga después.
