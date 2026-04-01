@@ -9,7 +9,7 @@ spaCy NO requerido: EntityExtractor se mockea inyectando entidades manuales.
 
 from unittest.mock import patch, MagicMock
 
-from shared.retrieval.entity_linker import (
+from shared.retrieval.hybrid.entity_linker import (
     normalize_entity,
     EntityExtractor,
     EntityLinker,
@@ -103,8 +103,8 @@ def _make_mock_extractor(entities_per_text):
 
     mock_nlp.side_effect = nlp_side_effect
 
-    with patch("shared.retrieval.entity_linker.HAS_SPACY", True), \
-         patch("shared.retrieval.entity_linker.spacy") as mock_spacy:
+    with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", True), \
+         patch("shared.retrieval.hybrid.entity_linker.spacy") as mock_spacy:
         mock_spacy.load.return_value = mock_nlp
         extractor = EntityExtractor()
     extractor._nlp = mock_nlp
@@ -340,7 +340,7 @@ class TestComputeCrossRefs:
         ]
 
         with patch.object(EntityLinker, "compute_cross_refs", wraps=linker.compute_cross_refs):
-            with patch("shared.retrieval.entity_linker.EntityExtractor", return_value=mock_extractor_instance):
+            with patch("shared.retrieval.hybrid.entity_linker.EntityExtractor", return_value=mock_extractor_instance):
                 result = linker.compute_cross_refs(documents)
 
         assert "d1" in result

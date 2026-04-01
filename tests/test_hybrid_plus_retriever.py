@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.retrieval.core import RetrievalConfig, RetrievalResult, RetrievalStrategy
-from shared.retrieval.hybrid_plus_retriever import HybridPlusRetriever
+from shared.retrieval.hybrid.plus_retriever import HybridPlusRetriever
 
 
 # =========================================================================
@@ -54,12 +54,12 @@ def _make_retriever(inner=None):
     mock_inner = inner or _make_mock_inner_retriever()
 
     with patch(
-        "shared.retrieval.hybrid_retriever.HybridRetriever",
+        "shared.retrieval.hybrid.retriever.HybridRetriever",
         return_value=mock_inner,
     ), patch(
-        "shared.retrieval.hybrid_retriever.HAS_BM25", True,
+        "shared.retrieval.hybrid.retriever.HAS_BM25", True,
     ), patch(
-        "shared.retrieval.hybrid_retriever.HAS_TANTIVY", True,
+        "shared.retrieval.hybrid.retriever.HAS_TANTIVY", True,
     ):
         retriever = HybridPlusRetriever(
             config=config,
@@ -98,8 +98,8 @@ class TestIndexDocumentsWithCrossRefs:
         }.get(doc_id, [])
         mock_linker.get_stats.return_value = {"total_docs": 3, "total_entities": 4}
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", True), \
-             patch("shared.retrieval.entity_linker.EntityLinker", return_value=mock_linker):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", True), \
+             patch("shared.retrieval.hybrid.entity_linker.EntityLinker", return_value=mock_linker):
             result = retriever.index_documents(SAMPLE_DOCS)
 
         assert result is True
@@ -141,8 +141,8 @@ class TestIndexDocumentsWithCrossRefs:
         }.get(doc_id, [])
         mock_linker.get_stats.return_value = {"total_docs": 3}
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", True), \
-             patch("shared.retrieval.entity_linker.EntityLinker", return_value=mock_linker):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", True), \
+             patch("shared.retrieval.hybrid.entity_linker.EntityLinker", return_value=mock_linker):
             retriever.index_documents(SAMPLE_DOCS)
 
         assert retriever._cross_ref_graph == {"d1": ["d2"], "d2": ["d1"]}
@@ -159,8 +159,8 @@ class TestIndexDocumentsWithCrossRefs:
         mock_linker.get_cross_ref_graph.return_value = []
         mock_linker.get_stats.return_value = {"total_docs": 1}
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", True), \
-             patch("shared.retrieval.entity_linker.EntityLinker", return_value=mock_linker):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", True), \
+             patch("shared.retrieval.hybrid.entity_linker.EntityLinker", return_value=mock_linker):
             retriever.index_documents([SAMPLE_DOCS[0]])
 
         # Vector docs: original, sin cross-refs
@@ -188,8 +188,8 @@ class TestIndexDocumentsWithCrossRefs:
         mock_linker.get_cross_ref_graph.return_value = []
         mock_linker.get_stats.return_value = expected_stats
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", True), \
-             patch("shared.retrieval.entity_linker.EntityLinker", return_value=mock_linker):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", True), \
+             patch("shared.retrieval.hybrid.entity_linker.EntityLinker", return_value=mock_linker):
             retriever.index_documents([SAMPLE_DOCS[0]])
 
         assert retriever._linker_stats == expected_stats
@@ -204,7 +204,7 @@ class TestIndexDocumentsWithCrossRefs:
         inner = _make_mock_inner_retriever()
         retriever = _make_retriever(inner=inner)
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", False):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", False):
             retriever.index_documents(SAMPLE_DOCS[:2])
 
         assert retriever._original_contents["d1"] == "Scott Derrickson directed Sinister."
@@ -222,7 +222,7 @@ class TestIndexDocumentsWithoutSpacy:
         inner = _make_mock_inner_retriever()
         retriever = _make_retriever(inner=inner)
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", False):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", False):
             result = retriever.index_documents(SAMPLE_DOCS[:2])
 
         assert result is True
@@ -238,7 +238,7 @@ class TestIndexDocumentsWithoutSpacy:
         inner = _make_mock_inner_retriever()
         retriever = _make_retriever(inner=inner)
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", False), \
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", False), \
              caplog.at_level(logging.WARNING):
             retriever.index_documents([SAMPLE_DOCS[0]])
 
@@ -249,7 +249,7 @@ class TestIndexDocumentsWithoutSpacy:
         inner = _make_mock_inner_retriever()
         retriever = _make_retriever(inner=inner)
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", False):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", False):
             retriever.index_documents([SAMPLE_DOCS[0]])
 
         vector_docs = inner.index_documents.call_args[0][0]
@@ -264,7 +264,7 @@ class TestIndexDocumentsWithoutSpacy:
         inner = _make_mock_inner_retriever()
         retriever = _make_retriever(inner=inner)
 
-        with patch("shared.retrieval.entity_linker.HAS_SPACY", False):
+        with patch("shared.retrieval.hybrid.entity_linker.HAS_SPACY", False):
             retriever.index_documents(SAMPLE_DOCS)
 
         assert retriever._cross_ref_graph == {}
@@ -473,11 +473,11 @@ class TestFactoryHybridPlus:
         mock_embedding = MagicMock()
 
         with patch(
-            "shared.retrieval.hybrid_retriever.HybridRetriever",
+            "shared.retrieval.hybrid.retriever.HybridRetriever",
         ), patch(
-            "shared.retrieval.hybrid_retriever.HAS_BM25", True,
+            "shared.retrieval.hybrid.retriever.HAS_BM25", True,
         ), patch(
-            "shared.retrieval.hybrid_retriever.HAS_TANTIVY", True,
+            "shared.retrieval.hybrid.retriever.HAS_TANTIVY", True,
         ):
             from shared.retrieval import get_retriever
             retriever = get_retriever(config, mock_embedding)
@@ -490,11 +490,11 @@ class TestFactoryHybridPlus:
         mock_embedding = MagicMock()
 
         with patch(
-            "shared.retrieval.hybrid_retriever.HybridRetriever",
+            "shared.retrieval.hybrid.retriever.HybridRetriever",
         ), patch(
-            "shared.retrieval.hybrid_retriever.HAS_BM25", True,
+            "shared.retrieval.hybrid.retriever.HAS_BM25", True,
         ), patch(
-            "shared.retrieval.hybrid_retriever.HAS_TANTIVY", True,
+            "shared.retrieval.hybrid.retriever.HAS_TANTIVY", True,
         ):
             from shared.retrieval import get_retriever
             # No llm_service -> no error
@@ -513,11 +513,11 @@ class TestFactoryHybridPlus:
         mock_embedding = MagicMock()
 
         with patch(
-            "shared.retrieval.hybrid_retriever.HybridRetriever",
+            "shared.retrieval.hybrid.retriever.HybridRetriever",
         ), patch(
-            "shared.retrieval.hybrid_retriever.HAS_BM25", True,
+            "shared.retrieval.hybrid.retriever.HAS_BM25", True,
         ), patch(
-            "shared.retrieval.hybrid_retriever.HAS_TANTIVY", True,
+            "shared.retrieval.hybrid.retriever.HAS_TANTIVY", True,
         ):
             from shared.retrieval import get_retriever
             retriever = get_retriever(config, mock_embedding)

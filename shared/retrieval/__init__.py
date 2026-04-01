@@ -19,11 +19,8 @@ from .core import (
     BaseRetriever,
     SimpleVectorRetriever,
 )
-from .hybrid_retriever import HybridRetriever, HAS_BM25, HAS_TANTIVY
-from .hybrid_plus_retriever import HybridPlusRetriever
+from .hybrid import HybridRetriever, HybridPlusRetriever, HAS_BM25, HAS_TANTIVY, HAS_SPACY, TantivyIndex
 from .lightrag_retriever import LightRAGRetriever
-from .tantivy_index import TantivyIndex
-from .entity_linker import HAS_SPACY
 from .knowledge_graph import HAS_IGRAPH, HAS_NETWORKX
 
 logger = logging.getLogger(__name__)

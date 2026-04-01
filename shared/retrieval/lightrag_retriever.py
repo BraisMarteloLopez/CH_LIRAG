@@ -41,7 +41,7 @@ from .core import (
     RetrievalStrategy,
     SimpleVectorRetriever,
 )
-from .hybrid_retriever import reciprocal_rank_fusion
+from .hybrid.retriever import reciprocal_rank_fusion
 from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_NETWORKX
 from .triplet_extractor import TripletExtractor
 

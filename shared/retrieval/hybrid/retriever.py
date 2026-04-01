@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from shared.types import EmbeddingModelProtocol
 
-from .core import (
+from ..core import (
     BaseRetriever,
     RetrievalConfig,
     RetrievalResult,

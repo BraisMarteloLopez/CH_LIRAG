@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from shared.types import EmbeddingModelProtocol
 
-from .core import (
+from ..core import (
     BaseRetriever,
     RetrievalConfig,
     RetrievalResult,
@@ -76,14 +76,14 @@ class HybridPlusRetriever(BaseRetriever):
         self._cross_ref_graph: Dict[str, List[str]] = {}
 
         # Inner retriever (HybridRetriever: BM25+Vector+RRF)
-        from .hybrid_retriever import HybridRetriever, HAS_BM25, HAS_TANTIVY
+        from .retriever import HybridRetriever, HAS_BM25, HAS_TANTIVY
         if HAS_TANTIVY or HAS_BM25:
             self._inner_retriever = HybridRetriever(
                 config, embedding_model, collection_name,
                 embedding_batch_size=embedding_batch_size,
             )
         else:
-            from .core import SimpleVectorRetriever
+            from ..core import SimpleVectorRetriever
             logger.warning(
                 "HYBRID_PLUS: ni tantivy ni rank-bm25 disponible, "
                 "usando SimpleVector como inner retriever"
@@ -186,7 +186,7 @@ class HybridPlusRetriever(BaseRetriever):
             # DTm-31: compartir dict de contenidos en vez de duplicar.
             # HybridRetriever._doc_map y _original_contents almacenan lo
             # mismo (contenido original por doc_id). Reusar una sola copia.
-            from .hybrid_retriever import HybridRetriever
+            from .retriever import HybridRetriever
             if isinstance(self._inner_retriever, HybridRetriever):
                 self._inner_retriever._doc_map = self._original_contents
 

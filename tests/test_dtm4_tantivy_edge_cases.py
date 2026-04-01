@@ -19,7 +19,7 @@ sin dependencia externa.
 import re
 from unittest.mock import patch
 
-from shared.retrieval.tantivy_index import TantivyIndex, HAS_TANTIVY
+from shared.retrieval.hybrid.tantivy_index import TantivyIndex, HAS_TANTIVY
 
 
 # =================================================================
@@ -64,7 +64,7 @@ def test_sanitization_collapses_to_empty():
 # Esto permite testear todas las condiciones de borde sin la lib Rust.
 # =================================================================
 
-@patch("shared.retrieval.tantivy_index.HAS_TANTIVY", True)
+@patch("shared.retrieval.hybrid.tantivy_index.HAS_TANTIVY", True)
 class TestTantivyIndexGuardConditions:
     """Tests de condiciones guardia via constructor real."""
 
