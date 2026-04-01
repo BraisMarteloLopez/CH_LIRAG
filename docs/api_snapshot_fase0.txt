@@ -1,0 +1,30 @@
+# Snapshot de API publica — shared.retrieval.__init__
+# Fecha: 2026-04-01 (Fase 0, pre-refactor)
+# Proposito: Verificar en Fase 3 que la interfaz publica no cambio.
+#
+# __all__ exports (orden exacto):
+RetrievalStrategy          -> enum 'RetrievalStrategy'
+RetrievalConfig            -> class 'shared.retrieval.core.RetrievalConfig'
+RetrievalResult            -> class 'shared.retrieval.core.RetrievalResult'
+BaseRetriever              -> class 'shared.retrieval.core.BaseRetriever'
+SimpleVectorRetriever      -> class 'shared.retrieval.core.SimpleVectorRetriever'
+HybridRetriever            -> class 'shared.retrieval.hybrid_retriever.HybridRetriever'
+HybridPlusRetriever        -> class 'shared.retrieval.hybrid_plus_retriever.HybridPlusRetriever'
+LightRAGRetriever          -> class 'shared.retrieval.lightrag_retriever.LightRAGRetriever'
+HAS_SPACY                  -> bool (runtime-dependent)
+HAS_IGRAPH                 -> bool (runtime-dependent)
+HAS_NETWORKX               -> bool (runtime-dependent)
+get_retriever              -> function
+
+# Factory signature:
+# get_retriever(config, embedding_model, collection_name=None, embedding_batch_size=0, llm_service=None) -> BaseRetriever
+
+# Additional imports used by tests (grep de tests/):
+# from shared.retrieval.core import RetrievalStrategy, RetrievalConfig, RetrievalResult, BaseRetriever
+# from shared.retrieval.hybrid_retriever import HybridRetriever, reciprocal_rank_fusion, HAS_BM25, HAS_TANTIVY
+# from shared.retrieval.hybrid_plus_retriever import HybridPlusRetriever
+# from shared.retrieval.entity_linker import EntityLinker, HAS_SPACY
+# from shared.retrieval.lightrag_retriever import LightRAGRetriever
+# from shared.retrieval.knowledge_graph import KnowledgeGraph, KGEntity, KGRelation, HAS_IGRAPH
+# from shared.retrieval.triplet_extractor import TripletExtractor
+# from shared.retrieval.tantivy_index import TantivyIndex
