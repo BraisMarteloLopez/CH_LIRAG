@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.retrieval.knowledge_graph import KGEntity, KGRelation, KnowledgeGraph
+from shared.retrieval.lightrag.knowledge_graph import KGEntity, KGRelation, KnowledgeGraph
 
 
 # =============================================================================

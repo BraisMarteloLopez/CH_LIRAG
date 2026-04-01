@@ -395,7 +395,7 @@ class MTEBEvaluator:
 
         # --- Fase 0b: Pre-extract query keywords (LIGHT_RAG) ---
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
-            from shared.retrieval.lightrag_retriever import LightRAGRetriever
+            from shared.retrieval.lightrag.retriever import LightRAGRetriever
             if isinstance(self._retriever, LightRAGRetriever):
                 logger.info(
                     f"  Pre-extrayendo keywords de {n_pending} queries (batch LLM)..."

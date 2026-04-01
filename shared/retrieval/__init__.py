@@ -20,8 +20,7 @@ from .core import (
     SimpleVectorRetriever,
 )
 from .hybrid import HybridRetriever, HybridPlusRetriever, HAS_BM25, HAS_TANTIVY, HAS_SPACY, TantivyIndex
-from .lightrag_retriever import LightRAGRetriever
-from .knowledge_graph import HAS_IGRAPH, HAS_NETWORKX
+from .lightrag import LightRAGRetriever, HAS_IGRAPH, HAS_NETWORKX
 
 logger = logging.getLogger(__name__)
 

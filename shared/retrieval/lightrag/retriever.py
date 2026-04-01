@@ -34,14 +34,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from shared.llm import AsyncLLMService, run_sync
 from shared.types import EmbeddingModelProtocol
 
-from .core import (
+from ..core import (
     BaseRetriever,
     RetrievalConfig,
     RetrievalResult,
     RetrievalStrategy,
     SimpleVectorRetriever,
 )
-from .hybrid.retriever import reciprocal_rank_fusion
+from ..hybrid.retriever import reciprocal_rank_fusion
 from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_NETWORKX
 from .triplet_extractor import TripletExtractor
 

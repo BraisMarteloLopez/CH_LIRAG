@@ -21,8 +21,8 @@ from shared.retrieval.core import (
     RetrievalResult,
     RetrievalStrategy,
 )
-from shared.retrieval.knowledge_graph import KnowledgeGraph
-from shared.retrieval.lightrag_retriever import LightRAGRetriever
+from shared.retrieval.lightrag.knowledge_graph import KnowledgeGraph
+from shared.retrieval.lightrag.retriever import LightRAGRetriever
 
 
 # =============================================================================
