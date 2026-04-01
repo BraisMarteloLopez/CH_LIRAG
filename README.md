@@ -418,112 +418,159 @@ DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59 (31 issues). Ver historial git.
 
 ## Plan de desarrollo por fases
 
-### Fase 5: Baselines comparativos
+> **Nota (2026-04-01):** Este plan reemplaza al anterior (Fases 5-8). El analisis
+> comparativo con [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) revelo
+> divergencias arquitectonicas criticas (DAM-1 a DAM-8) que invalidan el enfoque
+> previo de calibrar pesos sin resolver la base semantica. El nuevo plan prioriza
+> la alineacion arquitectonica con el original antes de optimizaciones incrementales.
 
-**Objetivo:** Obtener datos que permitan decidir si LIGHT_RAG aporta valor y cuanto.
+### Fase A: Documentacion y baselines (sin cambios de codigo)
 
-**Contexto:** Run 2 muestra degradacion de ranking con KG activo, pero usa corpus distinto a Run 1 (16.5K vs 33K). Sin baseline no se puede aislar el efecto del KG del efecto del tamaño del corpus.
+**Objetivo:** Dejar la documentacion alineada con la realidad y obtener datos de referencia.
 
-| Tarea | Descripcion | Config .env | DTm |
-|---|---|---|---|
-| 5.1 Baseline SIMPLE_VECTOR 16.5K | Run con `RETRIEVAL_STRATEGY=SIMPLE_VECTOR`, mismo corpus/queries que Run 2 | `EVAL_MAX_CORPUS=16500`, `CORPUS_SHUFFLE_SEED=42`, `DEV_QUERIES=125` | — |
-| 5.2 Baseline SIMPLE_VECTOR 33K | Run con SIMPLE_VECTOR, corpus Run 1, para validar comparabilidad | `EVAL_MAX_CORPUS=33000` | — |
-| 5.3 Tabla comparativa | Documentar 4 runs: SV-33K, SV-16.5K, LR-16.5K (Run 2), LR-33K (si viable) | — | — |
+**Prerrequisito:** Ninguno. Ejecutable inmediatamente.
 
-**Criterio de exito:** Tabla de 3+ runs con mismas queries. Delta Hit@5 y MRR entre SIMPLE_VECTOR y LIGHT_RAG con mismo corpus determina la decision go/no-go para LIGHT_RAG.
+| Tarea | Descripcion | Esfuerzo |
+|---|---|---|
+| A.1 Actualizar seccion LIGHT_RAG en README | Anadir nota de limitaciones conocidas con referencia a DAM-1/DAM-2. Advertir que la implementacion actual diverge del original en entity/relationship matching. | Bajo |
+| A.2 Actualizar descripcion retrieval dual-level | Documentar que low-level falla por matching exacto (DTm-70) y high-level no hace traversal (DTm-71). | Bajo |
+| A.3 Baseline SIMPLE_VECTOR | Run con `RETRIEVAL_STRATEGY=SIMPLE_VECTOR`, mismo corpus/queries que runs LIGHT_RAG, para cuantificar la degradacion neta del KG. | Bajo (1 run) |
+| A.4 Tabla comparativa | Documentar runs: SIMPLE_VECTOR vs LIGHT_RAG con mismo corpus. Delta MRR y Hit@5 = coste actual del KG. | Bajo |
 
-**Riesgo:** Si SIMPLE_VECTOR 16.5K iguala o supera LIGHT_RAG, el KG no aporta valor neto y las fases 6-7 pierden prioridad.
+**Criterio de exito:** README refleja el estado real. Tabla con delta MRR cuantificado.
 
-### Fase 5b: Rendimiento KG build
+### Fase B: Rendimiento KG build (independiente)
 
-**Objetivo:** Reducir el tiempo de construccion del KG de ~8h a <2h para corpus 16.5K.
+**Objetivo:** Reducir tiempo de KG build para que las fases siguientes sean viables (iteraciones rapidas).
 
-**Contexto:** El 98% del tiempo de run es KG build (7h 51min de 8h). La causa raiz es que `max_tokens=8192` permite a nemotron-3-nano generar ~6000 tokens de `<think>` tags por call. Con 3,300 LLM calls a ~267s cada una, el cuello de botella es generacion de texto que se descarta.
+**Prerrequisito:** Ninguno. Ejecutable en paralelo con Fase A.
 
 | Tarea | Descripcion | DTm | Impacto estimado |
 |---|---|---|---|
-| 5b.1 `KG_EXTRACTION_MAX_TOKENS` configurable | Reducir max_tokens de extraccion de 8192 a 4096 (configurable). El JSON de salida raramente excede 2000 tokens para 5 docs; el modelo generara menos thinking. | DTm-66 | ~2x mas rapido (4h→2h) |
-| 5b.2 `KG_BATCH_DOCS_PER_CALL` configurable | Subir de 5 a 10 docs/call. Reduce LLM calls de 3,300 a 1,650. Requiere validar que el parse JSON sigue robusto con 10 docs. | DTm-67 | ~1.5x adicional |
-| 5b.3 Eliminar re-serializacion JSON | `_parse_batch_extraction_json` hace `json.dumps(entry)` + `_parse_extraction_json(str)`. Refactorizar para pasar dict directamente. | DTm-68 | ~1-2 min menos |
-| 5b.4 Diferir token indexing | Separar `_index_entity_tokens()` del loop `add_triplets()`. Ejecutar como fase post-build (`build_keyword_indices()`). | DTm-69 | ~5-10 min menos |
-| 5b.5 Activar `KG_CACHE_DIR` | Configurar en .env. Runs subsiguientes con mismo corpus cargan KG en milisegundos. | — | Runs 2+ instantaneos |
+| B.1 `KG_EXTRACTION_MAX_TOKENS` configurable | Reducir de 8192 a 4096. El JSON raramente excede 2000 tokens; el modelo generara menos thinking. | DTm-66 | ~2x mas rapido |
+| B.2 `KG_BATCH_DOCS_PER_CALL` configurable | Subir de 5 a 10 docs/call. Reduce LLM calls ~50%. Validar robustez del parse. | DTm-67 | ~1.5x adicional |
+| B.3 Eliminar re-serializacion JSON | Refactorizar `_parse_batch_extraction_json` para pasar dict directamente. | DTm-68 | Menor |
+| B.4 Diferir token indexing | Separar `_index_entity_tokens()` a fase post-build (`build_keyword_indices()`). | DTm-69 | ~5-10 min menos |
+| B.5 Activar `KG_CACHE_DIR` | Runs subsiguientes con mismo corpus cargan KG en milisegundos. | — | Runs 2+ instantaneos |
 
-**Criterio de exito:** KG build < 2h para 16.5K docs. Con cache activo, < 5s en runs subsiguientes.
+**Criterio de exito:** KG build < 2h para 16.5K docs. Con cache, < 5s.
 
-**Prerrequisito:** Ninguno. Ejecutable en paralelo con Fase 5 (baselines). Mejora la viabilidad de Fase 6 (menos tiempo por run de sweep).
+### Fase C: Entity VDB — alineacion arquitectonica critica
 
-### Fase 6: Calibracion de fusion KG
+**Objetivo:** Resolver DAM-1 (sin entity VDB) — la divergencia de mayor impacto con el original.
 
-**Objetivo:** Que el KG mejore (o al menos no degrade) las metricas de ranking respecto a SIMPLE_VECTOR.
+**Prerrequisito:** Fase B completada (iteraciones rapidas). Fase A.3 completada (baseline para comparar).
 
-**Prerrequisito:** Fase 5 completada. Solo proceder si LIGHT_RAG muestra potencial en al menos una metrica.
+**Contexto:** El original indexa nombre+descripcion de cada entidad como embeddings en un vector
+DB y usa similarity search para encontrar entidades relevantes a la query. CH_LIRAG usa string
+matching. Este cambio es la causa raiz de DTm-70, DTm-73, y la degradacion de MRR.
 
-| Tarea | Descripcion | DTm | Impacto esperado |
+| Tarea | Descripcion | DAM/DTm | Esfuerzo |
 |---|---|---|---|
-| 6.1 Sweep `KG_GRAPH_WEIGHT` | Runs con peso 0.05, 0.10, 0.15, 0.20 (actual=0.30). Mismo corpus/queries. | DTm-62 | MRR +10-30pp si el grafo pasa a tiebreaker |
-| 6.2 Evaluar fusion raw scores | Variante de fusion lineal sin normalizar scores del grafo (raw + peso calibrado). Comparar con RRF. | DTm-64 | Elimina inflacion de scores mediocres del grafo |
-| 6.3 Deprecar fusion lineal | Si RRF domina en todos los sweeps, eliminar `KG_FUSION_METHOD=linear` y el codigo asociado. Reduce superficie de bugs. | DTm-64 | Menos codigo, menos configuacion |
+| C.1 Crear `entities_vdb` | Nueva coleccion ChromaDB que indexa `entity_name + ": " + description` como embedding por entidad. Poblar durante `add_triplets()` o como fase post-build. | DAM-1 | Medio |
+| C.2 Reemplazar `_resolve_entity_names` | En `query_entities()`, resolver entidades via similarity search contra `entities_vdb` en vez de exact+fuzzy string matching. Top-k entidades por cosine similarity. | DAM-1, DTm-70 | Medio |
+| C.3 Reducir BFS a 1-hop | Con matching semantico, 1-hop deberia bastar (como en el original). 2 hops con matching debil introduce ruido; 1 hop con matching fuerte lo reduce. Hacer configurable. | DAM-7 | Bajo |
+| C.4 Tests unitarios entity VDB | Tests para: indexacion de entidades, similarity search, integracion con `query_entities()`. Mocks de ChromaDB. | — | Medio |
+| C.5 Run comparativo | LIGHT_RAG con entity VDB vs baseline SIMPLE_VECTOR. Medir delta MRR y fragmentacion (componentes del grafo ya no determinan bridging). | — | 1 run |
 
-**Criterio de exito:** Encontrar un `KG_GRAPH_WEIGHT` donde LIGHT_RAG >= SIMPLE_VECTOR en MRR y Hit@5.
+**Criterio de exito:** MRR de LIGHT_RAG >= MRR de SIMPLE_VECTOR (o degradacion < 5pp).
+Fragmentacion del grafo deja de ser bloqueante porque entity matching es semantico.
 
-**Config de sweep sugerida:**
-```bash
-# Run para cada peso (solo cambia KG_GRAPH_WEIGHT):
-KG_GRAPH_WEIGHT=0.10  # tiebreaker minimo
-KG_VECTOR_WEIGHT=0.90
-# Mantener resto identico a Run 2 para comparabilidad
-```
+**Riesgo:** Si MRR no mejora significativamente, el grafo no aporta valor neto incluso
+con matching semantico. En ese caso, evaluar DAM-3 (grafo como primary retriever) antes
+de continuar.
 
-### Fase 7: Escalado del Knowledge Graph
+### Fase D: Relationship VDB + high-level retrieval
 
-**Objetivo:** Eliminar el cuello de botella del entity cap y mejorar cobertura del grafo.
+**Objetivo:** Resolver DAM-2 (sin relationship VDB) — completar el dual-level retrieval.
 
-**Prerrequisito:** Fase 6 muestra que LIGHT_RAG aporta valor con pesos calibrados.
+**Prerrequisito:** Fase C completada y con resultados positivos.
 
-| Tarea | Descripcion | DTm | Impacto esperado |
+| Tarea | Descripcion | DAM/DTm | Esfuerzo |
 |---|---|---|---|
-| 7.1 Subir `KG_MAX_ENTITIES` a 100K | Duplicar cap. Memoria estimada: ~42MB (vs ~21MB actual). Medir impacto real en RSS. | DTm-63 | 0% entidades descartadas con corpus 16.5K (76K entidades < 100K cap) |
-| 7.2 Eviction por frecuencia | Si 100K no basta para corpus mayores: reemplazar FIFO por politica que priorice entidades mas referenciadas. Requiere `mention_count` en `KGEntity`. | DTm-63 | Entidades hub (alta conectividad) sobreviven, entidades singleton se descartan |
-| 7.3 Validar con corpus 33K+ | Re-run LIGHT_RAG con cap 100K y corpus grande. Verificar que no hay OOM y que metricas mejoran. | — | Confirmar viabilidad a escala |
+| D.1 Crear `relationships_vdb` | Nueva coleccion ChromaDB que indexa `keywords + ": " + description` como embedding por relacion. | DAM-2 | Medio |
+| D.2 Reemplazar `query_by_keywords` | High-level retrieval via similarity search contra `relationships_vdb` en vez de token matching. Trazar de relaciones a source docs via `source_doc_id`. | DAM-2, DTm-71, DTm-74 | Medio |
+| D.3 Acumular edge weights | Sumar weights en relaciones duplicadas cross-doc. Usar weight como factor de scoring (relaciones frecuentes = mas importantes). | DAM-5, DTm-72 | Bajo |
+| D.4 Tests unitarios relationship VDB | Tests para: indexacion de relaciones, similarity search, integracion con high-level path. | — | Medio |
+| D.5 Run comparativo | LIGHT_RAG con ambos VDBs vs Fase C. Medir delta MRR del high-level path. | — | 1 run |
 
-**Criterio de exito:** Entidades descartadas < 5% del total. Memoria KG < 100MB.
+**Criterio de exito:** High-level retrieval aporta valor medible (MRR o Recall mejoran vs solo entity VDB).
 
-### Fase 8: Deuda tecnica restante
+### Fase E: Calidad del grafo
 
-**Objetivo:** Limpiar issues medios y bajos que afectan diagnosticabilidad y robustez.
+**Objetivo:** Resolver DAM-4 y DAM-6 — mejorar la calidad de entidades y la cobertura de extraccion.
 
-**Prerrequisito:** Ninguno. Puede ejecutarse en paralelo con fases 5-7 si hay capacidad.
+**Prerrequisito:** Fase D completada. Solo proceder si los VDBs muestran que el grafo aporta valor.
+
+| Tarea | Descripcion | DAM/DTm | Esfuerzo |
+|---|---|---|---|
+| E.1 Merging de descripciones | Cuando la misma entidad aparece en N docs, concatenar descripciones unicas (dedup por contenido). Si excede umbral, sintetizar via LLM (map-reduce). | DAM-4 | Medio-Alto |
+| E.2 Gleaning (re-extraccion) | Tras la primera pasada de extraccion, re-enviar al LLM con prompt de continuacion para capturar entidades perdidas. Configurable via `KG_GLEANING_ROUNDS` (default 0 = desactivado). | DAM-6 | Medio |
+| E.3 Escalado entity cap | Subir `KG_MAX_ENTITIES` a 100K+. Con VDBs activos, el cap es menos critico pero sigue siendo guardrail de memoria. | DTm-63 | Bajo |
+| E.4 Run comparativo | Medir impacto de descripciones ricas + gleaning en MRR y Recall. | — | 1 run |
+
+**Criterio de exito:** Fragmentacion del grafo (componentes conectados) se reduce >50%.
+Entidades con descripciones multi-doc mejoran similarity search en entity VDB.
+
+### Fase F: Rol del grafo en la pipeline (opcional)
+
+**Objetivo:** Evaluar DAM-3 — si el grafo deberia ser primary retriever en vez de suplemento.
+
+**Prerrequisito:** Fases C-E completadas. Solo tiene sentido si el grafo ya aporta valor neto.
+
+| Tarea | Descripcion | DAM | Esfuerzo |
+|---|---|---|---|
+| F.1 Modo `graph_primary` | Nuevo modo donde el grafo traza source chunks directamente (como el original). Vector search como fallback para entidades sin match en el grafo. | DAM-3 | Alto |
+| F.2 Contexto estructurado | Pasar tablas de entidades, relaciones y source chunks al LLM para generacion (como el original). | DAM-8 | Medio |
+| F.3 Calibracion de fusion | Sweep de pesos solo si se mantiene el modo hibrido (grafo + vector). | DTm-62, DTm-64 | Bajo (runs) |
+
+**Criterio de exito:** Decidir si el modo hibrido (actual) o graph-primary (original) es mejor para HotpotQA.
+
+### Fase G: Deuda tecnica menor (en paralelo)
+
+**Objetivo:** Limpiar issues medios y bajos. Ejecutable en cualquier momento.
 
 | Tarea | Descripcion | DTm | Esfuerzo |
 |---|---|---|---|
-| 8.1 Stats extractor resilientes | Snapshot de stats antes de KG build, restaurar si falla. O: stats por doc, no acumulativas. | DTm-55 | Bajo |
-| 8.2 Fingerprint robusto | Incluir `len(documents)` y config hash en fingerprint. Retornar `None` si corpus vacio. | DTm-56 | Bajo |
-| 8.3 `KG_KEYWORD_MAX_TOKENS=2048` | Validar con run real si 1024 elimina retries. Si no, subir default. | DTm-65 | Trivial |
-| 8.4 Dedup queries en batch keywords | Filtrar queries duplicadas antes de enviarlas al LLM. Reasignar resultados post-extraccion. | DTm-58 | Bajo |
-| 8.5 Reset stats automatico | Llamar `reset_stats()` al inicio de `extract_batch()`. | DTm-60 | Trivial |
-| 8.6 Keyword size cap | Limitar a 20 keywords por nivel (low/high). Truncar si LLM devuelve mas. | DTm-61 | Trivial |
-| 8.7 Entity normalization preservar guiones | Ajustar regex en `_normalize_name` para mantener guiones internos. | DTm-57 | Bajo |
+| G.1 Stats extractor resilientes | Snapshot de stats antes de KG build, restaurar si falla. | DTm-55 | Bajo |
+| G.2 Fingerprint robusto | Incluir `len(documents)` y config hash. `None` si corpus vacio. | DTm-56 | Bajo |
+| G.3 `KG_KEYWORD_MAX_TOKENS=2048` | Validar si elimina retries de thinking-mode exhaustion. | DTm-65 | Trivial |
+| G.4 Dedup queries en batch keywords | Filtrar duplicadas antes de enviar al LLM. | DTm-58 | Bajo |
+| G.5 Reset stats automatico | `reset_stats()` al inicio de `extract_batch()`. | DTm-60 | Trivial |
+| G.6 Keyword size cap | Limitar a 20 keywords/nivel. Truncar exceso. | DTm-61 | Trivial |
+| G.7 Entity normalization | Preservar guiones internos en `_normalize_name`. | DTm-57 | Bajo |
 
 ### Resumen de dependencias entre fases
 
 ```
-Fase 5 (baselines) ─────────────────── Fase 5b (rendimiento KG build) [paralelo]
-  │                                       │
-  ├── LIGHT_RAG no aporta valor           │ 5b.1 max_tokens 8192→4096
-  │   → STOP                              │ 5b.2 batch 5→10 docs/call
-  │                                       │ 5b.3 eliminar re-serializacion
-  └── LIGHT_RAG muestra potencial         │ 5b.4 diferir token indexing
-        │                                 │ 5b.5 activar KG_CACHE_DIR
-        ├── Fase 6 (calibracion fusion) ←─┘ (runs mas rapidos)
-        │     │
-        │     ├── No se encuentra peso optimo → STOP
-        │     │
-        │     └── Peso optimo encontrado
-        │           │
-        │           └── Fase 7 (escalado KG)
-        │
-        └── Fase 8 (deuda tecnica) — en paralelo, sin bloqueo
+Fase A (docs + baseline) ──── Fase B (rendimiento KG build) [paralelo]
+  │                                │
+  │ Baseline cuantifica            │ Iteraciones rapidas
+  │ degradacion actual             │
+  │                                │
+  └─────── Fase C (entity VDB) ◄──┘
+                │
+                ├── MRR no mejora → evaluar DAM-3 (Fase F) o STOP
+                │
+                └── MRR mejora
+                      │
+                      └── Fase D (relationship VDB)
+                            │
+                            ├── High-level no aporta → OK, entity VDB basta
+                            │
+                            └── High-level aporta
+                                  │
+                                  └── Fase E (calidad grafo)
+                                        │
+                                        └── Fase F (graph primary, opcional)
+
+Fase G (deuda menor) ─── en paralelo, sin bloqueo ───────────────────────
 ```
+
+**Decision gates:**
+- Post-Fase A: Si SIMPLE_VECTOR ya supera LIGHT_RAG por >20pp MRR, el KG no tiene potencial → STOP.
+- Post-Fase C: Si entity VDB no cierra el gap → evaluar cambio de rol (DAM-3) antes de seguir.
+- Post-Fase D: Si relationship VDB no aporta valor medible → Fase E sigue siendo util (calidad entidades) pero Fase F pierde prioridad.
 
 ### Variables de configuracion nuevas (referencia)
 
