@@ -15,7 +15,7 @@ Cobertura DTm-4:
 
 Sin dependencias externas.
 """
-from shared.retrieval.hybrid.retriever import reciprocal_rank_fusion
+from shared.retrieval.core import reciprocal_rank_fusion
 
 
 # =================================================================

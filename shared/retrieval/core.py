@@ -14,7 +14,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from shared.types import EmbeddingModelProtocol
 
@@ -360,10 +360,54 @@ class SimpleVectorRetriever(BaseRetriever):
         logger.debug("Indice limpiado")
 
 
+# =============================================================================
+# RECIPROCAL RANK FUSION (RRF)
+# =============================================================================
+
+def reciprocal_rank_fusion(
+    rankings: List[List[Tuple[str, float]]],
+    weights: Optional[List[float]] = None,
+    k: int = 60,
+    top_n: int = 10,
+) -> List[Tuple[str, float]]:
+    """
+    Fusiona multiples rankings usando RRF.
+    RRF_score(d) = SUM weight_i / (k + rank_i(d))
+    """
+    if not rankings:
+        return []
+
+    num_rankings = len(rankings)
+
+    if weights is None or len(weights) != num_rankings:
+        if weights is not None and len(weights) != num_rankings:
+            logger.warning(
+                f"weights ({len(weights)}) != rankings ({num_rankings}). "
+                "Pesos iguales."
+            )
+        weights = [1.0 / num_rankings] * num_rankings
+
+    rrf_scores: Dict[str, float] = {}
+
+    for ranking_idx, ranking in enumerate(rankings):
+        weight = weights[ranking_idx]
+        for rank, (doc_id, _score) in enumerate(ranking, start=1):
+            rrf_contribution = weight / (k + rank)
+            rrf_scores[doc_id] = (
+                rrf_scores.get(doc_id, 0.0) + rrf_contribution
+            )
+
+    sorted_results = sorted(
+        rrf_scores.items(), key=lambda x: x[1], reverse=True
+    )
+    return sorted_results[:top_n]
+
+
 __all__ = [
     "RetrievalStrategy",
     "RetrievalConfig",
     "RetrievalResult",
     "BaseRetriever",
     "SimpleVectorRetriever",
+    "reciprocal_rank_fusion",
 ]
