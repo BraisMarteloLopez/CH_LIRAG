@@ -399,38 +399,25 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 
 | ID | Severidad | Divergencia vs Original | Impacto en CH_LIRAG | Estado |
 |---|---|---|---|---|
-| DAM-1 | **Critica** | **Sin entity VDB**: el original indexa nombre+descripcion de cada entidad como embeddings en un vector DB (`entities_vdb`) y usa similarity search para resolver entidades en queries. CH_LIRAG usa matching lexico (exact + token overlap con stemming). Esto causa fallo sistematico cuando query y entidad difieren lexicamente ("Obama" vs "Barack Obama", "44th president" vs "Obama"). | Causa raiz de DTm-70, DTm-73. Explica fragmentacion (473 componentes/500 docs) y fallo de bridging. | Abierto |
-| DAM-2 | **Critica** | **Sin relationship VDB**: el original indexa keywords+descripcion de cada relacion como embeddings en un segundo vector DB (`relationships_vdb`). El high-level retrieval busca relaciones por semantic similarity. CH_LIRAG usa token matching contra un indice invertido — mucho menos flexible. | Causa raiz de DTm-71, DTm-74. El high-level path esta castrado sin semantic search. | Abierto |
-| DAM-3 | **Alta** | **Grafo como suplemento vs retriever primario**: en el original, los modos local/global/hybrid usan el grafo como mecanismo principal de retrieval (las entidades/relaciones apuntan a source chunks). En CH_LIRAG, vector search es siempre primario y el grafo intenta sumar via RRF — invirtiendo la arquitectura. | Causa raiz de DTm-62. El grafo inyecta candidatos ruidosos que degradan el ranking vectorial en vez de reemplazarlo con un ranking mejor. | Abierto |
-| DAM-4 | **Alta** | **Sin merging de descripciones via LLM**: el original implementa `_merge_nodes_then_upsert()` — cuando la misma entidad aparece en N docs, un LLM sintetiza una descripcion unificada (map-reduce). CH_LIRAG sobrescribe con la ultima descripcion vista. | Entidades tienen descripciones pobres (parciales, de un solo doc). Embedding de entity VDB (si se implementa DAM-1) seria menos efectivo sin descripciones ricas. | Abierto |
-| DAM-5 | **Media** | **Sin acumulacion de edge weights**: el original suma pesos en relaciones duplicadas (15 docs mencionan "Obama → president_of → USA" = weight 15) y usa weight como senal de importancia para scoring. CH_LIRAG deduplica pero no acumula ni usa weights. | Scoring no distingue relaciones frecuentes (importantes) de raras (ruido). Contribuye a DTm-72. | Abierto |
-| DAM-6 | **Media** | **Sin gleaning (re-extraccion)**: el original soporta N pasadas de extraccion con prompt de continuacion para capturar entidades perdidas en la primera pasada. CH_LIRAG hace una sola pasada. | Entidades menos frecuentes o mencionadas indirectamente se pierden. Contribuye a fragmentacion (DTm-73). | Abierto |
-| DAM-7 | **Media** | **BFS profundo (2 hops) vs 1-hop con matching semantico**: el original usa solo 1-hop pero compensa con entity/relationship VDBs. CH_LIRAG usa BFS hasta 2 hops con matching lexico — mas profundidad con peor precision introduce mas ruido. | Contribuye a DTm-62 (inundacion de candidatos irrelevantes). Contraintuitivamente, reducir a 1-hop podria mejorar resultados si se implementa DAM-1. | Abierto |
-| DAM-8 | **Baja** | **Contexto raw vs estructurado para generacion**: el original pasa tablas CSV de entidades, relaciones y source chunks al LLM. CH_LIRAG pasa texto plano concatenado de los docs recuperados. | Menor impacto en retrieval pero afecta calidad de generacion. El LLM recibe menos estructura para razonar. | Abierto |
+| DAM-1 | **Critica** | **Entity VDB**: entity names + descriptions indexados como embeddings en ChromaDB (cosine distance). Similarity search reemplaza string matching en low-level retrieval. Threshold de distancia para filtrar matches irrelevantes. | Fase C. Resuelve DTm-70. | Implementado |
+| DAM-2 | **Critica** | **Relationship VDB**: relaciones indexadas como embeddings en ChromaDB (cosine distance). Similarity search reemplaza token matching en high-level retrieval. Scoring ponderado por edge weight. | Fase D. Resuelve DTm-71, DTm-74. | Implementado |
+| DAM-3 | **Alta** | **Grafo como suplemento vs retriever primario**: en el original, los modos local/global/hybrid usan el grafo como mecanismo principal de retrieval. En CH_LIRAG, vector search es primario y el grafo suma via RRF. | Fase F (pendiente). | Abierto |
+| DAM-4 | **Alta** | **Merging de descripciones**: descripciones multi-doc se acumulan y consolidan (dedup + top 5 por longitud, max 500 chars). Sin LLM synthesis aun (concatenacion). | Fase E. | Implementado |
+| DAM-5 | **Media** | **Edge weights**: weight = docs unicos que mencionan la arista. Usado como factor de scoring en relationship VDB. | Fases D+E. | Implementado |
+| DAM-6 | **Media** | **Gleaning**: re-extraccion con prompt de continuacion. Configurable via `KG_GLEANING_ROUNDS` (default 0 = desactivado). | Fase E. | Implementado |
+| DAM-7 | **Media** | **BFS 1-hop**: default cambiado de 2 a 1 (como el original). Configurable via `KG_MAX_HOPS`. | Fase C. | Implementado |
+| DAM-8 | **Baja** | **Contexto raw vs estructurado para generacion**: el original pasa tablas CSV de entidades, relaciones y source chunks al LLM. CH_LIRAG pasa texto plano concatenado de los docs recuperados. | Fase F (pendiente). | Abierto |
 
-**Cadena causal:**
+**Estado (2026-04-06):** DAM-1, DAM-2, DAM-4, DAM-5, DAM-6, DAM-7 implementados (Fases C-E).
+DAM-3 y DAM-8 pendientes (Fase F). **Pendiente de validacion con run real** para medir impacto.
 
-```
-DAM-1 (sin entity VDB) + DAM-2 (sin relationship VDB)
-    → Matching lexico falla en variaciones (DTm-70)
-    → Grafo fragmentado en islas (DTm-73, 473 componentes)
-    → BFS no puede cruzar islas
-    → Graph candidates = ruido
-
-DAM-3 (grafo como suplemento)
-    → Ruido del grafo se fusiona con vector search via RRF
-    → Candidatos irrelevantes desplazan gold docs en ranking
-    → MRR baja de ~0.86 a 0.52 (DTm-62)
-    → Reranker compensa (+29pp recall) pero enmascara el problema
-
-DAM-4 (sin merging) + DAM-5 (sin edge weights) + DAM-6 (sin gleaning)
-    → Entidades con descripciones pobres, relaciones sin pesos, extraccion incompleta
-    → Grafo de menor calidad incluso si se resuelve DAM-1/DAM-2
-```
-
-**Priorizacion:** DAM-1 y DAM-2 son los cambios de mayor impacto. Requieren 2 colecciones adicionales
-en ChromaDB (o vector store equivalente) para entidades y relaciones. El resto son mejoras incrementales
-que aportan valor solo si la base semantica (VDBs) esta resuelta.
+**Correcciones de validacion aplicadas (V.1-V.6):**
+- V.1: VDBs usan cosine distance (no L2)
+- V.2: Threshold de distancia (_ENTITY_VDB_MAX_DISTANCE=0.8) filtra matches irrelevantes
+- V.3: Edge weight cuenta docs unicos, no relaciones en la arista
+- V.4: Descripciones mergeadas limitadas a 500 chars (top 5 por longitud)
+- V.5: Gleaning prompt incluye formato JSON explicito
+- V.6: Conversion cosine distance [0,2] → similarity [1.0, 0.0] correcta + threshold
 
 ### Registro completo
 
@@ -492,7 +479,7 @@ Todas las tareas ya estaban implementadas en el codigo (DTm-66 a DTm-69).
 | B.4 Diferir token indexing | Implementado | `build_keyword_indices()` como post-build (DTm-69), llamado en `retriever.py:237` |
 | B.5 `KG_CACHE_DIR` | Disponible | Configurable via env. Activar con `KG_CACHE_DIR=./data/kg_cache` |
 
-### Fase C: Entity VDB (DAM-1) — alineacion critica
+### Fase C: Entity VDB (DAM-1) — completada
 
 **Objetivo:** Implementar entity vector database como el original. Resolver entidades por
 embedding similarity en vez de string matching.
@@ -511,7 +498,7 @@ embedding similarity en vez de string matching.
 
 **Criterio de exito:** MRR de LIGHT_RAG se acerca a SIMPLE_VECTOR (degradacion < 10pp).
 
-### Fase D: Relationship VDB (DAM-2) — completar dual-level
+### Fase D: Relationship VDB (DAM-2) — completada
 
 **Objetivo:** Implementar relationship vector database. El high-level retrieval busca relaciones
 por semantic similarity, no por token matching.
@@ -530,7 +517,7 @@ por semantic similarity, no por token matching.
 
 **Criterio de exito:** Dual-level retrieval completo. High-level aporta valor medible.
 
-### Fase E: Calidad del grafo (DAM-4, DAM-6)
+### Fase E: Calidad del grafo (DAM-4, DAM-6) — completada
 
 **Objetivo:** Mejorar la calidad de entidades y cobertura de extraccion para que los VDBs
 tengan material rico con el que trabajar.
@@ -583,26 +570,28 @@ chunks directamente. CSV tables de entidades/relaciones como contexto para gener
 ### Resumen de dependencias entre fases
 
 ```
-Fase A (completada) ──── Fase B (rendimiento KG build) [paralelo]
-                               │
-                               ▼
-                         Fase C (entity VDB — DAM-1)
-                               │
-                               ▼
-                         Fase D (relationship VDB — DAM-2)
-                               │
-                               ▼
-                         Fase E (calidad grafo — DAM-4, DAM-6)
-                               │
-                               ▼
-                         Fase F (graph primary — DAM-3, DAM-8)
+Fase A ✅ ──── Fase B ✅ [paralelo]
+                  │
+                  ▼
+            Fase C ✅ (entity VDB — DAM-1)
+                  │
+                  ▼
+            Fase D ✅ (relationship VDB — DAM-2)
+                  │
+                  ▼
+            Fase E ✅ (calidad grafo — DAM-4, DAM-6)
+                  │
+                  ▼
+            *** RUN COMPARATIVO PENDIENTE ***
+                  │
+                  ▼
+            Fase F (graph primary — DAM-3, DAM-8)
 
 Fase G (deuda menor) ─── en paralelo, sin bloqueo ────────────────
 ```
 
-El camino B → C → D → E → F es secuencial y obligatorio.
-Cada fase alinea un aspecto de la arquitectura con el original.
-Al final de F, CH_LIRAG deberia comportarse como el LightRAG original.
+Fases A-E completadas. Pendiente: run comparativo para medir impacto
+acumulado de VDBs + merging + 1-hop, y Fase F (graph as primary retriever).
 
 ### Variables de configuracion nuevas (referencia)
 
