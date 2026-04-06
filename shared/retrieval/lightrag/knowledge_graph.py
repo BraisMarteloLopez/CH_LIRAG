@@ -158,6 +158,60 @@ class KnowledgeGraph:
                 })
         return relations
 
+    # -----------------------------------------------------------------
+    # F.3: Acceso a entidades/relaciones por doc_ids (DAM-8)
+    # -----------------------------------------------------------------
+
+    def get_entities_for_docs(self, doc_ids: List[str]) -> List[Dict[str, Any]]:
+        """Retorna entidades asociadas a una lista de doc_ids.
+
+        Recorre _doc_to_entities para encontrar entidades vinculadas
+        a los documentos indicados. Deduplica por nombre.
+
+        Returns:
+            Lista de dicts con entity_name, entity_type, description.
+        """
+        seen: Set[str] = set()
+        result: List[Dict[str, Any]] = []
+        for doc_id in doc_ids:
+            for name in self._doc_to_entities.get(doc_id, set()):
+                if name in seen:
+                    continue
+                seen.add(name)
+                entity = self._entities.get(name)
+                if entity:
+                    result.append({
+                        "entity": entity.name,
+                        "type": entity.entity_type,
+                        "description": entity.description,
+                    })
+        return result
+
+    def get_relations_for_docs(self, doc_ids: List[str]) -> List[Dict[str, Any]]:
+        """Retorna relaciones cuyos source_doc_id esta en doc_ids.
+
+        Recorre _doc_to_relations para encontrar relaciones vinculadas
+        a los documentos indicados. Deduplica por (source, target, relation).
+
+        Returns:
+            Lista de dicts con source, target, relation, description.
+        """
+        seen: Set[Tuple[str, str, str]] = set()
+        result: List[Dict[str, Any]] = []
+        for doc_id in doc_ids:
+            for rel in self._doc_to_relations.get(doc_id, []):
+                key = (rel.source, rel.target, rel.relation)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append({
+                    "source": rel.source,
+                    "target": rel.target,
+                    "relation": rel.relation,
+                    "description": rel.description,
+                })
+        return result
+
     # Articulos iniciales en ingles (DTm-18).
     _LEADING_ARTICLES = ("the ", "a ", "an ")
     # Patron para eliminar puntuacion excepto guiones internos (DTm-18).

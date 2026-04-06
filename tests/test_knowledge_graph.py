@@ -843,3 +843,70 @@ def test_merge_entity_descriptions_serialization_roundtrip():
     data = kg.to_dict()
     kg2 = KnowledgeGraph.from_dict(data)
     assert kg2.get_all_entities()["alice"]._descriptions == ["desc1", "desc2"]
+
+
+# =============================================================================
+# F.3: get_entities_for_docs / get_relations_for_docs (DAM-8)
+# =============================================================================
+
+
+def test_get_entities_for_docs_returns_linked_entities():
+    """get_entities_for_docs retorna entidades vinculadas a doc_ids."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Charlie", "David", "works_with")])
+
+    entities = kg.get_entities_for_docs(["doc1"])
+    names = {e["entity"] for e in entities}
+    assert "alice" in names
+    assert "bob" in names
+    assert "charlie" not in names
+
+
+def test_get_entities_for_docs_deduplicates():
+    """Entidades que aparecen en multiples docs no se duplican."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Alice", "Charlie", "knows")])
+
+    entities = kg.get_entities_for_docs(["doc1", "doc2"])
+    names = [e["entity"] for e in entities]
+    assert names.count("alice") == 1
+
+
+def test_get_entities_for_docs_empty():
+    """Doc sin entidades retorna lista vacia."""
+    kg = KnowledgeGraph()
+    assert kg.get_entities_for_docs(["nonexistent"]) == []
+
+
+def test_get_relations_for_docs_returns_linked_relations():
+    """get_relations_for_docs retorna relaciones vinculadas a doc_ids."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Charlie", "David", "works_with")])
+
+    rels = kg.get_relations_for_docs(["doc1"])
+    assert len(rels) == 1
+    # KGRelation preserva case original del constructor
+    assert rels[0]["source"] == "Alice"
+    assert rels[0]["target"] == "Bob"
+    assert rels[0]["relation"] == "knows"
+
+
+def test_get_relations_for_docs_deduplicates():
+    """Misma relacion en multiples docs no se duplica."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Alice", "Bob", "knows")])
+
+    rels = kg.get_relations_for_docs(["doc1", "doc2"])
+    # KGRelation.source/target preserva case original
+    keys = [(r["source"], r["target"], r["relation"]) for r in rels]
+    assert keys.count(("Alice", "Bob", "knows")) == 1
+
+
+def test_get_relations_for_docs_empty():
+    """Doc sin relaciones retorna lista vacia."""
+    kg = KnowledgeGraph()
+    assert kg.get_relations_for_docs(["nonexistent"]) == []

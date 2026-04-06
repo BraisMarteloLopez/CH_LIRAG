@@ -23,7 +23,7 @@ from shared.llm import AsyncLLMService
 from shared.metrics import MetricsCalculator, MetricResult
 
 from .config import GENERATION_PROMPTS
-from .retrieval_executor import format_context
+from .retrieval_executor import format_context, format_structured_context
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,21 @@ class GenerationExecutor:
         dataset_name: str,
     ) -> GenMetricsResult:
         """Procesa una query: generacion async + metricas async."""
-        context = format_context(retrieval_detail.get_generation_contents(), self._max_context_chars)
+        # F.3/DAM-8: Contexto estructurado si hay datos KG disponibles
+        kg_entities = retrieval_detail.retrieval_metadata.get("kg_entities")
+        kg_relations = retrieval_detail.retrieval_metadata.get("kg_relations")
+        if kg_entities or kg_relations:
+            context = format_structured_context(
+                retrieval_detail.get_generation_contents(),
+                kg_entities or [],
+                kg_relations or [],
+                self._max_context_chars,
+            )
+        else:
+            context = format_context(
+                retrieval_detail.get_generation_contents(),
+                self._max_context_chars,
+            )
 
         # 1. Generacion async
         generation = await self._execute_generation_async(

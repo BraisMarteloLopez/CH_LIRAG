@@ -768,6 +768,16 @@ class LightRAGRetriever(BaseRetriever):
                 if len(final_ids) >= top_k:
                     break
 
+        # F.3/DAM-8: Recopilar entidades y relaciones para contexto estructurado
+        _MAX_CONTEXT_ENTITIES = 30
+        _MAX_CONTEXT_RELATIONS = 30
+        kg_entities = self._kg.get_entities_for_docs(
+            final_ids[:top_k]
+        )[:_MAX_CONTEXT_ENTITIES]
+        kg_relations = self._kg.get_relations_for_docs(
+            final_ids[:top_k]
+        )[:_MAX_CONTEXT_RELATIONS]
+
         return RetrievalResult(
             doc_ids=final_ids[:top_k],
             contents=final_contents[:top_k],
@@ -783,6 +793,8 @@ class LightRAGRetriever(BaseRetriever):
                     "low": low_level,
                     "high": high_level,
                 },
+                "kg_entities": kg_entities,
+                "kg_relations": kg_relations,
             },
         )
 
