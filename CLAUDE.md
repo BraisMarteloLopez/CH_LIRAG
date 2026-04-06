@@ -129,7 +129,7 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | (pendiente conteo post-merge) |
+| Tests unitarios | 447 en 38 archivos |
 | Tests integracion | 19 en 3 archivos |
 | mypy | 0 errores (27 source files) |
 | Modulos con tests dedicados | 21/23 (91%) |
