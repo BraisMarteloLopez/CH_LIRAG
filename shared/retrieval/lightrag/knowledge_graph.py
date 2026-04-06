@@ -702,12 +702,18 @@ class KnowledgeGraph:
             for rel_info in edge["relations"]:
                 self._index_relation_tokens(src_name, tgt_name, rel_info)
 
+    # V.4: max chars para descripcion mergeada. Embedding models truncan
+    # a ~512 tokens (~2000 chars). Con "name: description" el budget
+    # efectivo es ~500 chars para la parte de descripcion.
+    _MAX_MERGED_DESCRIPTION_CHARS = 500
+    _MAX_DESCRIPTIONS_TO_MERGE = 5
+
     def merge_entity_descriptions(self) -> int:
         """Consolida descripciones multi-doc por entidad (DAM-4).
 
-        Para cada entidad con >1 descripcion, deduplica y concatena
-        las descripciones unicas separadas por " | ". El resultado es
-        una descripcion rica que mejora los embeddings en entity VDB.
+        Para cada entidad con >1 descripcion, deduplica, selecciona las
+        mas informativas (por longitud), y concatena con " | " hasta
+        _MAX_MERGED_DESCRIPTION_CHARS.
 
         Referencia: _merge_nodes_then_upsert() en HKUDS/LightRAG.
         El original usa LLM para sintetizar; aqui usamos concatenacion
@@ -729,11 +735,18 @@ class KnowledgeGraph:
                 if key and key not in seen:
                     seen.add(key)
                     unique.append(d.strip())
-            if len(unique) > 1:
-                entity.description = " | ".join(unique)
-                merged_count += 1
-            elif unique:
-                entity.description = unique[0]
+            if len(unique) <= 1:
+                if unique:
+                    entity.description = unique[0]
+                continue
+            # V.4: seleccionar las mas informativas (por longitud) y truncar
+            unique.sort(key=len, reverse=True)
+            selected = unique[:self._MAX_DESCRIPTIONS_TO_MERGE]
+            merged = " | ".join(selected)
+            if len(merged) > self._MAX_MERGED_DESCRIPTION_CHARS:
+                merged = merged[:self._MAX_MERGED_DESCRIPTION_CHARS].rsplit(" | ", 1)[0]
+            entity.description = merged
+            merged_count += 1
         if merged_count > 0:
             logger.info(
                 f"KnowledgeGraph: descripciones mergeadas para "
