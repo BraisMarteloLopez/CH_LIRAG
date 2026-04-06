@@ -453,6 +453,7 @@ DAM-3 y DAM-8 pendientes (Fase F). **Pendiente de validacion con run real** para
 | DTm-80 | Baja | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion con ` \| `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-81 | Baja | **Import fantasma `shared.retrieval.hybrid.core`** no existe. Mypy error `import-not-found`. [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | `shared/retrieval/hybrid/retriever.py:143` | Abierto |
 | DTm-82 | Baja | **23 errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
+| DTm-83 | **Alta** | **Eliminar estrategia HYBRID_PLUS completa**. LIGHT_RAG supersede la funcionalidad (entity VDB + relationship VDB vs entity co-ocurrencia). Elimina ~2,100 LOC + 3 deps (spaCy, tantivy, rank-bm25). Resuelve DTm-81 y DTm-24. [#10](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/10) | `shared/retrieval/hybrid/`, tests, config | Abierto |
 
 ### Deuda resuelta (referencia)
 
@@ -582,6 +583,7 @@ chunks directamente. CSV tables de entidades/relaciones como contexto para gener
 | G.11 LLM synthesis merge | Descripciones multi-doc sintetizadas via LLM (map-reduce). | DTm-80 | Medio |
 | G.12 Import fantasma | Eliminar import `shared.retrieval.hybrid.core`. | DTm-81 | Trivial |
 | G.13 Mypy cleanup | Resolver 23 errores mypy (union-attr, dict-item, etc.). | DTm-82 | Bajo |
+| G.14 Eliminar HYBRID_PLUS | Eliminar estrategia, tests, deps (spaCy, tantivy, rank-bm25). ~2,100 LOC. | DTm-83 | Medio |
 
 ### Resumen de dependencias entre fases
 
