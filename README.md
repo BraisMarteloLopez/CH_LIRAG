@@ -2,7 +2,7 @@
 
 Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de pipelines de recuperacion y generacion sobre datasets MTEB/BeIR (HotpotQA actualmente) con infraestructura NVIDIA NIM.
 
-Soporta 2 estrategias de retrieval: busqueda vectorial pura (`SIMPLE_VECTOR`) y **LightRAG** (Vector + Knowledge Graph dual-level con extraccion de tripletas via LLM). Estrategia `HYBRID_PLUS` (BM25+Vector+NER) pendiente de eliminacion (DTm-83).
+Soporta 2 estrategias de retrieval: busqueda vectorial pura (`SIMPLE_VECTOR`) y **LightRAG** (Vector + Knowledge Graph dual-level con extraccion de tripletas via LLM).
 
 ## Arquitectura
 
@@ -20,7 +20,6 @@ CH_LIRAG/
 │       ├── __init__.py              # Factory get_retriever()
 │       ├── core.py                  # BaseRetriever, SimpleVectorRetriever, RetrievalConfig, RRF
 │       ├── reranker.py              # CrossEncoderReranker (NVIDIARerank)
-│       ├── hybrid/                  # HYBRID_PLUS (pendiente eliminacion, DTm-83)
 │       └── lightrag/                # Estrategia LIGHT_RAG
 │           ├── retriever.py         # Vector + Knowledge Graph dual-level
 │           ├── knowledge_graph.py   # KG in-memory (igraph): entidades, relaciones, traversal
@@ -56,8 +55,6 @@ CH_LIRAG/
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
 | `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + Graph traversal + Fusion | Opcional |
-
-> `HYBRID_PLUS` (BM25+Vector+NER cross-linking) existe en el codigo pero esta pendiente de eliminacion (DTm-83). LIGHT_RAG supersede su funcionalidad.
 
 ### LIGHT_RAG
 
@@ -254,7 +251,7 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 |---|---|---|
 | **0. Reproducibilidad** | Config determinista entre runs | `requirements.lock` pinneado, `preflight.py` para validacion pre-run. |
 | **1. Fiabilidad** | No perder runs de horas | Checkpoint/resume cada 50 queries (`--resume RUN_ID`). Counter de entidades descartadas por cap KG. |
-| **2. Calidad retrieval** | Mejorar Hit@5 y MRR | Apostrofes preservados en BM25, entity normalization alineada KG/linker, `MIN_ENTITY_NAME_LEN=1`. |
+| **2. Calidad retrieval** | Mejorar Hit@5 y MRR | Entity normalization alineada KG, `MIN_ENTITY_NAME_LEN=1`. |
 | **3. Eficiencia** | Corpus 66K sin OOM | Batch adaptativo (`semaphore*4`), dedup memoria. |
 | **4. Mantenibilidad** | `evaluator.py` < 600 LOC | Descompuesto de 1225 a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py`, `checkpoint.py`, `result_builder.py`. |
 
@@ -409,7 +406,7 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 | DTm-56 | **Media** | Fingerprint collision con corpus vacio: `sha256("")[:16]` es determinista pero edge case si dos configs distintas producen mismo hash. | `shared/retrieval/lightrag/retriever.py` | Abierto |
 | DTm-12 | Baja | Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. | `shared/metrics.py` | Aceptado |
 | DTm-13 | Baja | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. | `shared/vector_store.py` | Aceptado |
-| DTm-24 | Baja | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. Se resuelve con eliminacion de HYBRID_PLUS (DTm-83). | `sandbox_mteb/config.py` | Pendiente DTm-83 |
+| DTm-24 | Baja | ~~Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`~~. Resuelto: HYBRID_PLUS eliminado (DTm-83). | — | Resuelto |
 | DTm-57 | Baja | Normalizacion entidades agresiva: pierde apostrofes/guiones. Colisiones raras. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-58 | Baja | No dedup queries identicas en batch keyword extraction: LLM calls duplicadas. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
 | DTm-60 | Baja | Stats extractor acumulan entre llamadas. `reset_stats()` nunca se llama auto. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
@@ -425,9 +422,9 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 | DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. `test_pipeline_e2e.py` hardcodeado con SIMPLE_VECTOR. No hay validacion E2E de LIGHT_RAG. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
 | DTm-79 | Baja | **Modos de query explicitos**: `LIGHTRAG_MODE` con 5 modos (hybrid, graph_primary, local, global, naive). Implementado en Fase F (F.4). [#6](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/6) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
 | DTm-80 | Baja | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion con ` \| `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
-| DTm-81 | Baja | **Import fantasma `shared.retrieval.hybrid.core`**: corregido a `..core`. Se elimina completamente con DTm-83. [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | `shared/retrieval/hybrid/retriever.py:143` | Resuelto |
+| DTm-81 | Baja | ~~Import fantasma `shared.retrieval.hybrid.core`~~. Resuelto: modulo hybrid eliminado (DTm-83). [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | — | Resuelto |
 | DTm-82 | Baja | **23 errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
-| DTm-83 | **Alta** | **Eliminar estrategia HYBRID_PLUS completa**. LIGHT_RAG supersede la funcionalidad (entity VDB + relationship VDB vs entity co-ocurrencia). Elimina ~2,100 LOC + 3 deps (spaCy, tantivy, rank-bm25). Resuelve DTm-81 y DTm-24. [#10](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/10) | `shared/retrieval/hybrid/`, tests, config | Abierto |
+| DTm-83 | **Alta** | ~~Eliminar estrategia HYBRID_PLUS completa~~. Resuelto: eliminados ~2,570 LOC + 3 deps (spaCy, tantivy, rank-bm25). [#10](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/10) | — | Resuelto |
 
 ### Deuda resuelta (referencia)
 
@@ -488,9 +485,9 @@ retrieval, no como suplemento de vector search.
 | G.9 Tests gleaning | Tests unitarios para `glean_from_doc_async()`. | DTm-77 | Bajo |
 | G.10 E2E LIGHT_RAG | Test pipeline E2E con estrategia LIGHT_RAG (mocked). | DTm-78 | Medio |
 | G.11 LLM synthesis merge | Descripciones multi-doc sintetizadas via LLM (map-reduce). | DTm-80 | Medio |
-| G.12 Import fantasma | Eliminar import `shared.retrieval.hybrid.core`. | DTm-81 | Trivial |
+| ~~G.12 Import fantasma~~ | ~~Eliminar import `shared.retrieval.hybrid.core`~~. Resuelto (DTm-83). | DTm-81 | Resuelto |
 | G.13 Mypy cleanup | Resolver 23 errores mypy (union-attr, dict-item, etc.). | DTm-82 | Bajo |
-| G.14 Eliminar HYBRID_PLUS | Eliminar estrategia, tests, deps (spaCy, tantivy, rank-bm25). ~2,100 LOC. | DTm-83 | Medio |
+| ~~G.14 Eliminar HYBRID_PLUS~~ | ~~Eliminar estrategia, tests, deps~~. Resuelto: -2,570 LOC, -3 deps. | DTm-83 | Resuelto |
 
 ### Resumen de dependencias entre fases
 
@@ -516,7 +513,7 @@ Fase G (deuda tecnica) ─── en paralelo, sin bloqueo ───────�
 ```
 
 Fases A-F implementadas (F.5 pendiente: runs comparativos).
-Fase G: DTm-55 a DTm-83 (bugs, test gaps, code quality, eliminacion HYBRID_PLUS).
+Fase G: DTm-55 a DTm-83 (bugs, test gaps, code quality). DTm-83 (HYBRID_PLUS) resuelto.
 
 ### Pendiente: Run comparativo post-VDBs
 
