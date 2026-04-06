@@ -177,3 +177,105 @@ def test_pipeline_e2e_mocked(
         assert qr.query_id.startswith("q")
         assert qr.retrieval is not None
         assert len(qr.retrieval.retrieved_doc_ids) > 0
+
+
+# =============================================================================
+# E2E: LIGHT_RAG pipeline (DTm-78 / I.4)
+# =============================================================================
+
+@patch("sandbox_mteb.evaluator.MinIOLoader")
+@patch("sandbox_mteb.evaluator.load_embedding_model")
+@patch("sandbox_mteb.evaluator.AsyncLLMService")
+@patch("sandbox_mteb.evaluator.batch_embed_queries")
+@patch("sandbox_mteb.evaluator.get_retriever")
+def test_pipeline_e2e_lightrag(
+    mock_get_retriever, mock_batch_embed, mock_llm_cls, mock_embed_fn,
+    mock_loader_cls, tmp_path
+):
+    """Pipeline E2E con LIGHT_RAG: verifica que KG metadata fluye y metricas se calculan."""
+    from shared.retrieval.core import RetrievalResult
+
+    # --- Mock MinIO Loader ---
+    dataset = _make_mini_dataset()
+    mock_loader = MagicMock()
+    mock_loader.check_connection.return_value = True
+    mock_loader.load_dataset.return_value = dataset
+    mock_loader_cls.return_value = mock_loader
+
+    # --- Mock Embedding Model ---
+    mock_embed = MagicMock()
+    mock_embed_fn.return_value = mock_embed
+
+    # --- Mock LLM Service ---
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value="topic 0")
+    mock_llm._max_concurrent = 2
+    mock_llm_cls.return_value = mock_llm
+
+    # --- Mock batch embed queries ---
+    mock_batch_embed.return_value = [[0.5] * 64] * 3
+
+    # --- Mock Retriever (simula LIGHT_RAG con metadata de grafo) ---
+    mock_retriever = MagicMock()
+    mock_retriever.index_documents.return_value = True
+    mock_retriever.retrieve_by_vector.return_value = RetrievalResult(
+        doc_ids=["doc0", "doc1", "doc3"],
+        contents=["content 0", "content 1", "content 3"],
+        scores=[0.9, 0.8, 0.7],
+        vector_scores=[0.9, 0.8, 0.7],
+        strategy_used=RetrievalStrategy.LIGHT_RAG,
+        metadata={"graph_active": True},
+    )
+    mock_retriever.retrieve.return_value = mock_retriever.retrieve_by_vector.return_value
+    mock_retriever.clear_index.return_value = None
+    # Simular que NO es LightRAGRetriever real (evitar pre_extract_query_keywords)
+    mock_retriever.__class__.__name__ = "MagicMock"
+    mock_get_retriever.return_value = mock_retriever
+
+    # --- Config LIGHT_RAG ---
+    config = MTEBConfig(
+        infra=InfraConfig(
+            embedding_base_url="http://fake:8000/v1",
+            embedding_model_name="test-embed",
+            llm_base_url="http://fake:8000/v1",
+            llm_model_name="test-llm",
+            nim_max_concurrent=2,
+            nim_timeout=30,
+        ),
+        storage=MinIOStorageConfig(
+            minio_endpoint="http://fake:9000",
+            minio_access_key="test",
+            minio_secret_key="test",
+            minio_bucket="test",
+            evaluation_results_dir=tmp_path / "results",
+        ),
+        retrieval=RetrievalConfig(
+            strategy=RetrievalStrategy.LIGHT_RAG,
+            retrieval_k=5,
+        ),
+        reranker=RerankerConfig(enabled=False),
+        dataset_name="hotpotqa",
+        generation_enabled=True,
+        max_queries=3,
+        max_corpus=6,
+    )
+    (tmp_path / "results").mkdir(parents=True, exist_ok=True)
+    ev = MTEBEvaluator(config)
+
+    result = ev.run()
+
+    # --- Assertions ---
+    assert isinstance(result, EvaluationRun)
+    assert result.status == EvaluationStatus.COMPLETED
+    assert result.num_queries_evaluated == 3
+    assert result.retrieval_strategy == "LIGHT_RAG"
+
+    # Should have retrieval metrics
+    assert result.avg_mrr >= 0.0
+    assert result.avg_hit_rate_at_5 >= 0.0
+
+    # Verify query results
+    assert len(result.query_results) == 3
+    for qr in result.query_results:
+        assert qr.retrieval is not None
+        assert len(qr.retrieval.retrieved_doc_ids) > 0
