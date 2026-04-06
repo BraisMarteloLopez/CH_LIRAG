@@ -177,9 +177,82 @@ Patrón `except Exception: pass` o `except Exception as e:` con log insuficiente
 - `requirements.lock` — es un pin de produccion, no tocar sin razon
 - `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio (DTm-45). Parece complejo pero es necesario
 
-## Proximos pasos
+## Proximos pasos — plan por fases
 
-1. **F.5**: Run comparativo post-VDBs (SIMPLE_VECTOR vs LIGHT_RAG) — necesario para validar que las Fases C-F mejoraron el ranking
-2. **Fase G**: 10 tareas de deuda tecnica menor (G.1, G.2, G.4-G.7, G.9-G.11, G.13)
-3. **Bugs de auditoria**: fix `deque[Tuple]` (Python 3.9+), limpiar dead code, añadir logging a bare excepts
-4. **Test coverage**: priorizar `checkpoint.py` y `llm.py` (riesgo alto sin tests)
+### Fase H: Hardening (bugs de auditoria) — sin riesgo funcional
+
+Corrige bugs potenciales y code smells sin alterar logica de negocio.
+Cada tarea es independiente, ejecutable en paralelo.
+
+| ID | Tarea | Archivos | Esfuerzo | Descripcion |
+|---|---|---|---|---|
+| H.1 | Fix `deque[Tuple]` Python 3.9+ | `knowledge_graph.py:517` | Trivial | Cambiar a `Deque[Tuple[str, int]]` de `typing`. Evita `TypeError` en Python 3.8 |
+| H.2 | Logging en stemmer silencioso | `knowledge_graph.py:237-238` | Trivial | Reemplazar `except Exception: pass` con `logger.debug(...)` |
+| H.3 | Logging en cleanup evaluator | `evaluator.py:584-585` | Trivial | Reemplazar `except Exception: pass` con `logger.debug(...)` |
+| H.4 | Logging en VDB cleanup (3 sitios) | `retriever.py:328,433,1044` | Trivial | Reemplazar `except Exception: pass` con `logger.debug(...)` |
+| H.5 | Logging en preflight config | `preflight.py:234` | Trivial | Capturar `as e` y mostrar al usuario |
+| H.6 | Eliminar dead code | `loader.py:78-80`, `preflight.py:62-72`, `config.py:10` | Trivial | Eliminar `list_available_datasets()`, loop `optional` vacio, `import sys` |
+| H.7 | Validacion sub-configs | `config.py:validate()` | Bajo | Propagar validacion a `RerankerConfig` (ej: model_name obligatorio si enabled) |
+
+**Criterio de completitud:** tests pasan sin regresiones, 0 bare excepts sin logging.
+
+### Fase I: Test coverage critico — reducir riesgo de regresion
+
+Añade tests unitarios a los modulos de mayor riesgo sin cobertura.
+
+| ID | Tarea | Archivos | Esfuerzo | Descripcion |
+|---|---|---|---|---|
+| I.1 | Tests `checkpoint.py` | `tests/test_checkpoint.py` (nuevo) | Medio | `save_checkpoint()` atomicidad, `load_checkpoint()` deserializacion, JSON corrupto, resume parcial |
+| I.2 | Tests `llm.py` | `tests/test_llm.py` (nuevo) | Medio | `AsyncLLMService.invoke()` con mock langchain, `_strip_thinking_tags()`, `LLMMetrics.record_request()`, retry logic |
+| I.3 | Tests `embedding_service.py` | `tests/test_embedding_service.py` (nuevo) | Bajo | `query_model_context_window()` con mock HTTP, batch embed con retry |
+| I.4 | Test E2E LIGHT_RAG (DTm-78) | `tests/test_pipeline_e2e.py` | Medio | Parametrizar con LIGHT_RAG mocked. Verificar KG build + VDBs + fusion + metricas. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) |
+| I.5 | Tests gleaning (DTm-77) | `tests/test_triplet_extractor.py` | Bajo | 5 tests para `glean_from_doc_async()`: mock LLM, empty entities, prompt format, rounds=0, integracion KG. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) |
+
+**Criterio de completitud:** cobertura modulos sube de 86% a 95%+. `checkpoint.py` y `llm.py` con tests.
+
+### Fase G: Deuda tecnica menor — ya planificada
+
+10 tareas independientes, ejecutable en paralelo con I.
+
+| ID | Tarea | DTm | Esfuerzo |
+|---|---|---|---|
+| G.1 | Stats extractor resilientes (snapshot/restore) | DTm-55 | Bajo |
+| G.2 | Fingerprint robusto (incluir len + config hash) | DTm-56 | Bajo |
+| G.4 | Dedup queries en batch keywords | DTm-58 | Bajo |
+| G.5 | `reset_stats()` al inicio de `extract_batch()` | DTm-60 | Trivial |
+| G.6 | Keyword size cap (max 20/nivel) | DTm-61 | Trivial |
+| G.7 | Entity normalization (preservar guiones internos) | DTm-57 | Bajo |
+| G.9 | Tests gleaning | DTm-77 | Bajo |
+| G.10 | E2E LIGHT_RAG | DTm-78 | Medio |
+| G.11 | LLM synthesis merge (DAM-4 completo) | DTm-80 | Medio |
+| G.13 | Mypy cleanup | DTm-82 | Bajo |
+
+**Nota:** G.9 = I.5 y G.10 = I.4 (misma tarea, doble referencia). Ejecutar una vez.
+
+### Fase F.5: Run comparativo — validacion funcional
+
+Requiere infraestructura NIM + MinIO. No es codigo, es ejecucion y analisis.
+
+| ID | Tarea | Dependencia | Descripcion |
+|---|---|---|---|
+| F.5a | Run SIMPLE_VECTOR baseline | Infra NIM | 50q, 3500 docs, DEV_MODE, seed=42 |
+| F.5b | Run LIGHT_RAG hybrid | F.5a (misma config) | Mismo config, RETRIEVAL_STRATEGY=LIGHT_RAG |
+| F.5c | Run LIGHT_RAG graph_primary | F.5a | LIGHTRAG_MODE=graph_primary |
+| F.5d | Analisis comparativo | F.5a+b+c | Comparar MRR, Hit@5, Recall. Decide si fusion funciona (DTm-62) |
+
+**Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs 0.52 pre-VDBs). Si no, revisar DTm-62/DTm-64.
+
+### Orden de ejecucion recomendado
+
+```
+Fase H (hardening)          ← Primero. Trivial, sin riesgo. ~1 hora
+     │
+     ├── Fase I (tests)     ← Segundo. Reduce riesgo antes de tocar logica. ~4-6 horas
+     │
+     └── Fase G (deuda)     ← Tercero, en paralelo con I donde no solape. ~6-8 horas
+              │
+              ▼
+         Fase F.5 (runs)    ← Ultimo. Requiere infra. Valida todo lo anterior
+```
+
+**Total estimado:** H + I + G (descontando solapamiento G.9/I.5, G.10/I.4) = ~18 tareas unicas.
