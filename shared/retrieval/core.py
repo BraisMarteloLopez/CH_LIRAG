@@ -68,6 +68,10 @@ class RetrievalConfig:
     kg_gleaning_rounds: int = 0  # DAM-6: rounds de re-extraccion (0 = desactivado)
     lightrag_mode: str = "hybrid"  # F.4/DTm-79: "hybrid" (default), "graph_primary", "local", "global", "naive"
 
+    # DTm-62: Conditional fusion — previene que graph ruidoso destruya ranking vectorial
+    kg_fusion_overlap_threshold: float = 0.3  # overlap ratio minimo para RRF completo
+    kg_fusion_graph_only_cap: float = 0.2  # max fraccion de top_k que pueden ser graph-only docs
+
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
         from shared.config_base import _env, _env_int, _env_float
@@ -90,6 +94,8 @@ class RetrievalConfig:
             kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
             kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
             lightrag_mode=_env("LIGHTRAG_MODE", "hybrid"),
+            kg_fusion_overlap_threshold=_env_float("KG_FUSION_OVERLAP_THRESHOLD", 0.3),
+            kg_fusion_graph_only_cap=_env_float("KG_FUSION_GRAPH_ONLY_CAP", 0.2),
         )
 
 

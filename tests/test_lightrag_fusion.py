@@ -38,6 +38,8 @@ def _make_lightrag(
     fusion_method="rrf",
     rrf_k=60,
     lightrag_mode="hybrid",
+    fusion_overlap_threshold=0.3,
+    fusion_graph_only_cap=0.2,
 ):
     """Crea LightRAGRetriever con dependencias mockeadas."""
     retriever = object.__new__(LightRAGRetriever)
@@ -60,6 +62,9 @@ def _make_lightrag(
     retriever._kg_rrf_k = rrf_k
     retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
     retriever._relationships_vdb = None  # DAM-2: no VDB in unit tests by default
+    # DTm-62: Conditional fusion
+    retriever._fusion_overlap_threshold = fusion_overlap_threshold
+    retriever._fusion_graph_only_cap = fusion_graph_only_cap
     return retriever
 
 
@@ -191,8 +196,12 @@ def test_fuse_weights():
 
 
 def test_fuse_weights_graph_only_doc():
-    """Doc solo del grafo: v_score=0.0, fused = graph_weight * g_score (linear)."""
-    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7, fusion_method="linear")
+    """Doc solo del grafo con full fusion: fused = graph_weight * g_score (linear)."""
+    # Force full fusion by setting threshold=0 (any overlap triggers full)
+    r = _make_lightrag(
+        graph_weight=0.3, vector_weight=0.7,
+        fusion_method="linear", fusion_overlap_threshold=0.0,
+    )
     r._extractor.extract_query_keywords.return_value = (["x"], [])
 
     r._kg.query_entities.return_value = [("d_graph", 1.0)]
@@ -210,6 +219,30 @@ def test_fuse_weights_graph_only_doc():
     idx = result.doc_ids.index("d_graph")
     # fused = 0.7 * 0.0 + 0.3 * 1.0 = 0.3
     assert result.scores[idx] == pytest.approx(0.3)
+    assert result.metadata["fusion_mode"] == "full_rrf"  # threshold=0 forces full
+
+
+def test_fuse_weights_graph_only_doc_vector_first():
+    """Doc solo del grafo con vector_first: score penalizado (DTm-62)."""
+    r = _make_lightrag(graph_weight=0.3, vector_weight=0.7, fusion_method="linear")
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d_graph", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result([], [], [])
+
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d_graph": "content"
+    }
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    # No vector docs and no overlap -> vector_first mode
+    assert result.metadata["fusion_mode"] == "vector_first"
+    assert "d_graph" in result.doc_ids
+    # Score is penalized (0.0 * 0.5 = 0.0 since no vector baseline)
+    assert result.scores[0] == 0.0
 
 
 # =============================================================================
@@ -741,3 +774,163 @@ def test_retrieve_mode_global_only_uses_relationships():
     r._kg.query_entities.assert_not_called()
     # query_by_keywords se llamo (high-level)
     r._kg.query_by_keywords.assert_called_once()
+
+
+# =============================================================================
+# DTm-62: Conditional fusion — overlap gate
+# =============================================================================
+
+
+def test_fuse_strong_signal_uses_full_rrf():
+    """High overlap ratio -> full RRF fusion (fusion_mode='full_rrf')."""
+    r = _make_lightrag(fusion_overlap_threshold=0.3)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    # d1, d2 in both vector and graph -> overlap = 2/2 = 1.0 (> 0.3)
+    r._kg.query_entities.return_value = [("d1", 1.0), ("d2", 0.8)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1", "d2"], ["c1", "c2"], [0.9, 0.8])
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    assert result.metadata["fusion_mode"] == "full_rrf"
+    assert result.metadata["overlap_ratio"] >= 0.3
+
+
+def test_fuse_weak_signal_uses_vector_first():
+    """Low overlap ratio -> vector_first fusion, preserves vector ranking."""
+    r = _make_lightrag(fusion_overlap_threshold=0.3)
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    # Graph returns completely different docs -> overlap = 0/2 = 0.0 (< 0.3)
+    r._kg.query_entities.return_value = [("d_g1", 1.0), ("d_g2", 0.8)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(
+        ["d_v1", "d_v2", "d_v3"], ["cv1", "cv2", "cv3"], [0.9, 0.8, 0.7]
+    )
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d_g1": "cg1", "d_g2": "cg2",
+    }
+
+    result = r._fuse_with_graph("query", vr, top_k=10)
+
+    assert result.metadata["fusion_mode"] == "vector_first"
+    # Vector docs must retain their original order at the top
+    assert result.doc_ids[:3] == ["d_v1", "d_v2", "d_v3"]
+    # Graph-only docs appended after vector docs
+    assert result.metadata["overlap_ratio"] < 0.3
+
+
+def test_vector_first_preserves_vector_ranking_order():
+    """vector_first: vector docs keep exact original positions."""
+    r = _make_lightrag(fusion_overlap_threshold=1.0)  # force vector_first
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d_g", 5.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(
+        ["d1", "d2", "d3"], ["c1", "c2", "c3"], [0.9, 0.7, 0.5]
+    )
+    r._vector_retriever.get_documents_by_ids.return_value = {"d_g": "cg"}
+
+    result = r._fuse_with_graph("query", vr, top_k=10)
+
+    # Even with graph score 5.0, vector docs stay in positions 0-2
+    assert result.doc_ids[0] == "d1"
+    assert result.doc_ids[1] == "d2"
+    assert result.doc_ids[2] == "d3"
+    # Graph doc appended at end
+    assert "d_g" in result.doc_ids
+    assert result.doc_ids.index("d_g") == 3
+
+
+def test_vector_first_caps_graph_only_docs():
+    """vector_first: graph-only docs limited by graph_only_cap."""
+    # cap = 0.2 * 5 = 1 doc max
+    r = _make_lightrag(
+        fusion_overlap_threshold=1.0,  # force vector_first
+        fusion_graph_only_cap=0.2,
+    )
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    # 4 graph-only docs
+    r._kg.query_entities.return_value = [
+        ("g1", 4.0), ("g2", 3.0), ("g3", 2.0), ("g4", 1.0),
+    ]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["v1"], ["cv1"], [0.9])
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "g1": "c1", "g2": "c2", "g3": "c3", "g4": "c4",
+    }
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    # Only 1 graph-only doc should be appended (cap = ceil(5 * 0.2) = 1)
+    graph_only_in_result = [d for d in result.doc_ids if d.startswith("g")]
+    assert len(graph_only_in_result) == 1
+    # Highest scoring graph doc should be the one picked
+    assert graph_only_in_result[0] == "g1"
+
+
+def test_vector_first_graph_only_score_below_vector():
+    """vector_first: graph-only docs get penalized scores below vector."""
+    r = _make_lightrag(fusion_overlap_threshold=1.0)  # force vector_first
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d_g", 10.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.8])
+    r._vector_retriever.get_documents_by_ids.return_value = {"d_g": "cg"}
+
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    v_score = result.scores[result.doc_ids.index("d1")]
+    g_score = result.scores[result.doc_ids.index("d_g")]
+    # Graph-only doc score must be less than vector doc score
+    assert g_score < v_score
+
+
+def test_fuse_overlap_metadata_present():
+    """Metadata always includes fusion_mode and overlap_ratio."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = (["x"], [])
+
+    r._kg.query_entities.return_value = [("d1", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    assert "fusion_mode" in result.metadata
+    assert "overlap_ratio" in result.metadata
+    assert "overlap_count" in result.metadata
+    assert isinstance(result.metadata["overlap_ratio"], float)
+
+
+def test_fuse_no_keywords_includes_fusion_metadata():
+    """Sin keywords -> metadata still has fusion_mode='none'."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = ([], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    assert result.metadata["fusion_mode"] == "none"
+    assert result.metadata["overlap_ratio"] == 0.0
+
+
+def test_fuse_no_graph_results_includes_fusion_metadata():
+    """Graph queries return empty -> fusion_mode='none'."""
+    r = _make_lightrag()
+    r._extractor.extract_query_keywords.return_value = (["x"], ["y"])
+    r._kg.query_entities.return_value = []
+    r._kg.query_by_keywords.return_value = []
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._fuse_with_graph("query", vr, top_k=5)
+
+    assert result.metadata["fusion_mode"] == "none"

@@ -90,6 +90,9 @@ class LightRAGRetriever(BaseRetriever):
         self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
         self._kg_gleaning_rounds = config.kg_gleaning_rounds
         self._lightrag_mode = config.lightrag_mode
+        # DTm-62: Conditional fusion parameters
+        self._fusion_overlap_threshold = config.kg_fusion_overlap_threshold
+        self._fusion_graph_only_cap = config.kg_fusion_graph_only_cap
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -816,12 +819,12 @@ class LightRAGRetriever(BaseRetriever):
         vector_result: RetrievalResult,
         top_k: int,
     ) -> RetrievalResult:
-        """Fusiona resultados de vector search con graph traversal.
+        """Fusiona resultados de vector search con graph traversal (DTm-62).
 
-        1. Extrae keywords de la query (low-level + high-level)
-        2. Graph traversal por entidades (low-level)
-        3. Graph traversal por temas (high-level)
-        4. Fusion via RRF (default) o linear weighted sum
+        Conditional fusion: mide overlap entre canales para decidir estrategia.
+        - Señal fuerte (overlap >= threshold): RRF/linear completo
+        - Señal debil (overlap < threshold): vector-first, graph-only al final
+        Previene que graph ruidoso destruya el ranking vectorial.
         """
         if self._kg is None:
             raise RuntimeError("_fuse_with_graph llamado sin KnowledgeGraph")
@@ -832,9 +835,10 @@ class LightRAGRetriever(BaseRetriever):
         low_level, high_level = self._get_query_keywords(query)
 
         if not low_level and not high_level:
-            # Sin keywords, no hay graph traversal posible
             vector_result.metadata["graph_docs_added"] = 0
             vector_result.metadata["query_keywords"] = {"low": [], "high": []}
+            vector_result.metadata["fusion_mode"] = "none"
+            vector_result.metadata["overlap_ratio"] = 0.0
             return vector_result
 
         # Paso 2: Graph traversal (respeta lightrag_mode: local/global/hybrid)
@@ -844,8 +848,6 @@ class LightRAGRetriever(BaseRetriever):
 
         # Low-level: entidades especificas
         if use_local and low_level:
-            # DAM-1: resolver entidades via VDB (semantic) si disponible,
-            # fallback a string matching si no hay VDB.
             pre_resolved = None
             if self._entities_vdb is not None:
                 pre_resolved = self._resolve_entities_via_vdb(low_level)
@@ -860,8 +862,6 @@ class LightRAGRetriever(BaseRetriever):
 
         # High-level: temas abstractos
         if use_global and high_level:
-            # DAM-2: resolver relaciones via VDB (semantic) si disponible,
-            # fallback a token matching si no hay VDB.
             if self._relationships_vdb is not None:
                 theme_results = self._resolve_relationships_via_vdb(high_level)
             else:
@@ -877,6 +877,8 @@ class LightRAGRetriever(BaseRetriever):
             vector_result.metadata["query_keywords"] = {
                 "low": low_level, "high": high_level,
             }
+            vector_result.metadata["fusion_mode"] = "none"
+            vector_result.metadata["overlap_ratio"] = 0.0
             return vector_result
 
         # Paso 3: Build vector ranking and contents map
@@ -888,7 +890,7 @@ class LightRAGRetriever(BaseRetriever):
             vector_docs[doc_id] = score
             vector_contents[doc_id] = content
 
-        # Paso 4: Recuperar contenido de graph-only docs desde ChromaDB.
+        # Paso 4: Recuperar contenido de graph-only docs desde ChromaDB
         graph_only_ids = [
             did for did in graph_docs if did not in vector_contents
         ]
@@ -902,51 +904,31 @@ class LightRAGRetriever(BaseRetriever):
                 graph_resolved += 1
         graph_unresolved = len(graph_only_ids) - graph_resolved
 
-        # Paso 5: Fusion
-        use_rrf = (self._kg_fusion_method != "linear")
+        # Paso 5 (DTm-62): Conditional fusion — medir overlap entre canales
+        overlap = set(vector_docs.keys()) & set(graph_docs.keys())
+        denominator = min(len(vector_docs), len(graph_docs)) if (vector_docs and graph_docs) else 1
+        overlap_ratio = len(overlap) / denominator if denominator > 0 else 0.0
+        strong_signal = overlap_ratio >= self._fusion_overlap_threshold
 
-        if not use_rrf:
-            # Linear fusion: normalize + weighted sum
-            max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
-            if max_graph_score > 0:
-                graph_docs = {k: v / max_graph_score for k, v in graph_docs.items()}
-            max_vector_score = max(vector_docs.values()) if vector_docs else 1.0
-            if max_vector_score > 0:
-                vector_docs = {k: v / max_vector_score for k, v in vector_docs.items()}
-
-            # DTm-53: si ambos rankings son all-zero, fallback a RRF
-            if max_graph_score == 0 and max_vector_score == 0:
-                logger.warning(
-                    "Linear fusion: scores all-zero en ambos rankings, "
-                    "usando RRF como fallback"
-                )
-                use_rrf = True
-
-        if not use_rrf:
-            all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
-            fused_scores: List[Tuple[str, float]] = []
-            for doc_id in all_doc_ids:
-                v_score = vector_docs.get(doc_id, 0.0)
-                g_score = graph_docs.get(doc_id, 0.0)
-                fused = self._vector_weight * v_score + self._graph_weight * g_score
-                fused_scores.append((doc_id, fused))
-            fused_scores.sort(key=lambda x: x[1], reverse=True)
+        if strong_signal:
+            fusion_mode = "full_rrf"
+            fused_scores = self._full_fusion(
+                vector_docs, graph_docs, top_k,
+            )
         else:
-            # RRF fusion (default): rank-based, robust to score scale differences
-            vector_ranking = sorted(
-                vector_docs.items(), key=lambda x: x[1], reverse=True
-            )
-            graph_ranking = sorted(
-                graph_docs.items(), key=lambda x: x[1], reverse=True
-            )
-            fused_scores = reciprocal_rank_fusion(
-                rankings=[vector_ranking, graph_ranking],
-                weights=[self._vector_weight, self._graph_weight],
-                k=self._kg_rrf_k,
-                top_n=top_k,
+            fusion_mode = "vector_first"
+            graph_only_cap = max(1, int(top_k * self._fusion_graph_only_cap + 0.5))
+            fused_scores = self._vector_first_fusion(
+                vector_result, graph_docs, vector_contents,
+                top_k, graph_only_cap,
             )
 
-        # Paso 7: Construir resultado (solo docs con contenido)
+        logger.debug(
+            f"DTm-62 conditional fusion: overlap={len(overlap)}/{denominator} "
+            f"({overlap_ratio:.2f}), mode={fusion_mode}"
+        )
+
+        # Paso 6: Construir resultado (solo docs con contenido)
         final_ids = []
         final_contents = []
         final_scores = []
@@ -956,7 +938,6 @@ class LightRAGRetriever(BaseRetriever):
                 final_ids.append(doc_id)
                 final_contents.append(vector_contents[doc_id])
                 final_scores.append(score)
-
             if len(final_ids) >= top_k:
                 break
 
@@ -964,9 +945,8 @@ class LightRAGRetriever(BaseRetriever):
             doc_ids=final_ids,
             contents=final_contents,
             scores=final_scores,
-            # 0.0 para docs que provienen solo del grafo (sin similarity score).
             vector_scores=[vector_docs.get(d, 0.0) for d in final_ids],
-            retrieval_time_ms=0.0,  # Se actualiza en el caller
+            retrieval_time_ms=0.0,
             strategy_used=RetrievalStrategy.LIGHT_RAG,
             metadata={
                 "graph_only_candidates": len(graph_only_ids),
@@ -978,21 +958,100 @@ class LightRAGRetriever(BaseRetriever):
                 },
                 "graph_candidates": len(graph_docs),
                 "vector_candidates": len(vector_docs),
+                "fusion_mode": fusion_mode,
+                "overlap_ratio": round(overlap_ratio, 4),
+                "overlap_count": len(overlap),
             },
         )
 
         if graph_unresolved > 0:
-            # DTm-52: warn (not just debug) when graph docs can't be resolved
             logger.warning(
                 f"LightRAG fusion: {graph_unresolved}/{len(graph_only_ids)} "
                 f"graph-only docs sin contenido en ChromaDB (excluidos)"
             )
-        elif graph_only_ids:
-            logger.debug(
-                f"LightRAG fusion: {len(graph_only_ids)} graph-only docs, "
-                f"todos recuperados via lookup. "
-                f"Retornando {len(final_ids)} docs."
-            )
+
+        return result
+
+    def _full_fusion(
+        self,
+        vector_docs: Dict[str, float],
+        graph_docs: Dict[str, float],
+        top_k: int,
+    ) -> List[Tuple[str, float]]:
+        """RRF o linear fusion completo (señal graph fuerte)."""
+        use_rrf = (self._kg_fusion_method != "linear")
+
+        if not use_rrf:
+            max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
+            if max_graph_score > 0:
+                graph_docs = {k: v / max_graph_score for k, v in graph_docs.items()}
+            max_vector_score = max(vector_docs.values()) if vector_docs else 1.0
+            if max_vector_score > 0:
+                vector_docs = {k: v / max_vector_score for k, v in vector_docs.items()}
+
+            if max_graph_score == 0 and max_vector_score == 0:
+                logger.warning(
+                    "Linear fusion: scores all-zero, fallback a RRF"
+                )
+                use_rrf = True
+
+        if not use_rrf:
+            all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
+            fused: List[Tuple[str, float]] = []
+            for doc_id in all_doc_ids:
+                v_score = vector_docs.get(doc_id, 0.0)
+                g_score = graph_docs.get(doc_id, 0.0)
+                combined = self._vector_weight * v_score + self._graph_weight * g_score
+                fused.append((doc_id, combined))
+            fused.sort(key=lambda x: x[1], reverse=True)
+            return fused
+
+        vector_ranking = sorted(
+            vector_docs.items(), key=lambda x: x[1], reverse=True
+        )
+        graph_ranking = sorted(
+            graph_docs.items(), key=lambda x: x[1], reverse=True
+        )
+        return reciprocal_rank_fusion(
+            rankings=[vector_ranking, graph_ranking],
+            weights=[self._vector_weight, self._graph_weight],
+            k=self._kg_rrf_k,
+            top_n=top_k,
+        )
+
+    def _vector_first_fusion(
+        self,
+        vector_result: RetrievalResult,
+        graph_docs: Dict[str, float],
+        contents_map: Dict[str, str],
+        top_k: int,
+        graph_only_cap: int,
+    ) -> List[Tuple[str, float]]:
+        """Vector-first fusion (señal graph debil, DTm-62).
+
+        Mantiene ranking vectorial intacto. Solo append graph-only docs
+        al final, limitados por graph_only_cap.
+        """
+        result: List[Tuple[str, float]] = []
+        seen: set = set()
+
+        # Primero: todos los docs vectoriales en su orden original
+        for doc_id, score in zip(vector_result.doc_ids, vector_result.scores):
+            result.append((doc_id, score))
+            seen.add(doc_id)
+
+        # Segundo: graph-only docs, ordenados por graph score, limitados por cap
+        graph_only = [
+            (did, score) for did, score in graph_docs.items()
+            if did not in seen and did in contents_map
+        ]
+        graph_only.sort(key=lambda x: x[1], reverse=True)
+
+        for doc_id, g_score in graph_only[:graph_only_cap]:
+            # Score bajo para que no compitan con vector docs en downstream ranking
+            min_vector_score = result[-1][1] if result else 0.0
+            penalized_score = min_vector_score * 0.5
+            result.append((doc_id, penalized_score))
 
         return result
 
