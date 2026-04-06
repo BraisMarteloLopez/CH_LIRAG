@@ -44,7 +44,7 @@ sandbox_mteb/                    # Pipeline de evaluacion MTEB/BeIR
   preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
   env.example                    # Plantilla .env
 
-tests/                           # pytest (unit + integration)
+tests/                           # pytest (205+ tests, unit + integration)
 ```
 
 ## Pipeline
@@ -165,11 +165,17 @@ Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarro
 
 **Ronda 2 (robustez):** LRU cache keywords, thread safety, fallbacks, stats.
 
-**Fases A-F (alineacion con original):** Entity VDB, Relationship VDB, description merging, gleaning, graph_primary mode, contexto estructurado.
+**Fases A-F (alineacion con original):** Entity VDB, Relationship VDB, description merging, gleaning, graph_primary mode, contexto estructurado. Pendiente: F.5 (run comparativo).
+
+**Fase H (hardening):** Bare excepts con logging, dead code eliminado, validacion sub-configs.
+
+**Fase I (test coverage):** +42 tests nuevos (checkpoint.py, llm.py, embedding_service.py, gleaning, E2E LIGHT_RAG). Cobertura 86% → 93%.
+
+**Fase G (deuda tecnica):** Stats resilientes, query dedup, keyword cap, entity normalization apostrofes, fingerprint robusto, mypy 26→22.
 
 **DTm-83:** Eliminacion completa de HYBRID_PLUS (-2,570 LOC, -3 deps).
 
-65 issues resueltos (DT-1..9 + DTm-1..83). Ver historial git.
+70+ issues resueltos (DT-1..9 + DTm-1..83 + Fases H/I/G). Ver historial git.
 
 </details>
 

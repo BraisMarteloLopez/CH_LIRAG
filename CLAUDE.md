@@ -7,7 +7,7 @@ Sistema de evaluacion RAG para benchmarking de pipelines de retrieval y generaci
 ## Estructura clave
 
 ```
-shared/                        # Libreria core (3,850 LOC)
+shared/                        # Libreria core (~3,800 LOC)
   types.py                     # Tipos: NormalizedQuery, LoadedDataset, EvaluationRun, Protocols
   metrics.py                   # F1, EM, Accuracy, Faithfulness (LLM-judge)
   llm.py                       # AsyncLLMService (NIM client, async/sync bridge)
@@ -20,12 +20,12 @@ shared/                        # Libreria core (3,850 LOC)
     __init__.py                # Factory get_retriever() — punto de entrada para crear retrievers
     reranker.py                # CrossEncoderReranker (NVIDIARerank)
     lightrag/
-      retriever.py             # LightRAGRetriever: vector + KG dual-level (1,056 LOC)
-      knowledge_graph.py       # KnowledgeGraph in-memory (igraph): entidades, relaciones, BFS (878 LOC)
-      triplet_extractor.py     # Extraccion de tripletas y keywords via LLM (757 LOC)
+      retriever.py             # LightRAGRetriever: vector + KG dual-level (~1,060 LOC)
+      knowledge_graph.py       # KnowledgeGraph in-memory (igraph): entidades, relaciones, BFS (~880 LOC)
+      triplet_extractor.py     # Extraccion de tripletas y keywords via LLM (~770 LOC)
 
-sandbox_mteb/                  # Pipeline de evaluacion (2,816 LOC)
-  config.py                    # MTEBConfig: .env → dataclass validada
+sandbox_mteb/                  # Pipeline de evaluacion (~2,750 LOC)
+  config.py                    # MTEBConfig: .env → dataclass validada (+RerankerConfig.validate)
   evaluator.py                 # Orquestador principal (<600 LOC)
   run.py                       # Entry point CLI (--dry-run, -v, --resume)
   loader.py                    # MinIO/Parquet → LoadedDataset
@@ -37,9 +37,9 @@ sandbox_mteb/                  # Pipeline de evaluacion (2,816 LOC)
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (6,783 LOC, 199+ tests)
+tests/                         # pytest (~7,700 LOC, 205+ tests)
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
-  test_*.py                    # 25 unit test files
+  test_*.py                    # 30 unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
 ```
 
@@ -61,22 +61,21 @@ python -m sandbox_mteb.preflight
 
 ## Convenciones
 
-- **Config via .env**: toda la parametrizacion en `sandbox_mteb/.env`, leida por `MTEBConfig.from_env()` una sola vez. Sub-configs delegadas a `InfraConfig`, `RerankerConfig`, `RetrievalConfig` en shared/
+- **Config via .env**: toda la parametrizacion en `sandbox_mteb/.env`, leida por `MTEBConfig.from_env()` una sola vez. Sub-configs delegadas a `InfraConfig`, `RerankerConfig`, `RetrievalConfig` en shared/. `MTEBConfig.validate()` propaga validacion a sub-configs
 - **Factory pattern**: `get_retriever(config, embedding_model)` en `shared/retrieval/__init__.py` crea el retriever correcto
 - **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas. `HYBRID_PLUS` fue eliminada (DTm-83)
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
 - **Tests**: `conftest.py` mockea modulos de infra (boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Mocks siempre a nivel de funcion, nunca modulos enteros
-- **Logging**: JSONL estructurado via `shared/structured_logging.py`
+- **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
 - **Idioma**: codigo y comentarios en ingles/espanol mezclado (historico). Docstrings y variables en ingles
-- **Numeracion de deuda**: serie DT-N (bugs originales, 9 resueltos) + serie DTm-N (refactor/mejoras). Gap DTm-39..44 no asignados
 
 ## Estrategia LIGHT_RAG — como funciona
 
 Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
-**Indexacion**: LLM extrae tripletas (entidad, relacion, entidad) de cada doc → KnowledgeGraph in-memory (igraph) + ChromaDB para vector search. Entity VDB y Relationship VDB para resolucion semantica.
+**Indexacion**: LLM extrae tripletas (entidad, relacion, entidad) de cada doc → KnowledgeGraph in-memory (igraph) + ChromaDB para vector search. Entity VDB y Relationship VDB para resolucion semantica. Stats se resetean automaticamente al inicio de cada batch (G.5). Gleaning opcional via `KG_GLEANING_ROUNDS`.
 
-**Retrieval**: vector search + query keywords via LLM + graph traversal dual-level (entity VDB low-level + relationship VDB high-level) + fusion RRF.
+**Retrieval**: vector search + query keywords via LLM (dedup automatico de queries identicas, cap 20 keywords/nivel) + graph traversal dual-level (entity VDB low-level + relationship VDB high-level) + fusion RRF.
 
 **Modos** (`LIGHTRAG_MODE`): `hybrid` (default), `graph_primary`, `local`, `global`, `naive`.
 
@@ -93,64 +92,52 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 ### Media — mejoras funcionales
 - **DTm-64**: Normalizacion scores incomparable entre canales vector/graph. RRF mitiga parcialmente. Ubicacion: `retriever.py`
-- **DTm-55**: Stats se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. Ubicacion: `retriever.py`
-- **DTm-56**: Fingerprint collision edge case con corpus vacio. Ubicacion: `retriever.py`
 - **DTm-72**: BFS scoring ciego a la relacion (todas las aristas pesan igual). Ubicacion: `knowledge_graph.py`
-- **DTm-77**: Test gap: gleaning sin tests (`glean_from_doc_async`). [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4)
-- **DTm-78**: Test gap: E2E solo cubre SIMPLE_VECTOR, no LIGHT_RAG. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5)
 - **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
 
 ### Baja — code quality
-- **DTm-82**: Errores mypy sin resolver (`union-attr`, `dict-item`, imports condicionales). [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9)
-- **DTm-57**: Normalizacion entidades pierde apostrofes. Ubicacion: `knowledge_graph.py:_normalize_name()`
-- **DTm-58**: No dedup queries en batch keyword extraction. Ubicacion: `triplet_extractor.py`
-- **DTm-60**: `reset_stats()` nunca se llama automaticamente. Ubicacion: `triplet_extractor.py`
-- **DTm-61**: Sin validacion de tamano de keywords del LLM. Ubicacion: `triplet_extractor.py`
-- **DTm-12**: Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. Aceptado
-- **DTm-13**: No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. Aceptado
+- **DTm-82**: 22 errores mypy restantes (`return-value`, `assignment`, `arg-type`). [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9)
+- **DTm-12**: Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente. Aceptado
+- **DTm-13**: No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02. Aceptado
 
-## Bugs y code smells pendientes (detectados en auditoria)
+### Resueltos en esta sesion
+- **DTm-55** (G.1): Stats snapshot/restore si KG build falla
+- **DTm-56** (G.2): Fingerprint incluye `kg_max_entities` en hash
+- **DTm-57** (G.7): Entity normalization preserva apostrofes (`O'Brien`)
+- **DTm-58** (G.4): Dedup queries identicas en batch keyword extraction
+- **DTm-60** (G.5): `reset_stats()` auto al inicio de `extract_batch_async()`
+- **DTm-61** (G.6): Keyword size cap 20/nivel
+- **DTm-77** (I.5): Tests gleaning — 6 tests en `test_gleaning.py`
+- **DTm-78** (I.4): Test E2E LIGHT_RAG en `test_pipeline_e2e.py`
+- **DTm-83**: HYBRID_PLUS eliminado (-2,570 LOC, -3 deps)
+- **Fase H**: Bare excepts con logging, dead code, validacion sub-configs
 
-### Bugs y code smells resueltos (Fase H)
+## Bare excepts aceptados (no criticos)
 
-- `deque[Tuple[str, int]]` (knowledge_graph.py:517): NO era bug — `from __future__ import annotations` protege
-- Bare excepts: añadido `logger.debug(...)` en 5 sitios (stemmer, evaluator cleanup, 3 VDB cleanups)
-- Preflight: captura `as e` y muestra error al usuario
-- Dead code eliminado: `list_available_datasets()`, loop `optional` vacio, `import sys`
-- Validacion: `MTEBConfig.validate()` ahora propaga a `RerankerConfig.validate()`
-
-### Bare excepts pendientes (no criticos)
-
-Estos `except Exception as e:` ya logean el error pero no lo re-lanzan. Aceptable para wrappers:
+Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable para wrappers de infraestructura:
 
 | Ubicacion | Contexto |
 |---|---|
 | `reranker.py:147` | Reranking error — retorna fallback sin rerank |
 | `vector_store.py:125, 141, 178` | Operaciones ChromaDB — retorna lista vacia |
 
-## Test coverage — gaps conocidos
-
-### Modulos sin tests unitarios (por riesgo)
-
-| Modulo | LOC | Riesgo | Nota |
-|---|---|---|---|
-| `sandbox_mteb/checkpoint.py` | 160 | **Alto** | Perdida de datos si falla en runs de horas. Atomic writes no testeados |
-| `shared/llm.py` | 460 | **Alto** | Core de generacion. Solo testeado via integration tests |
-| `sandbox_mteb/embedding_service.py` | 192 | Medio | Auto-deteccion context window afecta calidad |
-| `shared/report.py` | 287 | Bajo | Export JSON/CSV, ejercitado indirectamente |
-| `shared/structured_logging.py` | 124 | Bajo | Utilidad de logging |
-| `shared/vector_store.py` | 275 | Bajo | Wrapper ChromaDB, solo integration |
-
-### Metricas de tests
+## Test coverage
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | 180+ en 25 archivos |
+| Tests unitarios | 205+ en 30 archivos |
 | Tests integracion | 19 en 3 archivos |
-| Ratio test/produccion | 0.76x (6,783 / 8,883 LOC) |
-| Modulos cubiertos | 25/29 (86%) |
+| Ratio test/produccion | 0.87x (~7,700 / ~8,800 LOC) |
+| Modulos cubiertos | 29/31 (93%) |
 | Tests con assertions | 100% |
-| Mocks a nivel funcion | 100% (ningun mock de modulo entero) |
+| Mocks a nivel funcion | 100% |
+
+### Modulos sin tests dedicados (riesgo bajo)
+
+| Modulo | LOC | Nota |
+|---|---|---|
+| `shared/report.py` | 287 | Export JSON/CSV, ejercitado indirectamente |
+| `shared/structured_logging.py` | 124 | Utilidad de logging |
 
 ## Que NO tocar sin contexto
 
@@ -161,70 +148,19 @@ Estos `except Exception as e:` ya logean el error pero no lo re-lanzan. Aceptabl
 - `requirements.lock` — es un pin de produccion, no tocar sin razon
 - `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio (DTm-45). Parece complejo pero es necesario
 
-## Proximos pasos — plan por fases
+## Proximos pasos
 
-### Fase H: Hardening (bugs de auditoria) — COMPLETADA
+### Pendiente: Run comparativo F.5 (requiere infra NIM + MinIO)
 
-7 tareas ejecutadas. H.1 descartada (no era bug). 163 tests passing, 0 regresiones.
-Resumen: 5 bare excepts con logging, 3 dead code eliminados, validacion sub-config propagada.
-
-### Fase I: Test coverage critico — reducir riesgo de regresion
-
-Añade tests unitarios a los modulos de mayor riesgo sin cobertura.
-
-| ID | Tarea | Archivos | Esfuerzo | Descripcion |
-|---|---|---|---|---|
-| I.1 | Tests `checkpoint.py` | `tests/test_checkpoint.py` (nuevo) | Medio | `save_checkpoint()` atomicidad, `load_checkpoint()` deserializacion, JSON corrupto, resume parcial |
-| I.2 | Tests `llm.py` | `tests/test_llm.py` (nuevo) | Medio | `AsyncLLMService.invoke()` con mock langchain, `_strip_thinking_tags()`, `LLMMetrics.record_request()`, retry logic |
-| I.3 | Tests `embedding_service.py` | `tests/test_embedding_service.py` (nuevo) | Bajo | `query_model_context_window()` con mock HTTP, batch embed con retry |
-| I.4 | Test E2E LIGHT_RAG (DTm-78) | `tests/test_pipeline_e2e.py` | Medio | Parametrizar con LIGHT_RAG mocked. Verificar KG build + VDBs + fusion + metricas. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) |
-| I.5 | Tests gleaning (DTm-77) | `tests/test_triplet_extractor.py` | Bajo | 5 tests para `glean_from_doc_async()`: mock LLM, empty entities, prompt format, rounds=0, integracion KG. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) |
-
-**Criterio de completitud:** cobertura modulos sube de 86% a 95%+. `checkpoint.py` y `llm.py` con tests.
-
-### Fase G: Deuda tecnica menor — ya planificada
-
-10 tareas independientes, ejecutable en paralelo con I.
-
-| ID | Tarea | DTm | Esfuerzo |
-|---|---|---|---|
-| G.1 | Stats extractor resilientes (snapshot/restore) | DTm-55 | Bajo |
-| G.2 | Fingerprint robusto (incluir len + config hash) | DTm-56 | Bajo |
-| G.4 | Dedup queries en batch keywords | DTm-58 | Bajo |
-| G.5 | `reset_stats()` al inicio de `extract_batch()` | DTm-60 | Trivial |
-| G.6 | Keyword size cap (max 20/nivel) | DTm-61 | Trivial |
-| G.7 | Entity normalization (preservar guiones internos) | DTm-57 | Bajo |
-| G.9 | Tests gleaning | DTm-77 | Bajo |
-| G.10 | E2E LIGHT_RAG | DTm-78 | Medio |
-| G.11 | LLM synthesis merge (DAM-4 completo) | DTm-80 | Medio |
-| G.13 | Mypy cleanup | DTm-82 | Bajo |
-
-**Nota:** G.9 = I.5 y G.10 = I.4 (misma tarea, doble referencia). Ejecutar una vez.
-
-### Fase F.5: Run comparativo — validacion funcional
-
-Requiere infraestructura NIM + MinIO. No es codigo, es ejecucion y analisis.
-
-| ID | Tarea | Dependencia | Descripcion |
-|---|---|---|---|
-| F.5a | Run SIMPLE_VECTOR baseline | Infra NIM | 50q, 3500 docs, DEV_MODE, seed=42 |
-| F.5b | Run LIGHT_RAG hybrid | F.5a (misma config) | Mismo config, RETRIEVAL_STRATEGY=LIGHT_RAG |
-| F.5c | Run LIGHT_RAG graph_primary | F.5a | LIGHTRAG_MODE=graph_primary |
-| F.5d | Analisis comparativo | F.5a+b+c | Comparar MRR, Hit@5, Recall. Decide si fusion funciona (DTm-62) |
+| Tarea | Descripcion |
+|---|---|
+| F.5a | Run SIMPLE_VECTOR baseline: 50q, 3500 docs, DEV_MODE, seed=42 |
+| F.5b | Run LIGHT_RAG hybrid: misma config |
+| F.5c | Run LIGHT_RAG graph_primary |
+| F.5d | Analisis comparativo: MRR, Hit@5, Recall |
 
 **Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs 0.52 pre-VDBs). Si no, revisar DTm-62/DTm-64.
 
-### Orden de ejecucion recomendado
+### Pendiente: DTm-80 — LLM synthesis para merge de descripciones (DAM-4 completo)
 
-```
-Fase H (hardening)          ← Primero. Trivial, sin riesgo. ~1 hora
-     │
-     ├── Fase I (tests)     ← Segundo. Reduce riesgo antes de tocar logica. ~4-6 horas
-     │
-     └── Fase G (deuda)     ← Tercero, en paralelo con I donde no solape. ~6-8 horas
-              │
-              ▼
-         Fase F.5 (runs)    ← Ultimo. Requiere infra. Valida todo lo anterior
-```
-
-**Total estimado:** H + I + G (descontando solapamiento G.9/I.5, G.10/I.4) = ~18 tareas unicas.
+Feature que cambia logica de negocio. Actual: concatenacion con ` | `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
