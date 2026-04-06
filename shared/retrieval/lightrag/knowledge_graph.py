@@ -144,8 +144,9 @@ class KnowledgeGraph:
             src_name = self._graph.vs[edge.source]["name"]
             tgt_name = self._graph.vs[edge.target]["name"]
             edge_rels = edge["relations"]
-            # DAM-5: weight = numero de relaciones en esta arista
-            weight = len(edge_rels)
+            # V.3/DAM-5: weight = numero de docs unicos que mencionan esta arista
+            unique_docs = {r.get("doc_id", "") for r in edge_rels if r.get("doc_id")}
+            weight = max(len(unique_docs), 1)
             for rel_info in edge_rels:
                 relations.append({
                     "source": src_name,

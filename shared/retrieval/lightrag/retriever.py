@@ -331,6 +331,7 @@ class LightRAGRetriever(BaseRetriever):
             config={
                 "CHROMA_COLLECTION_NAME": entity_collection_name,
                 "EMBEDDING_BATCH_SIZE": 50,
+                "HNSW_SPACE": "cosine",  # V.1: cosine distance for semantic matching
             },
             embedding_model=self._embedding_model,
         )
@@ -356,6 +357,11 @@ class LightRAGRetriever(BaseRetriever):
             f"({len(lc_docs)} entidades indexadas)"
         )
 
+    # V.2: Max cosine distance to consider a match.
+    # Cosine distance range: [0, 2]. 0 = identical, 1 = orthogonal, 2 = opposite.
+    # 0.8 is permissive: allows semantically related but lexically different matches.
+    _ENTITY_VDB_MAX_DISTANCE = 0.8
+
     def _resolve_entities_via_vdb(
         self,
         keywords: List[str],
@@ -365,6 +371,9 @@ class LightRAGRetriever(BaseRetriever):
 
         Reemplaza _resolve_entity_names (string matching) con semantic search
         contra entities_vdb (DAM-1).
+
+        V.2: Filtra resultados por threshold de cosine distance para evitar
+        matches irrelevantes.
 
         Returns:
             Lista de entity names (normalizados) encontrados en el KG.
@@ -381,7 +390,10 @@ class LightRAGRetriever(BaseRetriever):
             results = self._entities_vdb.similarity_search_with_score(
                 keyword, k=top_k,
             )
-            for doc, score in results:
+            for doc, distance in results:
+                # V.2: filter by cosine distance threshold
+                if distance > self._ENTITY_VDB_MAX_DISTANCE:
+                    continue
                 entity_name = doc.metadata.get("entity_name", "")
                 if entity_name and entity_name not in seen:
                     seen.add(entity_name)
@@ -424,6 +436,7 @@ class LightRAGRetriever(BaseRetriever):
             config={
                 "CHROMA_COLLECTION_NAME": rel_collection_name,
                 "EMBEDDING_BATCH_SIZE": 50,
+                "HNSW_SPACE": "cosine",  # V.1: cosine distance for semantic matching
             },
             embedding_model=self._embedding_model,
         )
