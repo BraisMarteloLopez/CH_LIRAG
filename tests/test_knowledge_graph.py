@@ -983,3 +983,94 @@ def test_get_relations_for_docs_empty():
     """Doc sin relaciones retorna lista vacia."""
     kg = KnowledgeGraph()
     assert kg.get_relations_for_docs(["nonexistent"]) == []
+
+
+# =============================================================================
+# DTm-73: Co-occurrence bridging
+# =============================================================================
+
+
+def test_co_occurrence_bridges_disconnected_components():
+    """Entidades del mismo doc se conectan, reduciendo componentes."""
+    kg = KnowledgeGraph()
+    # Dos componentes desconectados
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc1", [_rel("C", "D", "r2")])
+    # A-B y C-D son 2 componentes (A,B no conectan con C,D via triplet)
+    components_before = len(kg._graph.connected_components())
+    assert components_before == 2
+
+    edges_added = kg.build_co_occurrence_edges()
+
+    # doc1 tiene A, B, C, D -> co-occurrence los conecta
+    assert edges_added > 0
+    components_after = len(kg._graph.connected_components())
+    assert components_after < components_before
+
+
+def test_co_occurrence_no_duplicate_edges():
+    """No crea aristas donde ya existe una relacion LLM."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    edges_before = kg._graph.ecount()
+
+    edges_added = kg.build_co_occurrence_edges()
+
+    # A y B ya estan conectados -> no se crea arista nueva
+    assert edges_added == 0
+    assert kg._graph.ecount() == edges_before
+
+
+def test_co_occurrence_single_entity_doc_no_edges():
+    """Doc con una sola entidad no genera aristas co-occurrence."""
+    kg = KnowledgeGraph()
+    # Un doc con self-loop entities (solo 1 entidad unica)
+    kg.add_triplets("doc1", [_rel("A", "A", "self")])
+
+    edges_added = kg.build_co_occurrence_edges()
+    assert edges_added == 0
+
+
+def test_co_occurrence_caps_pairs_per_doc():
+    """Maximo de pares por doc se respeta."""
+    kg = KnowledgeGraph()
+    # Crear muchas entidades en un solo doc (N entidades -> N*(N-1)/2 pares)
+    # Con 10 entidades -> 45 pares posibles
+    triplets = []
+    for i in range(10):
+        name_a = f"E{i}"
+        name_b = f"E{i+10}"
+        triplets.append(_rel(name_a, name_b, f"r{i}"))
+    kg.add_triplets("doc1", triplets)
+
+    edges_added = kg.build_co_occurrence_edges()
+    # Cap = 10 pares por doc, y ya hay 10 aristas LLM
+    # Pares sin arista: 20 entidades -> muchos pares posibles, capped at 10
+    assert edges_added <= kg._MAX_COOCCURRENCE_PAIRS_PER_DOC
+
+
+def test_co_occurrence_enables_bfs_across_components():
+    """BFS puede alcanzar docs de otro componente tras bridging."""
+    kg = KnowledgeGraph()
+    # Componente 1: A-B en doc1
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    # Componente 2: C-D en doc2
+    kg.add_triplets("doc2", [_rel("C", "D", "r2")])
+    # doc3 menciona B y C (bridge potencial)
+    kg.add_triplets("doc3", [_rel("B", "X", "r3")])
+    kg.add_triplets("doc3", [_rel("C", "Y", "r4")])
+
+    # Sin bridging: BFS desde A no alcanza doc2
+    kg.build_keyword_indices()
+    results_before = kg.query_entities(["A"], max_hops=3, max_docs=20)
+    doc_ids_before = {doc_id for doc_id, _ in results_before}
+
+    # Con bridging: B y C se conectan via doc3 co-occurrence
+    kg.build_co_occurrence_edges()
+    kg.build_keyword_indices()
+    results_after = kg.query_entities(["A"], max_hops=3, max_docs=20)
+    doc_ids_after = {doc_id for doc_id, _ in results_after}
+
+    # Ahora doc2 deberia ser alcanzable via A -> B -> (co-occur) -> C -> doc2
+    assert "doc2" in doc_ids_after
+    assert len(doc_ids_after) > len(doc_ids_before)

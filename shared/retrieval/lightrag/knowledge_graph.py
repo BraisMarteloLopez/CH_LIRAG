@@ -833,6 +833,68 @@ class KnowledgeGraph:
         """
         self._rebuild_keyword_indices()
 
+    # -----------------------------------------------------------------
+    # DTm-73: Co-occurrence bridging
+    # -----------------------------------------------------------------
+
+    # Maximo de pares co-occurrence por documento para evitar O(N^2)
+    _MAX_COOCCURRENCE_PAIRS_PER_DOC = 10
+
+    def build_co_occurrence_edges(self) -> int:
+        """Crea aristas entre entidades que co-ocurren en un mismo documento.
+
+        Reduce fragmentacion del grafo (DTm-73) conectando entidades que
+        aparecen en el mismo doc pero no tienen relacion explicita del LLM.
+        Las aristas se crean con relacion "co-occurs" y peso bajo.
+
+        Debe llamarse despues de add_triplets() y antes de build_keyword_indices().
+
+        Returns:
+            Numero de aristas co-occurrence creadas.
+        """
+        edges_added = 0
+
+        for doc_id, entity_names in self._doc_to_entities.items():
+            names = [n for n in entity_names if n in self._entities and self._has_node(n)]
+            if len(names) < 2:
+                continue
+
+            pairs_this_doc = 0
+            for i in range(len(names)):
+                if pairs_this_doc >= self._MAX_COOCCURRENCE_PAIRS_PER_DOC:
+                    break
+                for j in range(i + 1, len(names)):
+                    if pairs_this_doc >= self._MAX_COOCCURRENCE_PAIRS_PER_DOC:
+                        break
+                    src, tgt = names[i], names[j]
+                    # Solo crear si no existe arista (no sobreescribir relaciones LLM)
+                    if self._get_edge_id(src, tgt) is not None:
+                        continue
+
+                    src_vid = self._name_to_vid[src]
+                    tgt_vid = self._name_to_vid[tgt]
+                    self._graph.add_edge(
+                        src_vid, tgt_vid,
+                        relations=[{
+                            "relation": "co-occurs",
+                            "description": f"co-occurrence in {doc_id}",
+                            "doc_id": doc_id,
+                        }],
+                    )
+                    edges_added += 1
+                    pairs_this_doc += 1
+
+        if edges_added > 0:
+            components_after = 0
+            if self._graph.vcount() > 0:
+                components_after = len(self._graph.connected_components())
+            logger.info(
+                f"KnowledgeGraph: {edges_added} co-occurrence edges added (DTm-73), "
+                f"{components_after} connected components"
+            )
+
+        return edges_added
+
     def _rebuild_keyword_indices(self) -> None:
         """Reconstruye _kw_entity_index y _kw_relation_index desde el estado actual."""
         self._kw_entity_index = defaultdict(set)

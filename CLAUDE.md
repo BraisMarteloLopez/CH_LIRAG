@@ -86,7 +86,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 ## Deuda tecnica vigente (priorizada)
 
 ### Alta — afectan calidad de resultados
-- **DTm-73**: Grafo fragmentado impide bridging entre componentes desconectados. Ubicacion: `knowledge_graph.py`
+(sin items pendientes)
 
 ### Media — mejoras funcionales
 - **DTm-64**: Normalizacion scores incomparable entre canales vector/graph. RRF mitiga parcialmente. Ubicacion: `retriever.py`
@@ -112,6 +112,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 - **DTm-62**: Conditional fusion en `_fuse_with_graph()` — overlap gate previene graph ruidoso destruir ranking vectorial. Config: `KG_FUSION_OVERLAP_THRESHOLD`, `KG_FUSION_GRAPH_ONLY_CAP`
 - **Tests audit**: assert faltante en test_evaluator.py, ClientError mock roto en test_loader.py. Suite: 340 passed, 0 failed
 - **DTm-63**: Eviction por importancia en entity cap — reemplaza FIFO silencioso. Entidades con 1 doc y degree<=1 se evictan para dar paso a nuevas. `_find_eviction_candidate()`, `_evict_entity()` en `knowledge_graph.py`
+- **DTm-73**: Co-occurrence bridging reduce fragmentacion del grafo. `build_co_occurrence_edges()` conecta entidades que co-ocurren en un mismo doc. Cap 10 pares/doc. Se ejecuta en post-build
 
 ## Bare excepts aceptados (no criticos)
 
