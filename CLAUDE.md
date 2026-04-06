@@ -86,7 +86,6 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 ## Deuda tecnica vigente (priorizada)
 
 ### Alta — afectan calidad de resultados
-- **DTm-62**: Fusion KG destruye ranking (MRR -33pp). Pendiente run comparativo F.5. Ubicacion: `retriever.py:_fuse_with_graph()`
 - **DTm-63**: Entity cap 100K con sesgo FIFO en orden de indexacion. Ubicacion: `knowledge_graph.py`
 - **DTm-73**: Grafo fragmentado impide bridging entre componentes desconectados. Ubicacion: `knowledge_graph.py`
 
@@ -111,6 +110,8 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 - **DTm-78** (I.4): Test E2E LIGHT_RAG en `test_pipeline_e2e.py`
 - **DTm-83**: HYBRID_PLUS eliminado (-2,570 LOC, -3 deps)
 - **Fase H**: Bare excepts con logging, dead code, validacion sub-configs
+- **DTm-62**: Conditional fusion en `_fuse_with_graph()` — overlap gate previene graph ruidoso destruir ranking vectorial. Config: `KG_FUSION_OVERLAP_THRESHOLD`, `KG_FUSION_GRAPH_ONLY_CAP`
+- **Tests audit**: assert faltante en test_evaluator.py, ClientError mock roto en test_loader.py. Suite: 340 passed, 0 failed
 
 ## Bare excepts aceptados (no criticos)
 
@@ -125,19 +126,14 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | 205+ en 30 archivos |
+| Tests unitarios | 340 en 30 archivos |
 | Tests integracion | 19 en 3 archivos |
-| Ratio test/produccion | 0.87x (~7,700 / ~8,800 LOC) |
+| Ratio test/produccion | 0.86x (~7,700 / ~8,940 LOC) |
 | Modulos cubiertos | 29/31 (93%) |
 | Tests con assertions | 100% |
 | Mocks a nivel funcion | 100% |
 
-### Modulos sin tests dedicados (riesgo bajo)
-
-| Modulo | LOC | Nota |
-|---|---|---|
-| `shared/report.py` | 287 | Export JSON/CSV, ejercitado indirectamente |
-| `shared/structured_logging.py` | 124 | Utilidad de logging |
+**Referencia completa**: ver `TESTS.md` — mapa test→produccion, atributos `object.__new__()`, trampas de mock, gaps de cobertura, reglas de modificacion.
 
 ## Que NO tocar sin contexto
 
