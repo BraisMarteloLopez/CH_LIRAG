@@ -3,6 +3,9 @@ Tests DT-6: contexto >4000 chars pasa integro al LLM judge (sin truncar).
 
 Cubre faithfulness (sync/async). Adicionalmente: contexto vacio retorna 0.0
 sin invocar judge.
+
+Consolida test_dt6_01_faithfulness_sync.py y test_dt6_02_faithfulness_async.py
+(eliminados por duplicacion — misma cobertura via parametrize aqui).
 """
 import asyncio
 

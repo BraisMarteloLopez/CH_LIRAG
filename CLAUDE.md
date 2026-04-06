@@ -126,10 +126,10 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | 340 en 30 archivos |
+| Tests unitarios | 393 en 33 archivos |
 | Tests integracion | 19 en 3 archivos |
-| Ratio test/produccion | 0.86x (~7,700 / ~8,940 LOC) |
-| Modulos cubiertos | 29/31 (93%) |
+| Ratio test/produccion | 0.97x (~8,670 / ~8,940 LOC) |
+| Modulos cubiertos | 31/31 (100%) |
 | Tests con assertions | 100% |
 | Mocks a nivel funcion | 100% |
 
