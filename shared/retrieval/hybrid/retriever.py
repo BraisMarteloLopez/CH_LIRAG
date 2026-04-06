@@ -140,7 +140,7 @@ class HybridRetriever(BaseRetriever):
 
         self.embedding_model = embedding_model
 
-        from .core import SimpleVectorRetriever
+        from ..core import SimpleVectorRetriever
 
         self._vector_retriever = SimpleVectorRetriever(
             config,

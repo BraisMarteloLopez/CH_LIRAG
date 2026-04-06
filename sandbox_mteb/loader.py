@@ -113,6 +113,12 @@ class MinIOLoader:
             corpus_df = self._download_parquet(f"{dataset_name}/corpus.parquet")
             qrels_df = self._download_parquet(f"{dataset_name}/qrels.parquet")
 
+            # DTm-75: detectar cuando todas las descargas fallan
+            if queries_df is None and corpus_df is None:
+                raise ValueError(
+                    f"No se pudo descargar queries ni corpus para '{dataset_name}'"
+                )
+
             self._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
 
             # Metadata
