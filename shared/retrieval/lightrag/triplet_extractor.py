@@ -81,7 +81,9 @@ Focus on:
 - Entities mentioned indirectly
 
 Return ONLY new entities and relationships not in the previous list.
-Same JSON format as before.
+
+Return JSON in this exact format:
+{{"entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}]}}
 
 Text:
 {text}"""
