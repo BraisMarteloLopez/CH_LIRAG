@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.retrieval.knowledge_graph import KGEntity, KGRelation, KnowledgeGraph
+from shared.retrieval.lightrag.knowledge_graph import KGEntity, KGRelation, KnowledgeGraph
 
 
 # =============================================================================
@@ -334,18 +334,37 @@ def test_add_entity_metadata_unknown_entity():
 # KG16: max_entities cap (DTm-21)
 # =============================================================================
 
-def test_max_entities_cap():
-    """Entidades nuevas se rechazan al alcanzar el cap."""
+def test_max_entities_cap_with_eviction():
+    """Al alcanzar el cap, entidades de baja importancia se evictan (DTm-63)."""
     kg = KnowledgeGraph(max_entities=3)
     # A, B -> 2 entidades
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
     assert kg.num_entities == 2
 
-    # C, D -> C se acepta (3ra), D se rechaza (4ta > cap)
-    # La tripleta entera se salta porque D no puede crearse
+    # C, D -> cap=3, C se acepta (3ra). D necesita evictar: A o B son
+    # candidatos (1 doc, degree 1). Uno se evicta, D entra.
     added = kg.add_triplets("doc2", [_rel("C", "D", "r")])
-    assert kg.num_entities == 3
-    assert added == 0  # tripleta descartada porque D no cabe
+    assert kg.num_entities == 3  # cap respetado
+    assert added == 1  # tripleta anadida gracias a eviction
+    assert kg._entities_evicted >= 1
+    # C y D deben estar en el grafo
+    assert "c" in kg._entities  # normalized
+    assert "d" in kg._entities
+
+
+def test_max_entities_cap_no_eviction_possible():
+    """Sin candidatos evictables, la tripleta se descarta como antes."""
+    kg = KnowledgeGraph(max_entities=2)
+    # A, B -> 2 entidades, ambos en doc1 y doc2 (multi-doc = no evictable)
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "r2")])
+    assert kg.num_entities == 2
+    # Ahora A y B tienen source_doc_ids={doc1, doc2} -> no evictables
+
+    # C, D -> no caben, no hay candidato evictable -> drop
+    added = kg.add_triplets("doc3", [_rel("C", "D", "r")])
+    assert kg.num_entities == 2
+    assert added == 0
     assert kg._entities_dropped > 0
 
 
@@ -359,6 +378,59 @@ def test_max_entities_existing_entities_still_updated():
     added = kg.add_triplets("doc2", [_rel("A", "B", "collaborates")])
     assert added == 1
     assert kg.num_entities == 2  # sin entidades nuevas
+
+
+def test_eviction_prefers_low_doc_count():
+    """Eviction elige entidades con menos source_doc_ids (DTm-63)."""
+    kg = KnowledgeGraph(max_entities=4)
+    # A, B en doc1 y doc2 — 2 docs cada uno (no evictables)
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "r2")])
+    # C, D en doc3 — 1 doc cada uno, degree 1 (evictables)
+    kg.add_triplets("doc3", [_rel("C", "D", "r3")])
+    assert kg.num_entities == 4
+
+    # E necesita 1 slot nuevo -> C o D evicta (1 doc, degree 1)
+    # A necesita A existente (ya existe, no consume slot)
+    added = kg.add_triplets("doc4", [_rel("A", "E", "r4")])
+    assert added == 1
+    assert kg.num_entities == 4  # cap respetado
+    assert "a" in kg._entities  # A sobrevive (2 docs)
+    assert "b" in kg._entities  # B sobrevive (2 docs)
+    assert "e" in kg._entities  # E entro
+    # C o D fue evicta (la que el algoritmo eligio)
+    evicted = {"c", "d"} - set(kg._entities.keys())
+    assert len(evicted) == 1
+
+
+def test_eviction_cleans_indices():
+    """Eviction limpia _entity_to_docs y _doc_to_entities (DTm-63)."""
+    kg = KnowledgeGraph(max_entities=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    assert "a" in kg._entity_to_docs
+    assert "a" in kg._doc_to_entities.get("doc1", set())
+
+    # C, D necesitan evictar A o B
+    kg.add_triplets("doc2", [_rel("C", "D", "r")])
+    # La entidad evicta no debe estar en los indices
+    evicted = {"a", "b"} - set(kg._entities.keys())
+    assert len(evicted) >= 1
+    evicted_name = evicted.pop()
+    assert evicted_name not in kg._entity_to_docs
+
+
+def test_eviction_serialization_roundtrip():
+    """entities_evicted se preserva en to_dict/from_dict (DTm-63)."""
+    kg = KnowledgeGraph(max_entities=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    kg.add_triplets("doc2", [_rel("C", "D", "r")])  # triggers eviction
+
+    data = kg.to_dict()
+    assert "entities_evicted" in data
+    assert data["entities_evicted"] >= 1
+
+    kg2 = KnowledgeGraph.from_dict(data)
+    assert kg2._entities_evicted == kg._entities_evicted
 
 
 # =============================================================================
@@ -412,6 +484,7 @@ def test_get_stats_includes_memory_and_cap():
     assert "approx_memory_mb" in stats
     assert stats["approx_memory_mb"] >= 0
     assert stats["entities_dropped"] == 0
+    assert stats["entities_evicted"] == 0
     assert stats["max_entities"] == 100
 
 
@@ -611,3 +684,468 @@ def test_keyword_query_uses_index():
     results = kg.query_by_keywords(["gravity"])
     doc_ids = [d for d, _ in results]
     assert "doc2" in doc_ids
+
+
+# =============================================================================
+# DTm-70: Fuzzy entity matching in query_entities
+# =============================================================================
+
+def test_resolve_entity_names_exact_match():
+    """DTm-70: exact match devuelve confidence 1.0."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "field")])
+    kg.build_keyword_indices()
+
+    resolved = kg._resolve_entity_names(["Albert Einstein"])
+    assert len(resolved) == 1
+    name, confidence = resolved[0]
+    assert name == kg._normalize_name("Albert Einstein")
+    assert confidence == 1.0
+
+
+def test_resolve_entity_names_fuzzy_partial_name():
+    """DTm-70: nombre parcial matchea via token overlap."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Vlatko Gilić", "Serbia", "nationality")])
+    kg.build_keyword_indices()
+
+    # "Vlatko" no existe como entidad exacta, pero matchea via token
+    resolved = kg._resolve_entity_names(["Vlatko"])
+    names = [n for n, _ in resolved]
+    assert kg._normalize_name("Vlatko Gilić") in names
+
+
+def test_resolve_entity_names_no_match():
+    """DTm-70: nombre sin overlap no produce resultados."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "field")])
+    kg.build_keyword_indices()
+
+    resolved = kg._resolve_entity_names(["Completely Unknown Entity"])
+    assert len(resolved) == 0
+
+
+def test_resolve_entity_names_dedup():
+    """DTm-70: misma entidad resuelta desde dos keywords no se duplica."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Albert Einstein", "Physics", "field")])
+    kg.build_keyword_indices()
+
+    resolved = kg._resolve_entity_names(["Albert Einstein", "Albert Einstein"])
+    assert len(resolved) == 1
+
+
+def test_query_entities_fuzzy_does_bfs():
+    """DTm-70: fuzzy match activa BFS y descubre docs via graph traversal."""
+    kg = KnowledgeGraph()
+    # Doc A: The Surveyor -> Vlatko Gilić
+    kg.add_triplets("docA", [_rel("The Surveyor", "Vlatko Gilić", "directed by")])
+    # Doc B: Vlatko Gilić -> Serbian (entity merge: Vlatko Gilić in both docs)
+    kg.add_triplets("docB", [_rel("Vlatko Gilić", "Serbian", "nationality")])
+    kg.build_keyword_indices()
+
+    # Query con nombre parcial "Surveyor" (sin "The", que se stripea)
+    # Exact match funciona porque _normalize_name quita "The"
+    results = kg.query_entities(["The Surveyor"], max_hops=2, max_docs=10)
+    result_dict = dict(results)
+    # BFS debe descubrir docB via Vlatko Gilić
+    assert "docA" in result_dict
+    assert "docB" in result_dict
+
+    # Ahora con un nombre que SOLO funciona por fuzzy match
+    results_fuzzy = kg.query_entities(["Gilić"], max_hops=1, max_docs=10)
+    result_dict_fuzzy = dict(results_fuzzy)
+    # "Gilić" no es entidad exacta, pero fuzzy matchea "vlatko gilić"
+    # BFS desde "vlatko gilić": docA (hop 0) + docB (hop 0) + neighbours
+    assert "docA" in result_dict_fuzzy or "docB" in result_dict_fuzzy
+
+
+def test_query_entities_fuzzy_confidence_scales_score():
+    """DTm-70: fuzzy match con confidence < 1.0 reduce hop scores."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Vlatko Gilić", "Film", "works in")])
+    kg.build_keyword_indices()
+
+    # Exact match: confidence=1.0, hop_score at depth 0 = 1.0
+    results_exact = kg.query_entities(["Vlatko Gilić"], max_hops=0, max_docs=10)
+
+    # Fuzzy match: confidence<1.0, hop_score at depth 0 = confidence
+    results_fuzzy = kg.query_entities(["Gilić"], max_hops=0, max_docs=10)
+
+    if results_exact and results_fuzzy:
+        exact_score = dict(results_exact).get("doc1", 0)
+        fuzzy_score = dict(results_fuzzy).get("doc1", 0)
+        assert fuzzy_score <= exact_score
+
+
+# =============================================================================
+# query_entities con pre_resolved (DAM-1)
+# =============================================================================
+
+def test_query_entities_pre_resolved_skips_string_matching():
+    """Con pre_resolved, query_entities salta _resolve_entity_names."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="friendship", source_doc_id="doc1"),
+    ])
+    kg.build_keyword_indices()
+
+    # Pre-resolved con nombre normalizado que existe
+    results = kg.query_entities(
+        ["irrelevant"], max_hops=1, max_docs=10,
+        pre_resolved=["alice"],
+    )
+    doc_ids = [d for d, _ in results]
+    assert "doc1" in doc_ids
+
+
+def test_query_entities_pre_resolved_filters_unknown_entities():
+    """pre_resolved filtra entidades que no existen en el KG."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="friendship", source_doc_id="doc1"),
+    ])
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(
+        [], max_hops=1, max_docs=10,
+        pre_resolved=["nonexistent_entity"],
+    )
+    assert results == []
+
+
+def test_get_all_entities_returns_dict():
+    """get_all_entities retorna dict de entidades."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    entities = kg.get_all_entities()
+    assert "alice" in entities
+    assert "bob" in entities
+    assert entities["alice"].name == "alice"
+
+
+def test_get_all_relations_returns_list():
+    """get_all_relations retorna lista de dicts con weight."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="friendship", source_doc_id="doc1"),
+    ])
+    kg.add_triplets("doc2", [
+        KGRelation(source="Alice", target="Bob", relation="works_with",
+                   description="colleagues", source_doc_id="doc2"),
+    ])
+    relations = kg.get_all_relations()
+    assert len(relations) >= 2
+    # All relations have required keys
+    for rel in relations:
+        assert "source" in rel
+        assert "target" in rel
+        assert "relation" in rel
+        assert "doc_id" in rel
+        assert "weight" in rel
+    # Weight = number of relations on the edge (2: knows + works_with)
+    assert any(r["weight"] == 2 for r in relations)
+
+
+# =============================================================================
+# merge_entity_descriptions (DAM-4)
+# =============================================================================
+
+def test_merge_entity_descriptions_single_doc():
+    """Entidad con 1 descripcion no se modifica."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    merged = kg.merge_entity_descriptions()
+    assert merged == 0
+    assert kg.get_all_entities()["alice"].description == "Alice is a researcher"
+
+
+def test_merge_entity_descriptions_multi_doc():
+    """Entidad con N descripciones distintas se concatenan."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    kg.add_entity_metadata("Alice", "PERSON", "Alice works at MIT")
+    merged = kg.merge_entity_descriptions()
+    assert merged == 1
+    desc = kg.get_all_entities()["alice"].description
+    assert "researcher" in desc
+    assert "MIT" in desc
+
+
+def test_merge_entity_descriptions_dedup():
+    """Descripciones duplicadas se deduplican."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    kg.add_entity_metadata("Alice", "PERSON", "Alice works at MIT")
+    merged = kg.merge_entity_descriptions()
+    assert merged == 1
+    desc = kg.get_all_entities()["alice"].description
+    # Should have 2 unique descriptions, not 3
+    assert desc.count("|") == 1
+
+
+def test_merge_entity_descriptions_serialization_roundtrip():
+    """_descriptions sobreviven a serialization/deserialization."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "desc1")
+    kg.add_entity_metadata("Alice", "PERSON", "desc2")
+
+    data = kg.to_dict()
+    kg2 = KnowledgeGraph.from_dict(data)
+    assert kg2.get_all_entities()["alice"]._descriptions == ["desc1", "desc2"]
+
+
+# =============================================================================
+# F.3: get_entities_for_docs / get_relations_for_docs (DAM-8)
+# =============================================================================
+
+
+def test_get_entities_for_docs_returns_linked_entities():
+    """get_entities_for_docs retorna entidades vinculadas a doc_ids."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Charlie", "David", "works_with")])
+
+    entities = kg.get_entities_for_docs(["doc1"])
+    names = {e["entity"] for e in entities}
+    assert "alice" in names
+    assert "bob" in names
+    assert "charlie" not in names
+
+
+def test_get_entities_for_docs_deduplicates():
+    """Entidades que aparecen en multiples docs no se duplican."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Alice", "Charlie", "knows")])
+
+    entities = kg.get_entities_for_docs(["doc1", "doc2"])
+    names = [e["entity"] for e in entities]
+    assert names.count("alice") == 1
+
+
+def test_get_entities_for_docs_empty():
+    """Doc sin entidades retorna lista vacia."""
+    kg = KnowledgeGraph()
+    assert kg.get_entities_for_docs(["nonexistent"]) == []
+
+
+def test_get_relations_for_docs_returns_linked_relations():
+    """get_relations_for_docs retorna relaciones vinculadas a doc_ids."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Charlie", "David", "works_with")])
+
+    rels = kg.get_relations_for_docs(["doc1"])
+    assert len(rels) == 1
+    # KGRelation preserva case original del constructor
+    assert rels[0]["source"] == "Alice"
+    assert rels[0]["target"] == "Bob"
+    assert rels[0]["relation"] == "knows"
+
+
+def test_get_relations_for_docs_deduplicates():
+    """Misma relacion en multiples docs no se duplica."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_triplets("doc2", [_rel("Alice", "Bob", "knows")])
+
+    rels = kg.get_relations_for_docs(["doc1", "doc2"])
+    # KGRelation.source/target preserva case original
+    keys = [(r["source"], r["target"], r["relation"]) for r in rels]
+    assert keys.count(("Alice", "Bob", "knows")) == 1
+
+
+def test_get_relations_for_docs_empty():
+    """Doc sin relaciones retorna lista vacia."""
+    kg = KnowledgeGraph()
+    assert kg.get_relations_for_docs(["nonexistent"]) == []
+
+
+# =============================================================================
+# DTm-73: Co-occurrence bridging
+# =============================================================================
+
+
+def test_co_occurrence_bridges_disconnected_components():
+    """Entidades del mismo doc se conectan, reduciendo componentes."""
+    kg = KnowledgeGraph()
+    # Dos componentes desconectados
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc1", [_rel("C", "D", "r2")])
+    # A-B y C-D son 2 componentes (A,B no conectan con C,D via triplet)
+    components_before = len(kg._graph.connected_components())
+    assert components_before == 2
+
+    edges_added = kg.build_co_occurrence_edges()
+
+    # doc1 tiene A, B, C, D -> co-occurrence los conecta
+    assert edges_added > 0
+    components_after = len(kg._graph.connected_components())
+    assert components_after < components_before
+
+
+def test_co_occurrence_no_duplicate_edges():
+    """No crea aristas donde ya existe una relacion LLM."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    edges_before = kg._graph.ecount()
+
+    edges_added = kg.build_co_occurrence_edges()
+
+    # A y B ya estan conectados -> no se crea arista nueva
+    assert edges_added == 0
+    assert kg._graph.ecount() == edges_before
+
+
+def test_co_occurrence_single_entity_doc_no_edges():
+    """Doc con una sola entidad no genera aristas co-occurrence."""
+    kg = KnowledgeGraph()
+    # Un doc con self-loop entities (solo 1 entidad unica)
+    kg.add_triplets("doc1", [_rel("A", "A", "self")])
+
+    edges_added = kg.build_co_occurrence_edges()
+    assert edges_added == 0
+
+
+def test_co_occurrence_caps_pairs_per_doc():
+    """Maximo de pares por doc se respeta."""
+    kg = KnowledgeGraph()
+    # Crear muchas entidades en un solo doc (N entidades -> N*(N-1)/2 pares)
+    # Con 10 entidades -> 45 pares posibles
+    triplets = []
+    for i in range(10):
+        name_a = f"E{i}"
+        name_b = f"E{i+10}"
+        triplets.append(_rel(name_a, name_b, f"r{i}"))
+    kg.add_triplets("doc1", triplets)
+
+    edges_added = kg.build_co_occurrence_edges()
+    # Cap = 10 pares por doc, y ya hay 10 aristas LLM
+    # Pares sin arista: 20 entidades -> muchos pares posibles, capped at 10
+    assert edges_added <= kg._MAX_COOCCURRENCE_PAIRS_PER_DOC
+
+
+def test_co_occurrence_enables_bfs_across_components():
+    """BFS puede alcanzar docs de otro componente tras bridging."""
+    kg = KnowledgeGraph()
+    # Componente 1: A-B en doc1
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    # Componente 2: C-D en doc2
+    kg.add_triplets("doc2", [_rel("C", "D", "r2")])
+    # doc3 menciona B y C (bridge potencial)
+    kg.add_triplets("doc3", [_rel("B", "X", "r3")])
+    kg.add_triplets("doc3", [_rel("C", "Y", "r4")])
+
+    # Sin bridging: BFS desde A no alcanza doc2
+    kg.build_keyword_indices()
+    results_before = kg.query_entities(["A"], max_hops=3, max_docs=20)
+    doc_ids_before = {doc_id for doc_id, _ in results_before}
+
+    # Con bridging: B y C se conectan via doc3 co-occurrence
+    kg.build_co_occurrence_edges()
+    kg.build_keyword_indices()
+    results_after = kg.query_entities(["A"], max_hops=3, max_docs=20)
+    doc_ids_after = {doc_id for doc_id, _ in results_after}
+
+    # Ahora doc2 deberia ser alcanzable via A -> B -> (co-occur) -> C -> doc2
+    assert "doc2" in doc_ids_after
+    assert len(doc_ids_after) > len(doc_ids_before)
+
+
+# =============================================================================
+# DTm-72: BFS weighted by edge strength
+# =============================================================================
+
+
+def test_bfs_weighted_strong_edge_scores_higher():
+    """Docs alcanzados via aristas fuertes (multi-doc) puntuan mas alto."""
+    kg = KnowledgeGraph()
+    # A -> B via 5 docs (strong edge)
+    for i in range(5):
+        kg.add_triplets(f"doc_strong_{i}", [_rel("A", "B", "knows")])
+    # A -> C via 1 doc (weak edge)
+    kg.add_triplets("doc_weak", [_rel("A", "C", "met")])
+    # B asociado a doc_target_strong
+    kg.add_triplets("doc_target_strong", [_rel("B", "X", "r")])
+    # C asociado a doc_target_weak
+    kg.add_triplets("doc_target_weak", [_rel("C", "Y", "r")])
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(["A"], max_hops=2, max_docs=20)
+    score_map = dict(results)
+
+    # doc_target_strong reachable via A->B->X (strong edge A-B)
+    # doc_target_weak reachable via A->C->Y (weak edge A-C)
+    # Strong path should score higher
+    assert score_map.get("doc_target_strong", 0) > score_map.get("doc_target_weak", 0)
+
+
+def test_bfs_weighted_co_occurrence_lower_than_llm_edge():
+    """Co-occurrence edges (weight=1) producen scores mas bajos que LLM edges.
+
+    Setup: A is the query entity.
+    - B connected to A via LLM edge (2 docs -> weight=2)
+    - C connected to A via co-occurrence edge only (weight=1)
+    - Both B and C have exclusive docs only reachable at depth=1 from A
+    """
+    kg = KnowledgeGraph()
+    # A -> B via LLM (2 docs, weight=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    kg.add_triplets("doc2", [_rel("A", "B", "works_with")])
+    # B has exclusive doc (only reachable via A->B at depth=1)
+    kg.add_triplets("doc_b_only", [_rel("B", "Xb", "r")])
+    # A and C appear in same doc (no LLM relation between them)
+    kg.add_triplets("doc_shared", [_rel("A", "Za", "r")])
+    kg.add_triplets("doc_shared", [_rel("C", "Zc", "r")])
+    # C has exclusive doc (only reachable via A->C at depth=1)
+    kg.add_triplets("doc_c_only", [_rel("C", "Xc", "r")])
+    # Build co-occurrence: A-C connected via doc_shared
+    kg.build_co_occurrence_edges()
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(["A"], max_hops=1, max_docs=20)
+    score_map = dict(results)
+
+    # doc_b_only reachable via A->B (LLM edge, weight=2) at depth=1
+    # doc_c_only reachable via A->C (co-occurrence, weight=1) at depth=1
+    score_b = score_map.get("doc_b_only", 0)
+    score_c = score_map.get("doc_c_only", 0)
+    assert score_b > 0 and score_c > 0, f"Both docs should be reachable: b={score_b}, c={score_c}"
+    assert score_b > score_c, f"LLM edge score ({score_b}) should beat co-occurrence ({score_c})"
+
+
+def test_bfs_weighted_depth_zero_unaffected():
+    """Entidades a depth=0 (la propia) no se ven afectadas por edge weight."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(["A"], max_hops=1, max_docs=20)
+    score_map = dict(results)
+
+    # doc1 esta asociado directamente a A (depth=0), score = confidence / (1+0) = 1.0
+    assert score_map.get("doc1", 0) >= 1.0

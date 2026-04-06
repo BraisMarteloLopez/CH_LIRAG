@@ -3,12 +3,16 @@ Retrieval strategies for RAG evaluation.
 
 Estrategias soportadas:
   - SIMPLE_VECTOR: embedding search puro via ChromaDB
-  - HYBRID_PLUS: BM25+Vector+RRF + entity cross-linking (spaCy NER)
   - LIGHT_RAG: Vector + Knowledge Graph dual-level (LLM triplet extraction)
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from shared.llm import AsyncLLMService
 
 from shared.types import EmbeddingModelProtocol
 
@@ -19,12 +23,7 @@ from .core import (
     BaseRetriever,
     SimpleVectorRetriever,
 )
-from .hybrid_retriever import HybridRetriever, HAS_BM25, HAS_TANTIVY
-from .hybrid_plus_retriever import HybridPlusRetriever
-from .lightrag_retriever import LightRAGRetriever
-from .tantivy_index import TantivyIndex
-from .entity_linker import HAS_SPACY
-from .knowledge_graph import HAS_IGRAPH, HAS_NETWORKX
+from .lightrag import LightRAGRetriever, HAS_IGRAPH
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ def get_retriever(
     embedding_model: EmbeddingModelProtocol,
     collection_name: Optional[str] = None,
     embedding_batch_size: int = 0,
-    llm_service: Optional[object] = None,
+    llm_service: Optional["AsyncLLMService"] = None,
 ) -> BaseRetriever:
     """
     Factory para obtener un retriever segun la estrategia en config.
@@ -56,17 +55,6 @@ def get_retriever(
         return SimpleVectorRetriever(
             config, embedding_model, collection_name,
             embedding_batch_size=embedding_batch_size,
-        )
-
-    if strategy == RetrievalStrategy.HYBRID_PLUS:
-        return HybridPlusRetriever(
-            config=config,
-            embedding_model=embedding_model,
-            collection_name=collection_name,
-            embedding_batch_size=embedding_batch_size,
-            max_cross_refs=config.entity_max_cross_refs,
-            min_shared_entities=config.entity_min_shared,
-            max_entity_doc_fraction=config.entity_max_doc_fraction,
         )
 
     if strategy == RetrievalStrategy.LIGHT_RAG:
@@ -93,11 +81,7 @@ __all__ = [
     "RetrievalResult",
     "BaseRetriever",
     "SimpleVectorRetriever",
-    "HybridRetriever",
-    "HybridPlusRetriever",
     "LightRAGRetriever",
-    "HAS_SPACY",
     "HAS_IGRAPH",
-    "HAS_NETWORKX",
     "get_retriever",
 ]

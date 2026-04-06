@@ -26,8 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shared.retrieval.knowledge_graph import KGEntity, KGRelation
-from shared.retrieval.triplet_extractor import TripletExtractor
+from shared.retrieval.lightrag.knowledge_graph import KGEntity, KGRelation
+from shared.retrieval.lightrag.triplet_extractor import TripletExtractor
 
 
 # =============================================================================
@@ -322,7 +322,7 @@ def test_relation_description_truncated():
 def test_valid_entity_types_accepted():
     """Todos los VALID_ENTITY_TYPES se aceptan sin modificar (DTm-16)."""
     ext = _make_extractor()
-    from shared.retrieval.triplet_extractor import VALID_ENTITY_TYPES
+    from shared.retrieval.lightrag.triplet_extractor import VALID_ENTITY_TYPES
     for etype in VALID_ENTITY_TYPES:
         raw = f'{{"entities": [{{"name": "Test Entity", "type": "{etype}"}}], "relations": []}}'
         entities, _ = ext._parse_extraction_json(raw, "doc1")

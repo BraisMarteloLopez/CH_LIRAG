@@ -14,7 +14,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from shared.types import EmbeddingModelProtocol
 
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 class RetrievalStrategy(Enum):
     """Estrategias de retrieval disponibles."""
     SIMPLE_VECTOR = auto()
-    HYBRID_PLUS = auto()
     LIGHT_RAG = auto()
 
 
@@ -45,41 +44,33 @@ class RetrievalConfig:
     strategy: RetrievalStrategy = RetrievalStrategy.SIMPLE_VECTOR
     retrieval_k: int = 20
 
-    # Pesos RRF (HYBRID_PLUS) — DTm-24: renombrados para distinguir de kg_*_weight
-    rrf_bm25_weight: float = 0.5
-    rrf_vector_weight: float = 0.5
-    rrf_k: int = 60
-    pre_fusion_k: int = 150
-
-    # BM25
-    bm25_language: str = "en"
-
     # HNSW (ChromaDB): num_threads=1 reduce no-determinismo del grafo
     # (elimina variabilidad de threading). No garantiza reproducibilidad
     # total: ChromaDB no soporta hnsw:random_seed. Ver DTm-13.
     hnsw_num_threads: int = 1
 
-    # Entity cross-linking (HYBRID_PLUS)
-    entity_max_cross_refs: int = 3
-    entity_min_shared: int = 1
-    entity_max_doc_fraction: float = 0.05
-
-    # Graph expansion cap (HYBRID_PLUS / LIGHT_RAG). 0 = sin limite.
+    # Graph expansion cap (LIGHT_RAG). 0 = sin limite.
     max_graph_expansion: int = 30
 
     # Knowledge graph (LIGHT_RAG)
-    kg_max_hops: int = 2
+    kg_max_hops: int = 1  # DAM-7: 1-hop como el original, configurable via KG_MAX_HOPS
     kg_max_text_chars: int = 3000
     kg_max_entities: int = 0
     kg_graph_weight: float = 0.3
     kg_vector_weight: float = 0.7
     kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
     kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
-    kg_rrf_k: int = 60  # Constante k para RRF (mismo default que HYBRID_PLUS)
+    kg_rrf_k: int = 60  # Constante k para RRF
     kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
     kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
-    kg_batch_docs_per_call: int = 10  # docs por LLM call en batch extraction (DTm-67)
+    kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction (DTm-67)
     kg_graph_overfetch_factor: int = 2  # graph traversal pide N * top_k candidatos
+    kg_gleaning_rounds: int = 0  # DAM-6: rounds de re-extraccion (0 = desactivado)
+    lightrag_mode: str = "hybrid"  # F.4/DTm-79: "hybrid" (default), "graph_primary", "local", "global", "naive"
+
+    # DTm-62: Conditional fusion — previene que graph ruidoso destruya ranking vectorial
+    kg_fusion_overlap_threshold: float = 0.3  # overlap ratio minimo para RRF completo
+    kg_fusion_graph_only_cap: float = 0.2  # max fraccion de top_k que pueden ser graph-only docs
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -87,17 +78,9 @@ class RetrievalConfig:
         return cls(
             strategy=RetrievalStrategy[_env("RETRIEVAL_STRATEGY", "SIMPLE_VECTOR")],
             retrieval_k=_env_int("RETRIEVAL_K", 20),
-            rrf_bm25_weight=_env_float("RRF_BM25_WEIGHT", _env_float("RETRIEVAL_BM25_WEIGHT", 0.5)),
-            rrf_vector_weight=_env_float("RRF_VECTOR_WEIGHT", _env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5)),
-            pre_fusion_k=_env_int("RETRIEVAL_PRE_FUSION_K", 150),
-            rrf_k=_env_int("RETRIEVAL_RRF_K", 60),
-            bm25_language=_env("RETRIEVAL_BM25_LANGUAGE", "en"),
             hnsw_num_threads=_env_int("HNSW_NUM_THREADS", 1),
-            entity_max_cross_refs=_env_int("ENTITY_MAX_CROSS_REFS", 3),
-            entity_min_shared=_env_int("ENTITY_MIN_SHARED", 1),
-            entity_max_doc_fraction=_env_float("ENTITY_MAX_DOC_FRACTION", 0.05),
             max_graph_expansion=_env_int("MAX_GRAPH_EXPANSION", 30),
-            kg_max_hops=_env_int("KG_MAX_HOPS", 2),
+            kg_max_hops=_env_int("KG_MAX_HOPS", 1),
             kg_max_text_chars=_env_int("KG_MAX_TEXT_CHARS", 3000),
             kg_max_entities=_env_int("KG_MAX_ENTITIES", 0),
             kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),
@@ -107,8 +90,12 @@ class RetrievalConfig:
             kg_rrf_k=_env_int("KG_RRF_K", 60),
             kg_keyword_max_tokens=_env_int("KG_KEYWORD_MAX_TOKENS", 1024),
             kg_extraction_max_tokens=_env_int("KG_EXTRACTION_MAX_TOKENS", 4096),
-            kg_batch_docs_per_call=_env_int("KG_BATCH_DOCS_PER_CALL", 10),
+            kg_batch_docs_per_call=_env_int("KG_BATCH_DOCS_PER_CALL", 5),
             kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
+            kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
+            lightrag_mode=_env("LIGHTRAG_MODE", "hybrid"),
+            kg_fusion_overlap_threshold=_env_float("KG_FUSION_OVERLAP_THRESHOLD", 0.3),
+            kg_fusion_graph_only_cap=_env_float("KG_FUSION_GRAPH_ONLY_CAP", 0.2),
         )
 
 
@@ -123,7 +110,6 @@ class RetrievalResult:
     contents: List[str]
     scores: List[float]
 
-    bm25_scores: Optional[List[float]] = None
     vector_scores: Optional[List[float]] = None
 
     retrieval_time_ms: float = 0.0
@@ -351,7 +337,8 @@ class SimpleVectorRetriever(BaseRetriever):
         """
         if not self._vector_store or not doc_ids:
             return {}
-        return self._vector_store.get_documents_by_ids(doc_ids)
+        result: Dict[str, str] = self._vector_store.get_documents_by_ids(doc_ids)
+        return result
 
     def clear_index(self) -> None:
         if self._vector_store:
@@ -360,10 +347,54 @@ class SimpleVectorRetriever(BaseRetriever):
         logger.debug("Indice limpiado")
 
 
+# =============================================================================
+# RECIPROCAL RANK FUSION (RRF)
+# =============================================================================
+
+def reciprocal_rank_fusion(
+    rankings: List[List[Tuple[str, float]]],
+    weights: Optional[List[float]] = None,
+    k: int = 60,
+    top_n: int = 10,
+) -> List[Tuple[str, float]]:
+    """
+    Fusiona multiples rankings usando RRF.
+    RRF_score(d) = SUM weight_i / (k + rank_i(d))
+    """
+    if not rankings:
+        return []
+
+    num_rankings = len(rankings)
+
+    if weights is None or len(weights) != num_rankings:
+        if weights is not None and len(weights) != num_rankings:
+            logger.warning(
+                f"weights ({len(weights)}) != rankings ({num_rankings}). "
+                "Pesos iguales."
+            )
+        weights = [1.0 / num_rankings] * num_rankings
+
+    rrf_scores: Dict[str, float] = {}
+
+    for ranking_idx, ranking in enumerate(rankings):
+        weight = weights[ranking_idx]
+        for rank, (doc_id, _score) in enumerate(ranking, start=1):
+            rrf_contribution = weight / (k + rank)
+            rrf_scores[doc_id] = (
+                rrf_scores.get(doc_id, 0.0) + rrf_contribution
+            )
+
+    sorted_results = sorted(
+        rrf_scores.items(), key=lambda x: x[1], reverse=True
+    )
+    return sorted_results[:top_n]
+
+
 __all__ = [
     "RetrievalStrategy",
     "RetrievalConfig",
     "RetrievalResult",
     "BaseRetriever",
     "SimpleVectorRetriever",
+    "reciprocal_rank_fusion",
 ]

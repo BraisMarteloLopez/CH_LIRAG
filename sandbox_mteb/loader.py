@@ -75,10 +75,6 @@ class MinIOLoader:
             logger.error(f"Error conexion MinIO: {e}")
             return False
 
-    def list_available_datasets(self) -> List[str]:
-        manifest = self._get_manifest()
-        return manifest.get("datasets", [])
-
     def load_dataset(
         self,
         dataset_name: str,
@@ -112,6 +108,12 @@ class MinIOLoader:
             queries_df = self._download_parquet(f"{dataset_name}/queries.parquet")
             corpus_df = self._download_parquet(f"{dataset_name}/corpus.parquet")
             qrels_df = self._download_parquet(f"{dataset_name}/qrels.parquet")
+
+            # DTm-75: detectar cuando todas las descargas fallan
+            if queries_df is None and corpus_df is None:
+                raise ValueError(
+                    f"No se pudo descargar queries ni corpus para '{dataset_name}'"
+                )
 
             self._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
 
@@ -229,7 +231,8 @@ class MinIOLoader:
         full_key = f"{self.prefix}/{key}"
         try:
             resp = self.client.get_object(Bucket=self.bucket, Key=full_key)
-            return json.loads(resp["Body"].read().decode("utf-8"))
+            data = json.loads(resp["Body"].read().decode("utf-8"))
+            return dict(data) if isinstance(data, dict) else None
         except ClientError:
             return None
 

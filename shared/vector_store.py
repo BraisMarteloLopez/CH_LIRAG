@@ -65,9 +65,12 @@ class ChromaVectorStore:
         # siendo no-determinista entre runs con distinto collection_name.
         # Ver DTm-13 en README.md.
         self._hnsw_num_threads = config.get("HNSW_NUM_THREADS", 1)
+        self._hnsw_space = config.get("HNSW_SPACE")  # "cosine", "l2", or None (default l2)
         self._collection_metadata = {
             "hnsw:num_threads": self._hnsw_num_threads,
         }
+        if self._hnsw_space:
+            self._collection_metadata["hnsw:space"] = self._hnsw_space
 
         # Crear cliente Chroma nativo para control directo de colecciones
         if self.persist_directory:

@@ -7,7 +7,7 @@ Extraido de evaluator.py para reducir su tamano (Fase B descomposicion).
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from shared.types import QueryRetrievalDetail
 from shared.retrieval.core import BaseRetriever
@@ -76,12 +76,13 @@ class RetrievalExecutor:
             configured_strategy = self._config.retrieval.strategy
 
             # Seleccionar metodo de retrieval
+            retriever = self._retriever  # narrowed: not None (guarded above)
             def _do_retrieve(top_k: int):
                 if query_vector is not None:
-                    return self._retriever.retrieve_by_vector(
+                    return retriever.retrieve_by_vector(
                         query_text, query_vector, top_k=top_k
                     )
-                return self._retriever.retrieve(query_text, top_k=top_k)
+                return retriever.retrieve(query_text, top_k=top_k)
 
             def _check_strategy(result) -> None:
                 """Detecta discrepancia entre estrategia configurada y ejecutada (DTm-38)."""
@@ -191,4 +192,78 @@ def format_context(contents: List[str], max_length: int) -> str:
     return separator.join(parts)
 
 
-__all__ = ["RetrievalExecutor", "format_context"]
+def format_structured_context(
+    contents: List[str],
+    kg_entities: List[Dict[str, Any]],
+    kg_relations: List[Dict[str, Any]],
+    max_length: int,
+) -> str:
+    """Formatea contexto con secciones KG estructuradas (F.3/DAM-8).
+
+    Formato alineado con el original HKUDS/LightRAG:
+    - Knowledge Graph Data (Entity): JSON lines de entidades
+    - Knowledge Graph Data (Relationship): JSON lines de relaciones
+    - Document Chunks: contenido de documentos con reference_id
+
+    Las secciones KG tienen prioridad en el budget de caracteres.
+    El espacio restante se asigna a document chunks.
+    """
+    import json
+
+    parts: List[str] = []
+    used = 0
+
+    # Seccion 1: Entidades
+    if kg_entities:
+        entities_lines = "\n".join(
+            json.dumps(e, ensure_ascii=False) for e in kg_entities
+        )
+        section = (
+            "Knowledge Graph Data (Entity):\n\n"
+            f"```json\n{entities_lines}\n```"
+        )
+        parts.append(section)
+        used += len(section)
+
+    # Seccion 2: Relaciones
+    if kg_relations:
+        relations_lines = "\n".join(
+            json.dumps(r, ensure_ascii=False) for r in kg_relations
+        )
+        section = (
+            "Knowledge Graph Data (Relationship):\n\n"
+            f"```json\n{relations_lines}\n```"
+        )
+        parts.append(section)
+        used += len(section)
+
+    # Seccion 3: Document Chunks (budget restante)
+    chunk_budget = max_length - used - 100  # buffer para separadores
+    if chunk_budget > 0 and contents:
+        chunk_parts: List[str] = []
+        chunk_used = 0
+        for i, content in enumerate(contents, 1):
+            entry = json.dumps(
+                {"reference_id": i, "content": content},
+                ensure_ascii=False,
+            )
+            if chunk_used + len(entry) + 1 > chunk_budget:
+                break
+            chunk_parts.append(entry)
+            chunk_used += len(entry) + 1  # +1 for newline
+
+        if chunk_parts:
+            chunks_str = "\n".join(chunk_parts)
+            section = (
+                "Document Chunks:\n\n"
+                f"```json\n{chunks_str}\n```"
+            )
+            parts.append(section)
+
+    if not parts:
+        return "[No se encontraron documentos]"
+
+    return "\n\n".join(parts)
+
+
+__all__ = ["RetrievalExecutor", "format_context", "format_structured_context"]

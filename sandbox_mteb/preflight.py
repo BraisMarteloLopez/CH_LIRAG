@@ -9,7 +9,7 @@ Uso:
     python -m sandbox_mteb.preflight --env /path    # .env alternativo
 
 Checks:
-    1. Dependencias criticas (networkx, chromadb, langchain, etc.)
+    1. Dependencias criticas (igraph, chromadb, langchain, etc.)
     2. Config .env valida para LIGHT_RAG
     3. Conectividad NIM (embedding, LLM, reranker si habilitado)
     4. Conectividad MinIO + dataset disponible
@@ -41,7 +41,7 @@ def check_dependencies() -> List[Tuple[bool, str]]:
     results = []
 
     critical = [
-        ("networkx", "Knowledge Graph (LIGHT_RAG)"),
+        ("igraph", "Knowledge Graph (LIGHT_RAG)"),
         ("chromadb", "Vector store"),
         ("langchain_nvidia_ai_endpoints", "NIM access"),
         ("langchain_core", "LangChain core"),
@@ -49,11 +49,6 @@ def check_dependencies() -> List[Tuple[bool, str]]:
         ("pyarrow", "Parquet I/O"),
         ("boto3", "MinIO/S3 client"),
     ]
-    optional = [
-        ("spacy", "NER (solo HYBRID_PLUS, no requerido para LIGHT_RAG)"),
-        ("tantivy", "BM25 (solo HYBRID_PLUS)"),
-    ]
-
     for pkg, desc in critical:
         def _check_pkg(p=pkg):
             mod = importlib.import_module(p)
@@ -61,18 +56,6 @@ def check_dependencies() -> List[Tuple[bool, str]]:
             return f"v{version}"
         ok, msg = _check(f"{pkg} ({desc})", _check_pkg)
         results.append((ok, msg))
-
-    for pkg, desc in optional:
-        def _check_pkg(p=pkg):
-            mod = importlib.import_module(p)
-            version = getattr(mod, "__version__", "?")
-            return f"v{version}"
-        ok, msg = _check(f"{pkg} ({desc})", _check_pkg)
-        if not ok:
-            # Optional: downgrade to warning
-            results.append((True, msg.replace("[FAIL]", "[WARN]")))
-        else:
-            results.append((ok, msg))
 
     return results
 
@@ -234,8 +217,8 @@ def check_smoke_llm(env_path: str) -> List[Tuple[bool, str]]:
     try:
         from sandbox_mteb.config import MTEBConfig
         config = MTEBConfig.from_env(env_path)
-    except Exception:
-        results.append((False, "  [SKIP] Config no cargada"))
+    except Exception as e:
+        results.append((False, f"  [SKIP] Config no cargada: {e}"))
         return results
 
     def _smoke():

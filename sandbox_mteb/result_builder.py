@@ -117,10 +117,6 @@ def build_run(
     config_snapshot = {
         "retrieval_strategy": config.retrieval.strategy.name,
         "retrieval_k": config.retrieval.retrieval_k,
-        "pre_fusion_k": config.retrieval.pre_fusion_k,
-        "rrf_bm25_weight": config.retrieval.rrf_bm25_weight,
-        "rrf_vector_weight": config.retrieval.rrf_vector_weight,
-        "rrf_k": config.retrieval.rrf_k,
         "corpus_shuffle_seed": config.corpus_shuffle_seed,
         "max_queries": config.max_queries,
         "max_corpus": config.max_corpus,

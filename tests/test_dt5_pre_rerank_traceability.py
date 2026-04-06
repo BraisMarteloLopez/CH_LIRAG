@@ -22,7 +22,7 @@ def _make_executor(reranker_enabled=True):
     config = MTEBConfig(
         infra=InfraConfig(),
         storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(retrieval_k=5, pre_fusion_k=20),
+        retrieval=RetrievalConfig(retrieval_k=5),
         reranker=RerankerConfig(enabled=reranker_enabled, top_n=3),
         generation_enabled=True,
     )

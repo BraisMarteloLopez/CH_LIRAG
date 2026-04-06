@@ -197,7 +197,7 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     se usan desde el mismo event loop, eliminando el error
     "bound to a different event loop".
     """
-    return _persistent_loop.run(coro)
+    return _persistent_loop.run(coro)  # type: ignore[no-any-return]
 
 
 # =============================================================================
@@ -329,7 +329,7 @@ class AsyncLLMService:
                 # max_tokens on next attempt to leave room for the
                 # actual response (capped at 16384).
                 if isinstance(e, _ThinkingExhaustedError):
-                    new_limit = min(max_tokens * 2, 16384)
+                    new_limit = min(max_tokens * 2, 32768)
                     if new_limit > max_tokens:
                         logger.debug(
                             f"Bumping max_tokens {max_tokens} -> {new_limit} "

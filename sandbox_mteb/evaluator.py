@@ -294,6 +294,7 @@ class MTEBEvaluator:
         # ejecuciones paralelas.
         collection_name = f"eval_{run_id}" if run_id else f"eval_{dataset_name}_{uuid.uuid4().hex[:8]}"
 
+        assert self._embedding_model is not None, "_init_components must set _embedding_model"
         self._retriever = get_retriever(
             config=self.config.retrieval,
             embedding_model=self._embedding_model,
@@ -395,7 +396,7 @@ class MTEBEvaluator:
 
         # --- Fase 0b: Pre-extract query keywords (LIGHT_RAG) ---
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
-            from shared.retrieval.lightrag_retriever import LightRAGRetriever
+            from shared.retrieval.lightrag.retriever import LightRAGRetriever
             if isinstance(self._retriever, LightRAGRetriever):
                 logger.info(
                     f"  Pre-extrayendo keywords de {n_pending} queries (batch LLM)..."
@@ -428,6 +429,7 @@ class MTEBEvaluator:
             rerank_statuses: List[Optional[bool]] = []
             for i, query in enumerate(chunk_queries):
                 vector = chunk_vectors[i] if use_preembed else None
+                assert self._retrieval_executor is not None
                 detail, reranked_ok = self._retrieval_executor.execute(
                     query.query_text, query.relevant_doc_ids,
                     query_vector=vector,
@@ -466,6 +468,7 @@ class MTEBEvaluator:
                 save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
 
         # Log summary
+        assert self._retrieval_executor is not None  # initialized in _init_components
         if self._retrieval_executor.strategy_mismatches > 0:
             logger.error(
                 f"  STRATEGY MISMATCH en {self._retrieval_executor.strategy_mismatches}/{n} queries: "
@@ -581,8 +584,8 @@ class MTEBEvaluator:
         if self._retriever:
             try:
                 self._retriever.clear_index()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Error en cleanup de retriever (no fatal): %s", e)
             self._retriever = None
         self._embedding_model = None
         self._llm_service = None

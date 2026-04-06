@@ -19,8 +19,8 @@ from shared.retrieval.core import (
     RetrievalResult,
     RetrievalStrategy,
 )
-from shared.retrieval.knowledge_graph import KnowledgeGraph
-from shared.retrieval.lightrag_retriever import LightRAGRetriever
+from shared.retrieval.lightrag.knowledge_graph import KnowledgeGraph
+from shared.retrieval.lightrag.retriever import LightRAGRetriever
 from shared.config_base import InfraConfig, RerankerConfig
 from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
 from sandbox_mteb.retrieval_executor import RetrievalExecutor
@@ -49,6 +49,12 @@ def _make_lightrag(has_graph=True):
     retriever._QUERY_CACHE_MAX_SIZE = 10_000
     retriever._kg_fusion_method = "rrf"
     retriever._kg_rrf_k = 60
+    retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
+    retriever._relationships_vdb = None  # DAM-2: no VDB in unit tests by default
+    retriever._lightrag_mode = "hybrid"  # F.4/DTm-79
+    # DTm-62: Conditional fusion
+    retriever._fusion_overlap_threshold = 0.3
+    retriever._fusion_graph_only_cap = 0.2
     retriever._vector_retriever = MagicMock()
     # Vector retriever returns 20 docs
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(

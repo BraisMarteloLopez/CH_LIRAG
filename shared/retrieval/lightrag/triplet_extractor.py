@@ -70,6 +70,24 @@ Rules:
 Return JSON in this exact format (one entry per document, preserve doc_id):
 {{"documents": [{{"doc_id": "id1", "entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}]}}]}}"""
 
+GLEANING_CONTINUATION_PROMPT = """Many entities and relationships were missed in the previous extraction.
+Review the text again and extract ADDITIONAL entities and relationships that were not captured before.
+
+Previously extracted entities: {previous_entities}
+
+Focus on:
+- Less prominent entities (secondary characters, places, dates)
+- Implicit relationships
+- Entities mentioned indirectly
+
+Return ONLY new entities and relationships not in the previous list.
+
+Return JSON in this exact format:
+{{"entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}]}}
+
+Text:
+{text}"""
+
 QUERY_KEYWORDS_SYSTEM = """You are a query analysis system for knowledge graph retrieval.
 Extract specific entities and abstract themes from the query.
 Do NOT reason or think step-by-step. Do NOT use <think> tags.
@@ -296,14 +314,51 @@ class TripletExtractor:
         """Wrapper sincrono de extract_from_doc_async."""
         return run_sync(self.extract_from_doc_async(doc_id, text))
 
+    async def glean_from_doc_async(
+        self,
+        doc_id: str,
+        text: str,
+        previous_entities: List[KGEntity],
+    ) -> Tuple[List[KGEntity], List[KGRelation]]:
+        """Gleaning: re-extraccion para capturar entidades perdidas (DAM-6).
+
+        Envia el texto con un prompt de continuacion que lista las entidades
+        ya extraidas y pide al LLM que busque las que faltan.
+
+        Referencia: gleaning loop en HKUDS/LightRAG operate.py.
+        """
+        if not text.strip() or not previous_entities:
+            return [], []
+
+        truncated = text[:self._max_text_chars]
+        prev_names = ", ".join(e.name for e in previous_entities[:20])
+        prompt = GLEANING_CONTINUATION_PROMPT.format(
+            text=truncated,
+            previous_entities=prev_names,
+        )
+
+        try:
+            raw = await self._llm.invoke_async(
+                prompt,
+                system_prompt=TRIPLET_EXTRACTION_SYSTEM,
+                max_tokens=self._extraction_max_tokens,
+            )
+            entities, relations = self._parse_extraction_json(raw, doc_id)
+            return entities, relations
+        except Exception as e:
+            logger.debug(f"Gleaning fallo para {doc_id}: {e}")
+            return [], []
+
     # -------------------------------------------------------------------------
     # MULTI-DOC BATCH EXTRACTION
     # -------------------------------------------------------------------------
 
     # Default max documents per LLM call in batch mode (DTm-67).
     # Used as fallback if batch_docs_per_call=0 is passed. Normally
-    # overridden by KG_BATCH_DOCS_PER_CALL from config (default 10).
-    _DEFAULT_BATCH_DOCS_PER_CALL = 10
+    # overridden by KG_BATCH_DOCS_PER_CALL from config (default 5).
+    # Reduced from 10 to 5: thinking-mode models (e.g. nemotron-3-nano)
+    # exhaust output tokens on <think> tags with large batches.
+    _DEFAULT_BATCH_DOCS_PER_CALL = 5
 
     def _group_docs_for_batch(
         self,
@@ -436,11 +491,13 @@ class TripletExtractor:
 
         # Multi-doc batch call
         prompt = self._build_batch_prompt(non_empty)
-        # DTm-66: scale max_tokens per doc, capped at configured limit.
-        # Default 4096 (was 8192) — thinking-mode models waste tokens on <think>.
+        # DTm-66: scale max_tokens per doc. Thinking-mode models need
+        # headroom for <think> tags, so we allow up to 3x single-doc limit
+        # (e.g. 4096 * 3 = 12288) instead of the old 2x cap that caused
+        # thinking exhaustion with batches of 5+ docs.
         max_tokens = min(
             self._extraction_max_tokens * len(non_empty),
-            self._extraction_max_tokens * 2,  # cap: no more than 2x single-doc
+            self._extraction_max_tokens * 3,
         )
 
         try:
@@ -506,6 +563,8 @@ class TripletExtractor:
         if batch_docs_per_call <= 0:
             batch_docs_per_call = self._DEFAULT_BATCH_DOCS_PER_CALL
 
+        # G.5/DTm-60: reset stats al inicio para evitar acumulacion entre llamadas
+        self.reset_stats()
         t0 = time.perf_counter()
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation]]] = {}
 
@@ -537,14 +596,14 @@ class TripletExtractor:
             # Process groups with concurrency control via chunks
             batch_sz = self._batch_size
             for start in range(0, len(groups), batch_sz):
-                chunk = groups[start:start + batch_sz]
-                tasks = [self._extract_multi_doc_async(g) for g in chunk]
-                chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in chunk_results:
-                    if isinstance(r, BaseException):
-                        logger.warning(f"TripletExtractor: batch extraction failed: {r}")
+                group_chunk = groups[start:start + batch_sz]
+                group_tasks = [self._extract_multi_doc_async(g) for g in group_chunk]
+                group_results = await asyncio.gather(*group_tasks, return_exceptions=True)
+                for gr in group_results:
+                    if isinstance(gr, BaseException):
+                        logger.warning(f"TripletExtractor: batch extraction failed: {gr}")
                         continue
-                    results.update(r)
+                    results.update(gr)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         total_entities = sum(len(e) for e, _ in results.values())
@@ -607,8 +666,9 @@ class TripletExtractor:
                     f"(respuesta comenzaba con: {text[:80]!r})"
                 )
 
-            low = [str(k) for k in data.get("low_level", []) if k]
-            high = [str(k) for k in data.get("high_level", []) if k]
+            _MAX_KEYWORDS_PER_LEVEL = 20  # G.6/DTm-61: cap para respuestas patologicas
+            low = [str(k) for k in data.get("low_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
+            high = [str(k) for k in data.get("high_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
             return low, high
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error parseando keywords JSON: {e}")
@@ -657,6 +717,21 @@ class TripletExtractor:
         # DTm-48: list comprehension (no mutable default sharing)
         results: List[Tuple[List[str], List[str]]] = [([], []) for _ in range(len(queries))]
 
+        # G.4/DTm-58: dedup queries identicas para evitar LLM calls duplicadas
+        unique_queries: Dict[str, int] = {}  # query_text -> first index
+        dedup_map: Dict[int, int] = {}  # idx -> first_idx (for duplicates)
+        for i, q in enumerate(queries):
+            if q in unique_queries:
+                dedup_map[i] = unique_queries[q]
+            else:
+                unique_queries[q] = i
+        deduped_count = len(queries) - len(unique_queries)
+        if deduped_count > 0:
+            logger.debug(f"Keyword batch: {deduped_count} queries duplicadas eliminadas")
+
+        # Solo extraer keywords para queries unicas
+        unique_indices = sorted(unique_queries.values())
+
         async def _extract_one(
             idx: int, query: str,
         ) -> Tuple[int, List[str], List[str]]:
@@ -664,10 +739,11 @@ class TripletExtractor:
             return (idx, low, high)
 
         batch_sz = self._batch_size
-        for start in range(0, len(queries), batch_sz):
+        for start in range(0, len(unique_indices), batch_sz):
+            chunk = unique_indices[start:start + batch_sz]
             chunk_tasks = [
-                _extract_one(i, q)
-                for i, q in enumerate(queries[start:start + batch_sz], start=start)
+                _extract_one(i, queries[i])
+                for i in chunk
             ]
             chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
             for r in chunk_results:
@@ -677,10 +753,14 @@ class TripletExtractor:
                 idx, low, high = r
                 results[idx] = (low, high)
 
+        # G.4: copiar resultados a queries duplicadas
+        for dup_idx, src_idx in dedup_map.items():
+            results[dup_idx] = results[src_idx]
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             f"TripletExtractor: query keywords batch {len(queries)} queries "
-            f"en {elapsed_ms:.0f}ms"
+            f"({len(unique_queries)} unicas) en {elapsed_ms:.0f}ms"
         )
 
         return results

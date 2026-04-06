@@ -29,6 +29,18 @@ from sandbox_mteb.config import MinIOStorageConfig
 # Helpers
 # =============================================================================
 
+class _FakeClientError(Exception):
+    """Excepcion real que simula botocore.exceptions.ClientError.
+
+    Necesaria porque conftest.py mockea botocore como MagicMock cuando
+    no esta instalado, y `except MagicMock` no funciona en Python.
+    """
+    def __init__(self, error_response, operation_name):
+        self.response = error_response
+        self.operation_name = operation_name
+        super().__init__(f"{operation_name}: {error_response}")
+
+
 def _make_storage_config():
     return MinIOStorageConfig(
         minio_endpoint="http://fake:9000",
@@ -78,19 +90,16 @@ def test_check_connection_success(mock_boto3):
 # =============================================================================
 
 @patch("sandbox_mteb.loader.boto3")
+@patch("sandbox_mteb.loader.ClientError", _FakeClientError)
 def test_check_connection_failure(mock_boto3):
     """head_bucket lanza ClientError -> False."""
-    from botocore.exceptions import ClientError
-
     mock_client = MagicMock()
-    mock_client.head_bucket.side_effect = ClientError(
+    mock_client.head_bucket.side_effect = _FakeClientError(
         {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadBucket"
     )
-    # boto3.client() returns our mock during __init__
     mock_boto3.client.return_value = mock_client
 
     from sandbox_mteb.loader import MinIOLoader
-    # Force re-creation to pick up the mock
     loader = object.__new__(MinIOLoader)
     loader.endpoint = "http://fake:9000"
     loader.bucket = "test-bucket"
@@ -194,12 +203,11 @@ def test_populate_from_dataframes_no_qrels():
 # =============================================================================
 
 @patch("sandbox_mteb.loader.boto3")
+@patch("sandbox_mteb.loader.ClientError", _FakeClientError)
 def test_load_dataset_download_error(mock_boto3):
     """Error en descarga -> LoadedDataset con status error."""
-    from botocore.exceptions import ClientError
-
     mock_client = MagicMock()
-    mock_client.get_object.side_effect = ClientError(
+    mock_client.get_object.side_effect = _FakeClientError(
         {"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject"
     )
     mock_boto3.client.return_value = mock_client

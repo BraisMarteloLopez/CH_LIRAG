@@ -7,7 +7,6 @@ construye MTEBConfig.from_env() una sola vez.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -128,6 +127,7 @@ class MTEBConfig:
         """Valida la configuracion. Retorna lista de errores (vacia = OK)."""
         errors = []
         errors.extend(self.storage.validate())
+        errors.extend(self.reranker.validate())
 
         if not self.infra.embedding_base_url:
             errors.append("EMBEDDING_BASE_URL no configurado")
@@ -138,7 +138,6 @@ class MTEBConfig:
         from shared.retrieval.core import RetrievalStrategy
         VALID_STRATEGIES = (
             RetrievalStrategy.SIMPLE_VECTOR,
-            RetrievalStrategy.HYBRID_PLUS,
             RetrievalStrategy.LIGHT_RAG,
         )
         if self.retrieval.strategy not in VALID_STRATEGIES:
