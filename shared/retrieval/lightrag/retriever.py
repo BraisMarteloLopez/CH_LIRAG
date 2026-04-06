@@ -914,7 +914,10 @@ class LightRAGRetriever(BaseRetriever):
 
         # Paso 5 (DTm-62): Conditional fusion — medir overlap entre canales
         overlap = set(vector_docs.keys()) & set(graph_docs.keys())
-        denominator = min(len(vector_docs), len(graph_docs)) if (vector_docs and graph_docs) else 1
+        # max() para ser conservador: evita falsa señal fuerte cuando un
+        # canal devuelve pocos resultados (ej. 1 vector + 100 graph → min=1
+        # daria overlap_ratio=1.0, pero max=100 da ratio mas realista).
+        denominator = max(len(vector_docs), len(graph_docs)) if (vector_docs and graph_docs) else 1
         overlap_ratio = len(overlap) / denominator if denominator > 0 else 0.0
         strong_signal = overlap_ratio >= self._fusion_overlap_threshold
 

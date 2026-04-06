@@ -102,6 +102,20 @@ Diferencias entre esta implementacion y el [LightRAG original (EMNLP 2025)](http
 
 - **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. Requiere decision sobre coste/latencia. Diferido a post-F.5. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
 
+### Resueltos en audit Fase 1
+
+- **A1.1**: `vector_store.py:delete_all_documents()` — recreacion movida a `finally` para evitar `_store` apuntando a coleccion borrada
+- **A1.2**: `knowledge_graph.py:merge_entity_descriptions()` — rsplit sin delimitador ya no devuelve string completo
+- **A1.3**: `knowledge_graph.py:add_triplets()` — tripletas con nombre vacio tras normalizacion ahora logean debug
+- **A1.5**: `loader.py:load_dataset()` — check individual de `queries_df`/`corpus_df` None (antes solo detectaba ambos None)
+- **A1.6**: `checkpoint.py:save_checkpoint()` — `os.replace()` + `fsync` para atomic write real
+- **A1.7**: `embedding_service.py:batch_embed_queries()` — retorna vectores parciales en vez de `[]` cuando un batch falla
+
+### Resueltos en audit Fase 2
+
+- **A2.4**: `retriever.py:_fuse_with_graph()` — overlap_ratio denominator cambiado de `min()` a `max()` para evitar falsa señal fuerte con canales asimetricos
+- **A2.7**: `loader.py:_populate_from_dataframes()` — `_safe_str()` para evitar coercion de None/NaN a strings `"None"`/`"nan"` en datos de dataset
+
 ## Bare excepts aceptados (no criticos)
 
 Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable para wrappers de infraestructura:
