@@ -529,3 +529,72 @@ def test_resolve_relationships_via_vdb_empty():
     r = _make_lightrag()
     r._relationships_vdb = MagicMock()
     assert r._resolve_relationships_via_vdb([]) == []
+
+
+# =============================================================================
+# F.1: _select_chunks_from_graph (DTm-76)
+# =============================================================================
+
+
+def test_select_chunks_combines_entity_and_relationship_sources():
+    """Docs de entity y relationship se combinan, scores se acumulan."""
+    entity_results = [("doc_a", 1.0), ("doc_b", 0.5)]
+    rel_results = [("doc_b", 0.3), ("doc_c", 0.8)]
+
+    doc_ids, scores = LightRAGRetriever._select_chunks_from_graph(
+        entity_results, rel_results, top_k=10,
+    )
+
+    assert set(doc_ids) == {"doc_a", "doc_b", "doc_c"}
+    score_map = dict(zip(doc_ids, scores))
+    # doc_b aparece en ambos canales: 0.5 + 0.3 = 0.8
+    assert score_map["doc_b"] == pytest.approx(0.8)
+    assert score_map["doc_a"] == pytest.approx(1.0)
+    assert score_map["doc_c"] == pytest.approx(0.8)
+
+
+def test_select_chunks_deduplicates_across_channels():
+    """Si un doc aparece en ambos canales, su score es la suma."""
+    entity_results = [("doc_x", 0.6)]
+    rel_results = [("doc_x", 0.4)]
+
+    doc_ids, scores = LightRAGRetriever._select_chunks_from_graph(
+        entity_results, rel_results, top_k=10,
+    )
+
+    assert doc_ids == ["doc_x"]
+    assert scores == [pytest.approx(1.0)]
+
+
+def test_select_chunks_respects_top_k():
+    """Solo retorna top_k docs por score."""
+    entity_results = [("d1", 3.0), ("d2", 2.0), ("d3", 1.0)]
+    rel_results = [("d4", 0.5)]
+
+    doc_ids, scores = LightRAGRetriever._select_chunks_from_graph(
+        entity_results, rel_results, top_k=2,
+    )
+
+    assert len(doc_ids) == 2
+    assert doc_ids[0] == "d1"  # highest score
+    assert doc_ids[1] == "d2"
+
+
+def test_select_chunks_empty_inputs():
+    """Sin resultados de entity ni relationship retorna listas vacias."""
+    doc_ids, scores = LightRAGRetriever._select_chunks_from_graph([], [], top_k=5)
+    assert doc_ids == []
+    assert scores == []
+
+
+def test_select_chunks_ordered_by_score_descending():
+    """Resultado ordenado por score descendente."""
+    entity_results = [("low", 0.1)]
+    rel_results = [("high", 0.9), ("mid", 0.5)]
+
+    doc_ids, scores = LightRAGRetriever._select_chunks_from_graph(
+        entity_results, rel_results, top_k=10,
+    )
+
+    assert doc_ids == ["high", "mid", "low"]
+    assert scores[0] > scores[1] > scores[2]

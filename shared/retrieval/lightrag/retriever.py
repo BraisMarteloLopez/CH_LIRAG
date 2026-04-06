@@ -514,6 +514,45 @@ class LightRAGRetriever(BaseRetriever):
 
         return doc_scores.most_common(top_k)
 
+    # -----------------------------------------------------------------
+    # F.1: Chunk selection desde grafo (DTm-76)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _select_chunks_from_graph(
+        entity_results: List[Tuple[str, float]],
+        relationship_results: List[Tuple[str, float]],
+        top_k: int,
+    ) -> Tuple[List[str], List[float]]:
+        """Selecciona y rankea doc_ids combinando entity + relationship results.
+
+        Combina scores de ambos canales (low-level entities y high-level
+        relationships). Docs que aparecen en ambos canales acumulan score.
+        Retorna los top_k doc_ids ordenados por score acumulado.
+
+        Args:
+            entity_results: (doc_id, score) de query_entities / entity VDB.
+            relationship_results: (doc_id, score) de relationship VDB / query_by_keywords.
+            top_k: Maximo de docs a retornar.
+
+        Returns:
+            (doc_ids, scores) ordenados por score descendente.
+        """
+        doc_scores: Dict[str, float] = {}
+        for doc_id, score in entity_results:
+            doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + score
+        for doc_id, score in relationship_results:
+            doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + score
+
+        if not doc_scores:
+            return [], []
+
+        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        ranked = ranked[:top_k]
+        doc_ids = [doc_id for doc_id, _ in ranked]
+        scores = [score for _, score in ranked]
+        return doc_ids, scores
+
     @staticmethod
     def _corpus_fingerprint(
         documents: List[Dict[str, Any]],
