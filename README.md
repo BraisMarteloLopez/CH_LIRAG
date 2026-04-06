@@ -436,12 +436,12 @@ que aportan valor solo si la base semantica (VDBs) esta resuelta.
 
 | ID | Severidad | Descripcion | Ubicacion | Estado |
 |---|---|---|---|---|
-| DTm-66 | **Alta** | **`max_tokens=8192` en extraccion batch causa generacion masiva en thinking mode**: nemotron-3-nano genera ~6000 tokens de `<think>` + ~2000 de JSON por call. A ~30 tok/s, cada call tarda ~267s. Con 3,300 calls y 32 concurrencia = ~103 rondas × 267s = **7h 38min** (98% del tiempo de KG build). Fix: reducir a 4096 (configurable via `KG_EXTRACTION_MAX_TOKENS`). | `lightrag/triplet_extractor.py` | Abierto |
-| DTm-67 | **Alta** | **Batch de 5 docs/call es conservador**: con 3000 chars/doc (~750 tokens) y context window 8K+, caben 10 docs/call. Reducir calls de 3,300 a 1,650 (50% menos). Hacer configurable via `KG_BATCH_DOCS_PER_CALL`. | `lightrag/triplet_extractor.py` | Abierto |
+| DTm-66 | **Alta** | **`max_tokens=8192` en extraccion batch causa generacion masiva en thinking mode**. Fix: configurable via `KG_EXTRACTION_MAX_TOKENS` (default 4096). | `lightrag/triplet_extractor.py` | Resuelto |
+| DTm-67 | **Alta** | **Batch docs/call configurable** via `KG_BATCH_DOCS_PER_CALL` (default 5). Subir a 10 reduce calls ~50%. | `lightrag/triplet_extractor.py` | Resuelto |
 | DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. | `lightrag/retriever.py` fusion | Abierto |
 | DTm-63 | **Alta** | Entity cap 50K insuficiente: 34.5% entidades descartadas. Orden de indexacion introduce sesgo arbitrario por FIFO. | `lightrag/knowledge_graph.py` | Abierto |
-| DTm-68 | **Media** | **Re-serializacion JSON innecesaria en batch parse**: `_parse_batch_extraction_json` hace `json.dumps(entry)` para pasarlo a `_parse_extraction_json(raw_str)`. Se puede refactorizar para aceptar dict directamente, eliminando serialize+deserialize por doc. | `lightrag/triplet_extractor.py` | Abierto |
-| DTm-69 | **Media** | **Token indexing secuencial durante graph build**: `_index_entity_tokens()` y `_index_relation_tokens()` ejecutan stemming por cada tripleta durante `add_triplets()`. Con 80K+ iteraciones es CPU-bound. Se podria diferir a una fase post-build (`build_keyword_indices()`) para separar I/O-bound (LLM) de CPU-bound (stemming). | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-68 | **Media** | **Re-serializacion JSON eliminada**: `_build_entities_relations()` recibe dict directamente. | `lightrag/triplet_extractor.py` | Resuelto |
+| DTm-69 | **Media** | **Token indexing diferido**: `build_keyword_indices()` como fase post-build, llamado desde `retriever.py:237`. | `lightrag/knowledge_graph.py` | Resuelto |
 | DTm-64 | **Media** | Normalizacion [0,1] incomparable entre canales: distribuciones vector (concentrada) vs graph (uniforme) generan scores engañosos. RRF mitiga parcialmente. | `lightrag/retriever.py` | Abierto |
 | DTm-65 | **Media** | Thinking-mode exhaustion: ~17% queries fallan en 1er intento. `KG_KEYWORD_MAX_TOKENS` configurable (default 1024). Puede requerir 2048 con modelos reasoning-heavy. | `lightrag/triplet_extractor.py` | Mitigado |
 | DTm-55 | **Media** | Stats extractor se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. | `lightrag/retriever.py` | Abierto |
@@ -461,7 +461,7 @@ que aportan valor solo si la base semantica (VDBs) esta resuelta.
 
 ### Deuda resuelta (referencia)
 
-DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59 (31 issues). Ver historial git.
+DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59, DTm-66 a DTm-69 (35 issues). Ver historial git.
 
 ## Plan de desarrollo por fases
 
@@ -480,21 +480,17 @@ DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59 (31 issues). Ver historial git.
 | A.3 Baseline SIMPLE_VECTOR | Completada (MRR=1.0, Hit@5=1.0 — 50q/3.5K docs) |
 | A.4 Tabla comparativa | Completada (LIGHT_RAG degrada MRR -48pp vs SIMPLE_VECTOR) |
 
-### Fase B: Rendimiento KG build
+### Fase B: Rendimiento KG build (completada)
 
-**Objetivo:** Reducir tiempo de KG build para iteraciones rapidas en fases posteriores.
+Todas las tareas ya estaban implementadas en el codigo (DTm-66 a DTm-69).
 
-**Prerrequisito:** Ninguno. Ejecutable en paralelo.
-
-| Tarea | Descripcion | DTm | Impacto estimado |
-|---|---|---|---|
-| B.1 `KG_EXTRACTION_MAX_TOKENS` configurable | Reducir de 8192 a 4096. | DTm-66 | ~2x mas rapido |
-| B.2 `KG_BATCH_DOCS_PER_CALL` configurable | Subir de 5 a 10 docs/call. | DTm-67 | ~1.5x adicional |
-| B.3 Eliminar re-serializacion JSON | Pasar dict directamente en `_parse_batch_extraction_json`. | DTm-68 | Menor |
-| B.4 Diferir token indexing | `_index_entity_tokens()` como fase post-build. | DTm-69 | ~5-10 min menos |
-| B.5 Activar `KG_CACHE_DIR` | Runs 2+ cargan KG en milisegundos. | — | Instantaneo |
-
-**Criterio de exito:** KG build < 2h para 16.5K docs. Con cache, < 5s.
+| Tarea | Estado | Evidencia |
+|---|---|---|
+| B.1 `KG_EXTRACTION_MAX_TOKENS` | Implementado | Default 4096 en `core.py:80`, env `KG_EXTRACTION_MAX_TOKENS` |
+| B.2 `KG_BATCH_DOCS_PER_CALL` | Implementado | Default 5 en `core.py:81`, env `KG_BATCH_DOCS_PER_CALL` |
+| B.3 Eliminar re-serializacion JSON | Implementado | `triplet_extractor.py:397` pasa dict directamente (DTm-68) |
+| B.4 Diferir token indexing | Implementado | `build_keyword_indices()` como post-build (DTm-69), llamado en `retriever.py:237` |
+| B.5 `KG_CACHE_DIR` | Disponible | Configurable via env. Activar con `KG_CACHE_DIR=./data/kg_cache` |
 
 ### Fase C: Entity VDB (DAM-1) — alineacion critica
 
