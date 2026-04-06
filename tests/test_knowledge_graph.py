@@ -754,3 +754,27 @@ def test_get_all_entities_returns_dict():
     assert "alice" in entities
     assert "bob" in entities
     assert entities["alice"].name == "alice"
+
+
+def test_get_all_relations_returns_list():
+    """get_all_relations retorna lista de dicts con weight."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="friendship", source_doc_id="doc1"),
+    ])
+    kg.add_triplets("doc2", [
+        KGRelation(source="Alice", target="Bob", relation="works_with",
+                   description="colleagues", source_doc_id="doc2"),
+    ])
+    relations = kg.get_all_relations()
+    assert len(relations) >= 2
+    # All relations have required keys
+    for rel in relations:
+        assert "source" in rel
+        assert "target" in rel
+        assert "relation" in rel
+        assert "doc_id" in rel
+        assert "weight" in rel
+    # Weight = number of relations on the edge (2: knows + works_with)
+    assert any(r["weight"] == 2 for r in relations)

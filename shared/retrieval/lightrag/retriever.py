@@ -119,9 +119,10 @@ class LightRAGRetriever(BaseRetriever):
                 f"Fallback a SimpleVector."
             )
 
-        # Entity VDB (DAM-1): ChromaDB collection para resolver entidades
-        # por embedding similarity en vez de string matching.
+        # Entity VDB (DAM-1) y Relationship VDB (DAM-2): ChromaDB collections
+        # para resolver entidades/relaciones por embedding similarity.
         self._entities_vdb: Any = None  # ChromaVectorStore, lazy init
+        self._relationships_vdb: Any = None  # ChromaVectorStore, lazy init
         self._embedding_model = embedding_model
 
         # Cache de keywords de queries con limite (DTm-47) y lock (DTm-51)
@@ -167,8 +168,9 @@ class LightRAGRetriever(BaseRetriever):
                         f"LightRAGRetriever: KG cargado desde cache "
                         f"({self._kg.num_entities} entidades)"
                     )
-                    # DAM-1: rebuild entity VDB from cached KG
+                    # DAM-1/DAM-2: rebuild VDBs from cached KG
                     self._build_entities_vdb()
+                    self._build_relationships_vdb()
                 else:
                     self._build_knowledge_graph(documents)
                     if cache_path:
@@ -247,6 +249,8 @@ class LightRAGRetriever(BaseRetriever):
 
         # DAM-1: construir entity VDB (ChromaDB con embeddings de entidades)
         self._build_entities_vdb()
+        # DAM-2: construir relationship VDB (ChromaDB con embeddings de relaciones)
+        self._build_relationships_vdb()
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
@@ -348,6 +352,110 @@ class LightRAGRetriever(BaseRetriever):
                     resolved_names.append(entity_name)
 
         return resolved_names
+
+    def _build_relationships_vdb(self) -> None:
+        """Construye relationship VDB: ChromaDB collection con embeddings de relaciones.
+
+        Cada relacion se indexa como "source -> relation -> target: description"
+        para que similarity search encuentre relaciones semanticamente relevantes
+        a la query (DAM-2). Edge weight se almacena en metadata.
+
+        Referencia: relationships_vdb.query() en HKUDS/LightRAG operate.py.
+        """
+        if self._kg is None:
+            return
+
+        relations = self._kg.get_all_relations()
+        if not relations:
+            logger.warning("LightRAGRetriever: KG sin relaciones, relationship VDB no construido")
+            return
+
+        t0 = time.perf_counter()
+
+        from shared.vector_store import ChromaVectorStore
+        from langchain_core.documents import Document
+
+        base_name = self._vector_retriever._vector_store.collection_name
+        rel_collection_name = f"{base_name}_relationships"
+
+        if self._relationships_vdb is not None:
+            try:
+                self._relationships_vdb.delete_all_documents()
+            except Exception:
+                pass
+
+        self._relationships_vdb = ChromaVectorStore(
+            config={
+                "CHROMA_COLLECTION_NAME": rel_collection_name,
+                "EMBEDDING_BATCH_SIZE": 50,
+            },
+            embedding_model=self._embedding_model,
+        )
+
+        # Indexar relaciones como "source -> relation -> target: description"
+        lc_docs = []
+        for rel in relations:
+            desc = rel.get("description", "")
+            relation_type = rel.get("relation", "")
+            source = rel.get("source", "")
+            target = rel.get("target", "")
+            text = f"{source} -> {relation_type} -> {target}"
+            if desc:
+                text += f": {desc}"
+            lc_docs.append(Document(
+                page_content=text,
+                metadata={
+                    "source_entity": source,
+                    "target_entity": target,
+                    "relation": relation_type,
+                    "doc_id": rel.get("doc_id", ""),
+                    "weight": rel.get("weight", 1),
+                },
+            ))
+
+        self._relationships_vdb.add_documents(lc_docs)
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"LightRAGRetriever: relationship VDB construido en {elapsed_ms:.0f}ms "
+            f"({len(lc_docs)} relaciones indexadas)"
+        )
+
+    def _resolve_relationships_via_vdb(
+        self,
+        keywords: List[str],
+        top_k: int = 20,
+    ) -> List[Tuple[str, float]]:
+        """Resuelve high-level keywords a doc_ids via relationship VDB.
+
+        Busca relaciones semanticamente similares a los keywords y retorna
+        los doc_ids asociados con scores ponderados por edge weight (DAM-2, DAM-5).
+
+        Returns:
+            Lista de (doc_id, score) ordenada por score desc.
+        """
+        if not self._relationships_vdb or not keywords:
+            return []
+
+        from collections import Counter
+        doc_scores: Counter = Counter()
+
+        for keyword in keywords:
+            if not keyword.strip():
+                continue
+            results = self._relationships_vdb.similarity_search_with_score(
+                keyword, k=top_k,
+            )
+            for doc, distance in results:
+                doc_id = doc.metadata.get("doc_id", "")
+                weight = doc.metadata.get("weight", 1)
+                if doc_id:
+                    # ChromaDB distance (lower = more similar)
+                    # Convert to similarity score and weight by edge frequency
+                    similarity = max(0.0, 1.0 - distance) if distance >= 0 else 1.0
+                    doc_scores[doc_id] += similarity * weight
+
+        return doc_scores.most_common(top_k)
 
     @staticmethod
     def _corpus_fingerprint(
@@ -484,10 +592,15 @@ class LightRAGRetriever(BaseRetriever):
 
         # High-level: temas abstractos
         if high_level:
-            theme_results = self._kg.query_by_keywords(
-                high_level,
-                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
-            )
+            # DAM-2: resolver relaciones via VDB (semantic) si disponible,
+            # fallback a token matching si no hay VDB.
+            if self._relationships_vdb is not None:
+                theme_results = self._resolve_relationships_via_vdb(high_level)
+            else:
+                theme_results = self._kg.query_by_keywords(
+                    high_level,
+                    max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
+                )
             for doc_id, score in theme_results:
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
 
@@ -667,12 +780,14 @@ class LightRAGRetriever(BaseRetriever):
         self._vector_retriever.clear_index()
         if self._kg:
             self._kg = KnowledgeGraph(max_entities=self._kg_max_entities)
-        if self._entities_vdb is not None:
-            try:
-                self._entities_vdb.delete_all_documents()
-            except Exception:
-                pass
-            self._entities_vdb = None
+        for vdb_attr in ("_entities_vdb", "_relationships_vdb"):
+            vdb = getattr(self, vdb_attr, None)
+            if vdb is not None:
+                try:
+                    vdb.delete_all_documents()
+                except Exception:
+                    pass
+                setattr(self, vdb_attr, None)
         self._has_graph = False
         with self._cache_lock:
             self._query_keywords_cache.clear()

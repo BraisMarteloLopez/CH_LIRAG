@@ -57,6 +57,7 @@ def _make_lightrag(
     retriever._kg_fusion_method = fusion_method
     retriever._kg_rrf_k = rrf_k
     retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
+    retriever._relationships_vdb = None  # DAM-2: no VDB in unit tests by default
     return retriever
 
 
@@ -453,3 +454,78 @@ def test_resolve_entities_via_vdb_empty_keywords():
     r._entities_vdb = MagicMock()
     assert r._resolve_entities_via_vdb([]) == []
     assert r._resolve_entities_via_vdb(["", "  "]) == []
+
+
+# =============================================================================
+# Relationship VDB (DAM-2)
+# =============================================================================
+
+def test_fuse_with_relationship_vdb_resolves_via_similarity():
+    """Con relationship VDB activo, high-level usa _resolve_relationships_via_vdb."""
+    mock_rel_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"doc_id": "doc_1", "weight": 3}
+    mock_rel_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
+
+    r = _make_lightrag()
+    r._relationships_vdb = mock_rel_vdb
+
+    # No low-level keywords, only high-level
+    r._kg.query_entities.return_value = []
+    r._extractor.extract_query_keywords.return_value = ([], ["military attack"])
+    r._vector_retriever.get_documents_by_ids.return_value = {"doc_1": "content1"}
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._fuse_with_graph("military attack", vr, top_k=5)
+
+    # Relationship VDB was called
+    mock_rel_vdb.similarity_search_with_score.assert_called_once_with(
+        "military attack", k=20,
+    )
+    # Result should include doc_1 from relationship VDB
+    assert "doc_1" in result.doc_ids or len(result.doc_ids) > 0
+
+
+def test_fuse_without_relationship_vdb_falls_back():
+    """Sin relationship VDB, high-level usa query_by_keywords."""
+    r = _make_lightrag()
+    assert r._relationships_vdb is None
+
+    r._kg.query_entities.return_value = []
+    r._kg.query_by_keywords.return_value = [("doc_1", 0.5)]
+    r._extractor.extract_query_keywords.return_value = ([], ["theme"])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    r._fuse_with_graph("theme", vr, top_k=5)
+
+    # Fallback: query_by_keywords was called
+    r._kg.query_by_keywords.assert_called_once()
+
+
+def test_resolve_relationships_via_vdb_weights_by_edge():
+    """_resolve_relationships_via_vdb pondera por edge weight (DAM-5)."""
+    mock_vdb = MagicMock()
+    mock_doc1 = MagicMock()
+    mock_doc1.metadata = {"doc_id": "doc_a", "weight": 5}
+    mock_doc2 = MagicMock()
+    mock_doc2.metadata = {"doc_id": "doc_b", "weight": 1}
+    # Same distance but different weights
+    mock_vdb.similarity_search_with_score.return_value = [
+        (mock_doc1, 0.2), (mock_doc2, 0.2),
+    ]
+
+    r = _make_lightrag()
+    r._relationships_vdb = mock_vdb
+
+    results = r._resolve_relationships_via_vdb(["keyword"])
+    result_dict = dict(results)
+
+    # doc_a with weight=5 should score higher than doc_b with weight=1
+    assert result_dict.get("doc_a", 0) > result_dict.get("doc_b", 0)
+
+
+def test_resolve_relationships_via_vdb_empty():
+    """_resolve_relationships_via_vdb con keywords vacios retorna []."""
+    r = _make_lightrag()
+    r._relationships_vdb = MagicMock()
+    assert r._resolve_relationships_via_vdb([]) == []

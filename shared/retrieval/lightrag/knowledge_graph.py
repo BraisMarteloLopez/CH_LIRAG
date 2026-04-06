@@ -131,6 +131,31 @@ class KnowledgeGraph:
         """Retorna dict de entity_name -> KGEntity para todas las entidades."""
         return self._entities
 
+    def get_all_relations(self) -> List[Dict[str, Any]]:
+        """Retorna lista de relaciones unicas con metadata.
+
+        Cada dict contiene: source, target, relation, description,
+        doc_id, weight (DAM-5: numero de docs que mencionan esta arista).
+        """
+        relations = []
+        for eid in range(self._graph.ecount()):
+            edge = self._graph.es[eid]
+            src_name = self._graph.vs[edge.source]["name"]
+            tgt_name = self._graph.vs[edge.target]["name"]
+            edge_rels = edge["relations"]
+            # DAM-5: weight = numero de relaciones en esta arista
+            weight = len(edge_rels)
+            for rel_info in edge_rels:
+                relations.append({
+                    "source": src_name,
+                    "target": tgt_name,
+                    "relation": rel_info.get("relation", ""),
+                    "description": rel_info.get("description", ""),
+                    "doc_id": rel_info.get("doc_id", ""),
+                    "weight": weight,
+                })
+        return relations
+
     # Articulos iniciales en ingles (DTm-18).
     _LEADING_ARTICLES = ("the ", "a ", "an ")
     # Patron para eliminar puntuacion excepto guiones internos (DTm-18).
