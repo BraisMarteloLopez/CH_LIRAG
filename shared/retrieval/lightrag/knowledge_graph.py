@@ -34,9 +34,6 @@ except ImportError:
     HAS_IGRAPH = False
     ig = None  # type: ignore[assignment]
 
-# Backward-compat alias: callers que checkeaban HAS_NETWORKX ahora checkean HAS_IGRAPH.
-HAS_NETWORKX = HAS_IGRAPH
-
 # =============================================================================
 # IMPORTACION CONDICIONAL — Snowball Stemmer
 # =============================================================================
@@ -875,7 +872,6 @@ class KnowledgeGraph:
 
 __all__ = [
     "HAS_IGRAPH",
-    "HAS_NETWORKX",
     "KGEntity",
     "KGRelation",
     "KnowledgeGraph",

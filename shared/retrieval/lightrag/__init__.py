@@ -7,7 +7,7 @@ shared.retrieval.__init__.py.
 """
 
 from .retriever import LightRAGRetriever
-from .knowledge_graph import KnowledgeGraph, KGEntity, KGRelation, HAS_IGRAPH, HAS_NETWORKX
+from .knowledge_graph import KnowledgeGraph, KGEntity, KGRelation, HAS_IGRAPH
 from .triplet_extractor import TripletExtractor
 
 __all__ = [
@@ -17,5 +17,4 @@ __all__ = [
     "KGRelation",
     "TripletExtractor",
     "HAS_IGRAPH",
-    "HAS_NETWORKX",
 ]

@@ -42,7 +42,7 @@ from ..core import (
     SimpleVectorRetriever,
     reciprocal_rank_fusion,
 )
-from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_NETWORKX
+from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_IGRAPH
 from .triplet_extractor import TripletExtractor
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class LightRAGRetriever(BaseRetriever):
       - igraph para knowledge graph
 
     Sin LLM service: fallback a SimpleVectorRetriever puro.
-    Sin NetworkX: fallback a SimpleVectorRetriever puro.
+    Sin igraph: fallback a SimpleVectorRetriever puro.
     """
 
     def __init__(
@@ -97,12 +97,12 @@ class LightRAGRetriever(BaseRetriever):
             embedding_batch_size=embedding_batch_size,
         )
 
-        # Knowledge graph + triplet extractor (requieren LLM + networkx)
+        # Knowledge graph + triplet extractor (requieren LLM + igraph)
         self._kg: Optional[KnowledgeGraph] = None
         self._extractor: Optional[TripletExtractor] = None
         self._has_graph = False
 
-        if llm_service and HAS_NETWORKX:
+        if llm_service and HAS_IGRAPH:
             self._kg = KnowledgeGraph(max_entities=kg_max_entities)
             self._extractor = TripletExtractor(
                 llm_service,
@@ -114,8 +114,8 @@ class LightRAGRetriever(BaseRetriever):
             reasons = []
             if not llm_service:
                 reasons.append("LLM service no proporcionado")
-            if not HAS_NETWORKX:
-                reasons.append("networkx no instalado")
+            if not HAS_IGRAPH:
+                reasons.append("igraph no instalado")
             logger.warning(
                 f"LIGHT_RAG: sin knowledge graph ({', '.join(reasons)}). "
                 f"Fallback a SimpleVector."

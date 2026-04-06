@@ -84,7 +84,7 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 
 **Hardening (produccion):**
 - Batching de coroutines en chunks de 500 docs para evitar presion de memoria en `extract_batch_async()` (DTm-22)
-- Cap de entidades configurable (`KG_MAX_ENTITIES`, default 100K) para limitar crecimiento del grafo (DTm-21, DTm-63)
+- Cap de entidades configurable (`KG_MAX_ENTITIES`, 0 = default interno 100K) para limitar crecimiento del grafo (DTm-21, DTm-63)
 - Deduplicacion de relaciones en aristas (misma relacion + mismo doc no se duplica)
 - Validacion post-parse del output LLM: entity types normalizados a enum (`PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER`), nombres >= 1 char, descriptions truncadas a 200 chars (DTm-16)
 - Estimacion de memoria en `get_stats()` para observabilidad
@@ -199,11 +199,14 @@ KG_MAX_HOPS=1                         # Profundidad maxima BFS (DAM-7: 1-hop com
 KG_MAX_TEXT_CHARS=3000                 # Max chars de documento enviados al LLM para extraccion
 KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
 KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
-KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 100K)
+KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default interno 100K)
 KG_CACHE_DIR=./data/kg_cache          # Directorio para persistir KG entre runs (vacio = sin cache)
 KG_FUSION_METHOD=rrf                  # rrf (default, robusto) o linear (legacy)
 KG_RRF_K=60                           # Constante k para RRF (default 60)
 KG_KEYWORD_MAX_TOKENS=1024            # Max tokens para keyword extraction LLM call
+KG_EXTRACTION_MAX_TOKENS=4096         # Max tokens para triplet extraction LLM call (DTm-66)
+KG_BATCH_DOCS_PER_CALL=5             # Docs por LLM call en batch extraction (DTm-67)
+KG_GLEANING_ROUNDS=0                  # Rounds de re-extraccion (0 = desactivado, DAM-6)
 KG_GRAPH_OVERFETCH_FACTOR=2           # Graph traversal pide N * top_k candidatos
 LIGHTRAG_MODE=hybrid                  # hybrid | graph_primary | local | global | naive
 

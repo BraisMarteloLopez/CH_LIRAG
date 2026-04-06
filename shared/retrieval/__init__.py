@@ -18,7 +18,7 @@ from .core import (
     BaseRetriever,
     SimpleVectorRetriever,
 )
-from .lightrag import LightRAGRetriever, HAS_IGRAPH, HAS_NETWORKX
+from .lightrag import LightRAGRetriever, HAS_IGRAPH
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,5 @@ __all__ = [
     "SimpleVectorRetriever",
     "LightRAGRetriever",
     "HAS_IGRAPH",
-    "HAS_NETWORKX",
     "get_retriever",
 ]

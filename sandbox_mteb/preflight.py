@@ -9,7 +9,7 @@ Uso:
     python -m sandbox_mteb.preflight --env /path    # .env alternativo
 
 Checks:
-    1. Dependencias criticas (networkx, chromadb, langchain, etc.)
+    1. Dependencias criticas (igraph, chromadb, langchain, etc.)
     2. Config .env valida para LIGHT_RAG
     3. Conectividad NIM (embedding, LLM, reranker si habilitado)
     4. Conectividad MinIO + dataset disponible
@@ -41,7 +41,7 @@ def check_dependencies() -> List[Tuple[bool, str]]:
     results = []
 
     critical = [
-        ("networkx", "Knowledge Graph (LIGHT_RAG)"),
+        ("igraph", "Knowledge Graph (LIGHT_RAG)"),
         ("chromadb", "Vector store"),
         ("langchain_nvidia_ai_endpoints", "NIM access"),
         ("langchain_core", "LangChain core"),
