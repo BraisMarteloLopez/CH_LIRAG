@@ -2,7 +2,7 @@
 
 Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de pipelines de recuperacion y generacion sobre datasets MTEB/BeIR (HotpotQA actualmente) con infraestructura NVIDIA NIM.
 
-Soporta 3 estrategias de retrieval: busqueda vectorial pura, hibrida BM25+Vector con entity cross-linking, y **LightRAG** (Vector + Knowledge Graph dual-level con extraccion de tripletas via LLM).
+Soporta 2 estrategias de retrieval: busqueda vectorial pura (`SIMPLE_VECTOR`) y **LightRAG** (Vector + Knowledge Graph dual-level con extraccion de tripletas via LLM). Estrategia `HYBRID_PLUS` (BM25+Vector+NER) pendiente de eliminacion (DTm-83).
 
 ## Arquitectura
 
@@ -20,11 +20,7 @@ CH_LIRAG/
 │       ├── __init__.py              # Factory get_retriever()
 │       ├── core.py                  # BaseRetriever, SimpleVectorRetriever, RetrievalConfig, RRF
 │       ├── reranker.py              # CrossEncoderReranker (NVIDIARerank)
-│       ├── hybrid/                  # Estrategia HYBRID_PLUS
-│       │   ├── retriever.py         # BM25 + Vector + RRF (HybridRetriever)
-│       │   ├── plus_retriever.py    # BM25+Vector+RRF + NER cross-linking
-│       │   ├── entity_linker.py     # NER (spaCy) + indice invertido + cross-refs
-│       │   └── tantivy_index.py     # BM25 via Tantivy (Rust, fallback rank-bm25)
+│       ├── hybrid/                  # HYBRID_PLUS (pendiente eliminacion, DTm-83)
 │       └── lightrag/                # Estrategia LIGHT_RAG
 │           ├── retriever.py         # Vector + Knowledge Graph dual-level
 │           ├── knowledge_graph.py   # KG in-memory (igraph): entidades, relaciones, traversal
@@ -59,12 +55,9 @@ CH_LIRAG/
 | Estrategia | Indexacion | Busqueda | Reranker |
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
-| `HYBRID_PLUS` | NER cross-refs + Embedding + BM25 | BM25 (Tantivy) + Vector + RRF | Opcional |
 | `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + Graph traversal + Fusion | Opcional |
 
-### HYBRID_PLUS
-
-Durante indexacion, spaCy NER extrae entidades, construye indice invertido in-memory, y genera cross-references textuales entre documentos que comparten entidades. BM25 captura terminos puente entre documentos, mejorando retrieval en bridge questions multi-hop. Sin dependencia de NIM para indexacion. Sin spaCy, se comporta como BM25+Vector+RRF puro (warning en log).
+> `HYBRID_PLUS` (BM25+Vector+NER cross-linking) existe en el codigo pero esta pendiente de eliminacion (DTm-83). LIGHT_RAG supersede su funcionalidad.
 
 ### LIGHT_RAG
 
@@ -108,12 +101,11 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 ```
 .env -> MTEBConfig -> MinIO/cache(Parquet) -> LoadedDataset
      -> shuffle(seed) -> slice(max_corpus)
-     -> [NER + cross-linking (spaCy) si HYBRID_PLUS]
      -> [LLM triplet extraction + KG construction si LIGHT_RAG]
-     -> index(ChromaDB [+ Tantivy si HYBRID_PLUS])
+     -> index(ChromaDB)
      -> pre-embed queries (batch REST NIM)
      -> [pre-extract query keywords (batch LLM) si LIGHT_RAG]
-     -> retrieve(local ChromaDB [+ BM25 + RRF si HYBRID_PLUS] [+ Graph traversal + Fusion si LIGHT_RAG], sync)
+     -> retrieve(local ChromaDB [+ Graph traversal + Fusion si LIGHT_RAG], sync)
      -> [rerank(cross-encoder) si habilitado]
      -> generate + metrics (async)
      -> EvaluationRun -> JSON + CSV
@@ -151,13 +143,6 @@ Cuando el reranker esta activo: `generation_recall`, `generation_hit`, `reranker
 pip install -r requirements.txt
 cp sandbox_mteb/env.example sandbox_mteb/.env
 # Editar .env con endpoints NIM y MinIO
-```
-
-Para `HYBRID_PLUS` (entity cross-linking):
-
-```bash
-pip install spacy
-python -m spacy download en_core_web_sm
 ```
 
 Para `LIGHT_RAG` (knowledge graph):
@@ -270,7 +255,7 @@ pytest tests/integration/ -v       # Solo integracion (requiere NIM + MinIO)
 | **0. Reproducibilidad** | Config determinista entre runs | `requirements.lock` pinneado, `preflight.py` para validacion pre-run. |
 | **1. Fiabilidad** | No perder runs de horas | Checkpoint/resume cada 50 queries (`--resume RUN_ID`). Counter de entidades descartadas por cap KG. |
 | **2. Calidad retrieval** | Mejorar Hit@5 y MRR | Apostrofes preservados en BM25, entity normalization alineada KG/linker, `MIN_ENTITY_NAME_LEN=1`. |
-| **3. Eficiencia** | Corpus 66K sin OOM | Batch adaptativo (`semaphore*4`), dedup memoria HYBRID_PLUS. |
+| **3. Eficiencia** | Corpus 66K sin OOM | Batch adaptativo (`semaphore*4`), dedup memoria. |
 | **4. Mantenibilidad** | `evaluator.py` < 600 LOC | Descompuesto de 1225 a 592 LOC. Extraidos: `subset_selection.py`, `retrieval_executor.py`, `generation_executor.py`, `embedding_service.py`, `checkpoint.py`, `result_builder.py`. |
 
 Issues resueltos: DTm-14 a DTm-38, DTm-45, DTm-46. Ver historial git para detalles.
@@ -315,6 +300,9 @@ Cambios en dependencias: `networkx` → `python-igraph`, nuevo `snowballstemmer`
 </details>
 
 ## Resultados comparativos
+
+> **Nota:** Todos los runs son **pre-Fases C-F** (sin entity VDB, sin relationship VDB,
+> sin modo graph_primary). Pendiente run comparativo post-implementacion (F.5).
 
 ### Run 3: LIGHT_RAG post-refactor — 29 queries, 500 docs, DEV_MODE
 
@@ -421,7 +409,7 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 | DTm-56 | **Media** | Fingerprint collision con corpus vacio: `sha256("")[:16]` es determinista pero edge case si dos configs distintas producen mismo hash. | `shared/retrieval/lightrag/retriever.py` | Abierto |
 | DTm-12 | Baja | Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. | `shared/metrics.py` | Aceptado |
 | DTm-13 | Baja | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. | `shared/vector_store.py` | Aceptado |
-| DTm-24 | Baja | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. | `sandbox_mteb/config.py` | Aceptado |
+| DTm-24 | Baja | Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`. Se resuelve con eliminacion de HYBRID_PLUS (DTm-83). | `sandbox_mteb/config.py` | Pendiente DTm-83 |
 | DTm-57 | Baja | Normalizacion entidades agresiva: pierde apostrofes/guiones. Colisiones raras. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-58 | Baja | No dedup queries identicas en batch keyword extraction: LLM calls duplicadas. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
 | DTm-60 | Baja | Stats extractor acumulan entre llamadas. `reset_stats()` nunca se llama auto. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
@@ -434,10 +422,10 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 | DTm-75 | **Alta** | **Bug: loader silently succeeds when all downloads fail**. Fix: `ValueError` si queries y corpus son `None`. [#2](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/2) | `sandbox_mteb/loader.py` | Resuelto |
 | DTm-76 | **Alta** | **Chunk selection desde grafo**. `_select_chunks_from_graph()` combina doc_ids de entity + relationship results. Implementado en Fase F (F.1). [#3](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/3) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
 | DTm-77 | **Media** | **Test gap: gleaning (DAM-6) tiene 0 tests**. `glean_from_doc_async()` implementada pero sin tests unitarios. Feature marcada como completada sin cobertura. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) | `tests/` | Abierto |
-| DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. `test_pipeline_e2e.py` hardcodeado con SIMPLE_VECTOR. No hay validacion E2E de LIGHT_RAG ni HYBRID_PLUS (Fases C-E sin validacion integrada). [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
+| DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. `test_pipeline_e2e.py` hardcodeado con SIMPLE_VECTOR. No hay validacion E2E de LIGHT_RAG. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
 | DTm-79 | Baja | **Modos de query explicitos**: `LIGHTRAG_MODE` con 5 modos (hybrid, graph_primary, local, global, naive). Implementado en Fase F (F.4). [#6](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/6) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
 | DTm-80 | Baja | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion con ` \| `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
-| DTm-81 | Baja | **Import fantasma `shared.retrieval.hybrid.core`** no existe. Mypy error `import-not-found`. [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | `shared/retrieval/hybrid/retriever.py:143` | Abierto |
+| DTm-81 | Baja | **Import fantasma `shared.retrieval.hybrid.core`**: corregido a `..core`. Se elimina completamente con DTm-83. [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | `shared/retrieval/hybrid/retriever.py:143` | Resuelto |
 | DTm-82 | Baja | **23 errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
 | DTm-83 | **Alta** | **Eliminar estrategia HYBRID_PLUS completa**. LIGHT_RAG supersede la funcionalidad (entity VDB + relationship VDB vs entity co-ocurrencia). Elimina ~2,100 LOC + 3 deps (spaCy, tantivy, rank-bm25). Resuelve DTm-81 y DTm-24. [#10](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/10) | `shared/retrieval/hybrid/`, tests, config | Abierto |
 
@@ -453,82 +441,20 @@ DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59, DTm-66 a DTm-69 (35 issues). Ver histo
 > de ranking. La alineacion arquitectonica no es opcional — es el camino para que
 > LIGHT_RAG funcione como fue disenado.
 
-### Fase A: Documentacion y baseline (completada)
+<details>
+<summary>Fases A-E: alineacion arquitectonica con LightRAG original (completadas)</summary>
 
-| Tarea | Estado |
-|---|---|
-| A.1 Nota de limitaciones en seccion LIGHT_RAG (DAM-1/DAM-2) | Completada |
-| A.2 Limitaciones en retrieval dual-level (DTm-70, DTm-71) | Completada |
-| A.3 Baseline SIMPLE_VECTOR | Completada (MRR=1.0, Hit@5=1.0 — 50q/3.5K docs) |
-| A.4 Tabla comparativa | Completada (LIGHT_RAG degrada MRR -48pp vs SIMPLE_VECTOR) |
-
-### Fase B: Rendimiento KG build (completada)
-
-Todas las tareas ya estaban implementadas en el codigo (DTm-66 a DTm-69).
-
-| Tarea | Estado | Evidencia |
+| Fase | Objetivo | DAMs resueltos |
 |---|---|---|
-| B.1 `KG_EXTRACTION_MAX_TOKENS` | Implementado | Default 4096 en `core.py:80`, env `KG_EXTRACTION_MAX_TOKENS` |
-| B.2 `KG_BATCH_DOCS_PER_CALL` | Implementado | Default 5 en `core.py:81`, env `KG_BATCH_DOCS_PER_CALL` |
-| B.3 Eliminar re-serializacion JSON | Implementado | `triplet_extractor.py:397` pasa dict directamente (DTm-68) |
-| B.4 Diferir token indexing | Implementado | `build_keyword_indices()` como post-build (DTm-69), llamado en `retriever.py:237` |
-| B.5 `KG_CACHE_DIR` | Disponible | Configurable via env. Activar con `KG_CACHE_DIR=./data/kg_cache` |
+| **A** | Documentacion de divergencias y baseline | — |
+| **B** | Rendimiento KG build (DTm-66 a DTm-69) | — |
+| **C** | Entity VDB: resolver entidades por embedding similarity | DAM-1, DAM-7 |
+| **D** | Relationship VDB: semantic search para high-level retrieval | DAM-2, DAM-5 |
+| **E** | Calidad grafo: description merging + gleaning + entity cap 100K | DAM-4 (parcial), DAM-6 |
 
-### Fase C: Entity VDB (DAM-1) — completada
+Correcciones de validacion V.1-V.6 aplicadas post-implementacion.
 
-**Objetivo:** Implementar entity vector database como el original. Resolver entidades por
-embedding similarity en vez de string matching.
-
-**Prerrequisito:** Fase B (iteraciones rapidas).
-
-**Referencia original:** `entities_vdb.query(keywords, top_k=...)` en `operate.py` de HKUDS/LightRAG.
-
-| Tarea | Descripcion | DAM/DTm | Esfuerzo |
-|---|---|---|---|
-| C.1 Crear `entities_vdb` | Nueva coleccion ChromaDB: indexar `entity_name + ": " + description` como embedding por entidad. Poblar durante `add_triplets()` o post-build. | DAM-1 | Medio |
-| C.2 Reemplazar `_resolve_entity_names` | `query_entities()` resuelve via similarity search contra `entities_vdb`. Top-k entidades por cosine similarity. Eliminar exact+fuzzy string matching. | DAM-1, DTm-70 | Medio |
-| C.3 Reducir BFS a 1-hop (configurable) | Con matching semantico, 1-hop basta (como el original). `KG_MAX_HOPS=1` por defecto. | DAM-7 | Bajo |
-| C.4 Tests unitarios entity VDB | Indexacion, similarity search, integracion con `query_entities()`. | — | Medio |
-| C.5 Run comparativo | LIGHT_RAG con entity VDB vs baseline. Medir MRR, Hit@5. | — | 1 run |
-
-**Criterio de exito:** MRR de LIGHT_RAG se acerca a SIMPLE_VECTOR (degradacion < 10pp).
-
-### Fase D: Relationship VDB (DAM-2) — completada
-
-**Objetivo:** Implementar relationship vector database. El high-level retrieval busca relaciones
-por semantic similarity, no por token matching.
-
-**Prerrequisito:** Fase C completada.
-
-**Referencia original:** `relationships_vdb.query(keywords, top_k=...)` + `_get_edge_data()` en HKUDS/LightRAG.
-
-| Tarea | Descripcion | DAM/DTm | Esfuerzo |
-|---|---|---|---|
-| D.1 Crear `relationships_vdb` | Nueva coleccion ChromaDB: indexar `keywords + ": " + description` por relacion. | DAM-2 | Medio |
-| D.2 Reemplazar `query_by_keywords` | High-level retrieval via similarity search contra `relationships_vdb`. Trazar relaciones a source docs. | DAM-2, DTm-71, DTm-74 | Medio |
-| D.3 Acumular edge weights | Sumar weights en relaciones duplicadas cross-doc. Usar weight para scoring. | DAM-5, DTm-72 | Bajo |
-| D.4 Tests unitarios relationship VDB | Indexacion, similarity search, integracion con high-level path. | — | Medio |
-| D.5 Run comparativo | LIGHT_RAG con ambos VDBs. Medir delta del high-level path. | — | 1 run |
-
-**Criterio de exito:** Dual-level retrieval completo. High-level aporta valor medible.
-
-### Fase E: Calidad del grafo (DAM-4, DAM-6) — completada
-
-**Objetivo:** Mejorar la calidad de entidades y cobertura de extraccion para que los VDBs
-tengan material rico con el que trabajar.
-
-**Prerrequisito:** Fase D completada.
-
-**Referencia original:** `_merge_nodes_then_upsert()` + gleaning en HKUDS/LightRAG.
-
-| Tarea | Descripcion | DAM/DTm | Esfuerzo |
-|---|---|---|---|
-| E.1 Merging de descripciones | Misma entidad en N docs → concatenar descripciones unicas (dedup por contenido). Si excede umbral, sintetizar via LLM (map-reduce como el original). | DAM-4 | Medio-Alto |
-| E.2 Gleaning (re-extraccion) | Pasada adicional con prompt de continuacion para capturar entidades perdidas. `KG_GLEANING_ROUNDS` (default 0). | DAM-6 | Medio |
-| E.3 Escalado entity cap | `KG_MAX_ENTITIES` a 100K+. Guardrail de memoria. | DTm-63 | Bajo |
-| E.4 Run comparativo | Impacto de descripciones ricas + gleaning. | — | 1 run |
-
-**Criterio de exito:** Descripciones de entidades ricas (multi-doc). Fragmentacion reducida >50%.
+</details>
 
 ### Fase F: Grafo como primary retriever (DAM-3, DAM-8) — completada (F.1-F.4)
 
