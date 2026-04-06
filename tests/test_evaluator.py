@@ -211,7 +211,7 @@ def test_cleanup():
 
     ev._cleanup()
 
-    ev._retriever is None
+    assert ev._retriever is None
     assert ev._embedding_model is None
     assert ev._llm_service is None
 
