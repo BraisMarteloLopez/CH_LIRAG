@@ -49,10 +49,7 @@ def check_dependencies() -> List[Tuple[bool, str]]:
         ("pyarrow", "Parquet I/O"),
         ("boto3", "MinIO/S3 client"),
     ]
-    optional = [
-        ("spacy", "NER (solo HYBRID_PLUS, no requerido para LIGHT_RAG)"),
-        ("tantivy", "BM25 (solo HYBRID_PLUS)"),
-    ]
+    optional = []
 
     for pkg, desc in critical:
         def _check_pkg(p=pkg):

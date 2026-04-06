@@ -258,8 +258,7 @@ def test_config_snapshot_fields():
 
     snapshot = run.config_snapshot
     required_keys = [
-        "retrieval_strategy", "retrieval_k", "pre_fusion_k",
-        "rrf_bm25_weight", "rrf_vector_weight", "rrf_k",
+        "retrieval_strategy", "retrieval_k",
         "corpus_shuffle_seed", "max_queries", "max_corpus",
         "generation_enabled", "max_context_chars",
         "reranker_enabled", "corpus_total_available", "corpus_indexed",

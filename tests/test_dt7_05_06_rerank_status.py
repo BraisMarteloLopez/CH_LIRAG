@@ -72,7 +72,7 @@ def _make_executor(reranker):
     config = MTEBConfig(
         infra=InfraConfig(),
         storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(retrieval_k=20, pre_fusion_k=150),
+        retrieval=RetrievalConfig(retrieval_k=20),
         reranker=RerankerConfig(enabled=True, top_n=5),
     )
     executor = RetrievalExecutor(

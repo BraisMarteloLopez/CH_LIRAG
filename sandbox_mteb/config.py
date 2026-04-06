@@ -138,7 +138,6 @@ class MTEBConfig:
         from shared.retrieval.core import RetrievalStrategy
         VALID_STRATEGIES = (
             RetrievalStrategy.SIMPLE_VECTOR,
-            RetrievalStrategy.HYBRID_PLUS,
             RetrievalStrategy.LIGHT_RAG,
         )
         if self.retrieval.strategy not in VALID_STRATEGIES:

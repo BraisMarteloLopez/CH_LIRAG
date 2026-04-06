@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 class RetrievalStrategy(Enum):
     """Estrategias de retrieval disponibles."""
     SIMPLE_VECTOR = auto()
-    HYBRID_PLUS = auto()
     LIGHT_RAG = auto()
 
 
@@ -45,26 +44,12 @@ class RetrievalConfig:
     strategy: RetrievalStrategy = RetrievalStrategy.SIMPLE_VECTOR
     retrieval_k: int = 20
 
-    # Pesos RRF (HYBRID_PLUS) — DTm-24: renombrados para distinguir de kg_*_weight
-    rrf_bm25_weight: float = 0.5
-    rrf_vector_weight: float = 0.5
-    rrf_k: int = 60
-    pre_fusion_k: int = 150
-
-    # BM25
-    bm25_language: str = "en"
-
     # HNSW (ChromaDB): num_threads=1 reduce no-determinismo del grafo
     # (elimina variabilidad de threading). No garantiza reproducibilidad
     # total: ChromaDB no soporta hnsw:random_seed. Ver DTm-13.
     hnsw_num_threads: int = 1
 
-    # Entity cross-linking (HYBRID_PLUS)
-    entity_max_cross_refs: int = 3
-    entity_min_shared: int = 1
-    entity_max_doc_fraction: float = 0.05
-
-    # Graph expansion cap (HYBRID_PLUS / LIGHT_RAG). 0 = sin limite.
+    # Graph expansion cap (LIGHT_RAG). 0 = sin limite.
     max_graph_expansion: int = 30
 
     # Knowledge graph (LIGHT_RAG)
@@ -75,7 +60,7 @@ class RetrievalConfig:
     kg_vector_weight: float = 0.7
     kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
     kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
-    kg_rrf_k: int = 60  # Constante k para RRF (mismo default que HYBRID_PLUS)
+    kg_rrf_k: int = 60  # Constante k para RRF
     kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
     kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
     kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction (DTm-67)
@@ -89,15 +74,7 @@ class RetrievalConfig:
         return cls(
             strategy=RetrievalStrategy[_env("RETRIEVAL_STRATEGY", "SIMPLE_VECTOR")],
             retrieval_k=_env_int("RETRIEVAL_K", 20),
-            rrf_bm25_weight=_env_float("RRF_BM25_WEIGHT", _env_float("RETRIEVAL_BM25_WEIGHT", 0.5)),
-            rrf_vector_weight=_env_float("RRF_VECTOR_WEIGHT", _env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5)),
-            pre_fusion_k=_env_int("RETRIEVAL_PRE_FUSION_K", 150),
-            rrf_k=_env_int("RETRIEVAL_RRF_K", 60),
-            bm25_language=_env("RETRIEVAL_BM25_LANGUAGE", "en"),
             hnsw_num_threads=_env_int("HNSW_NUM_THREADS", 1),
-            entity_max_cross_refs=_env_int("ENTITY_MAX_CROSS_REFS", 3),
-            entity_min_shared=_env_int("ENTITY_MIN_SHARED", 1),
-            entity_max_doc_fraction=_env_float("ENTITY_MAX_DOC_FRACTION", 0.05),
             max_graph_expansion=_env_int("MAX_GRAPH_EXPANSION", 30),
             kg_max_hops=_env_int("KG_MAX_HOPS", 1),
             kg_max_text_chars=_env_int("KG_MAX_TEXT_CHARS", 3000),
@@ -127,7 +104,6 @@ class RetrievalResult:
     contents: List[str]
     scores: List[float]
 
-    bm25_scores: Optional[List[float]] = None
     vector_scores: Optional[List[float]] = None
 
     retrieval_time_ms: float = 0.0

@@ -3,7 +3,6 @@ Retrieval strategies for RAG evaluation.
 
 Estrategias soportadas:
   - SIMPLE_VECTOR: embedding search puro via ChromaDB
-  - HYBRID_PLUS: BM25+Vector+RRF + entity cross-linking (spaCy NER)
   - LIGHT_RAG: Vector + Knowledge Graph dual-level (LLM triplet extraction)
 """
 
@@ -19,7 +18,6 @@ from .core import (
     BaseRetriever,
     SimpleVectorRetriever,
 )
-from .hybrid import HybridRetriever, HybridPlusRetriever, HAS_BM25, HAS_TANTIVY, HAS_SPACY, TantivyIndex
 from .lightrag import LightRAGRetriever, HAS_IGRAPH, HAS_NETWORKX
 
 logger = logging.getLogger(__name__)
@@ -54,17 +52,6 @@ def get_retriever(
             embedding_batch_size=embedding_batch_size,
         )
 
-    if strategy == RetrievalStrategy.HYBRID_PLUS:
-        return HybridPlusRetriever(
-            config=config,
-            embedding_model=embedding_model,
-            collection_name=collection_name,
-            embedding_batch_size=embedding_batch_size,
-            max_cross_refs=config.entity_max_cross_refs,
-            min_shared_entities=config.entity_min_shared,
-            max_entity_doc_fraction=config.entity_max_doc_fraction,
-        )
-
     if strategy == RetrievalStrategy.LIGHT_RAG:
         return LightRAGRetriever(
             config=config,
@@ -89,10 +76,7 @@ __all__ = [
     "RetrievalResult",
     "BaseRetriever",
     "SimpleVectorRetriever",
-    "HybridRetriever",
-    "HybridPlusRetriever",
     "LightRAGRetriever",
-    "HAS_SPACY",
     "HAS_IGRAPH",
     "HAS_NETWORKX",
     "get_retriever",
