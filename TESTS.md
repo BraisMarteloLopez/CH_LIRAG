@@ -182,7 +182,8 @@ loader._manifest = None
 
 | Area | Detalle |
 |------|---------|
-| loader.py:167-168 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
+| loader.py:_safe_str() | Utility helper para None/NaN coercion, sin test dedicado (cubierta indirectamente por test_loader) |
+| loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
 | preflight.py | Sin tests unitarios (depende de NIM/MinIO reales) |
 | report.py | Sin test dedicado; cubierto indirectamente |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |

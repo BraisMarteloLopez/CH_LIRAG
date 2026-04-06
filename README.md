@@ -175,7 +175,9 @@ Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarro
 
 **DTm-83:** Eliminacion completa de HYBRID_PLUS (-2,570 LOC, -3 deps).
 
-70+ issues resueltos (DT-1..9 + DTm-1..83 + Fases H/I/G). Ver historial git.
+**Audit Fase 1-2:** 8 bugfixes (atomic checkpoint, loader None checks, KG merge truncation, vector_store timing, embedding batch partial, overlap_ratio, NaN coercion, entity drop logging).
+
+70+ issues resueltos (DT-1..9 + DTm-1..83 + Fases H/I/G + Audit). Ver historial git.
 
 </details>
 
