@@ -33,7 +33,7 @@ try:
     HAS_IGRAPH = True
 except ImportError:
     HAS_IGRAPH = False
-    ig = None  # type: ignore[assignment]
+    ig = None  # type: ignore[assignment,unused-ignore]
 
 # =============================================================================
 # IMPORTACION CONDICIONAL — Snowball Stemmer
@@ -122,7 +122,7 @@ class KnowledgeGraph:
 
     @property
     def num_relations(self) -> int:
-        return self._graph.ecount()
+        return int(self._graph.ecount())
 
     @property
     def num_docs(self) -> int:
@@ -274,7 +274,7 @@ class KnowledgeGraph:
         vid = self._graph.vcount()
         self._graph.add_vertex(name=name, entity_type=entity_type)
         self._name_to_vid[name] = vid
-        return vid
+        return int(vid)
 
     def _has_node(self, name: str) -> bool:
         return name in self._name_to_vid
@@ -618,7 +618,7 @@ class KnowledgeGraph:
             pre_resolved: Si proporcionado, entity names ya resueltos por
                 VDB similarity search (DAM-1). Salta _resolve_entity_names.
         """
-        doc_scores: Counter = Counter()
+        doc_scores: Dict[str, float] = {}
 
         if pre_resolved is not None:
             # DAM-1: entidades resueltas externamente via entity VDB
@@ -646,7 +646,7 @@ class KnowledgeGraph:
 
                 # Documentos asociados a esta entidad
                 for doc_id in self._entity_to_docs.get(current, set()):
-                    doc_scores[doc_id] += hop_score
+                    doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + hop_score
 
                 # Expandir vecinos con peso de arista (DTm-72)
                 if depth < max_hops:
@@ -656,8 +656,8 @@ class KnowledgeGraph:
                             queue.append((neighbor, depth + 1, edge_weight))
 
         # Ordenar por score y limitar
-        ranked = doc_scores.most_common(max_docs)
-        return ranked
+        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:max_docs]
 
     def query_by_keywords(
         self,
@@ -669,7 +669,7 @@ class KnowledgeGraph:
 
         Usa indice invertido por token (DTm-30) en lugar de scan completo.
         """
-        doc_scores: Counter = Counter()
+        doc_scores: Dict[str, float] = {}
         keywords_lower = [k.lower().strip() for k in keywords if k.strip()]
 
         if not keywords_lower:
@@ -687,7 +687,7 @@ class KnowledgeGraph:
             if not entity:
                 continue
             for doc_id in entity.source_doc_ids:
-                doc_scores[doc_id] += 1.0
+                doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 1.0
 
         # Buscar relaciones via indice invertido (DTm-30)
         matched_relations: Set[Tuple[str, str, str]] = set()
@@ -698,9 +698,10 @@ class KnowledgeGraph:
 
         for _src, _tgt, doc_id in matched_relations:
             if doc_id:
-                doc_scores[doc_id] += 0.5
+                doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 0.5
 
-        return doc_scores.most_common(max_docs)
+        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:max_docs]
 
     # =================================================================
     # SERIALIZACION (DTm-34)

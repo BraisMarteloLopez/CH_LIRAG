@@ -231,7 +231,8 @@ class MinIOLoader:
         full_key = f"{self.prefix}/{key}"
         try:
             resp = self.client.get_object(Bucket=self.bucket, Key=full_key)
-            return json.loads(resp["Body"].read().decode("utf-8"))
+            data = json.loads(resp["Body"].read().decode("utf-8"))
+            return dict(data) if isinstance(data, dict) else None
         except ClientError:
             return None
 

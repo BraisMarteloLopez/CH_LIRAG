@@ -528,7 +528,10 @@ class LightRAGRetriever(BaseRetriever):
                     similarity = max(0.0, 1.0 - distance / 2.0)
                     doc_scores[doc_id] += similarity * weight
 
-        return doc_scores.most_common(top_k)
+        ranked: List[Tuple[str, float]] = [
+            (doc_id, float(score)) for doc_id, score in doc_scores.most_common(top_k)
+        ]
+        return ranked
 
     # -----------------------------------------------------------------
     # F.1: Chunk selection desde grafo (DTm-76)

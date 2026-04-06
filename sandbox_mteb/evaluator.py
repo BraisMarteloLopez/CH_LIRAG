@@ -294,6 +294,7 @@ class MTEBEvaluator:
         # ejecuciones paralelas.
         collection_name = f"eval_{run_id}" if run_id else f"eval_{dataset_name}_{uuid.uuid4().hex[:8]}"
 
+        assert self._embedding_model is not None, "_init_components must set _embedding_model"
         self._retriever = get_retriever(
             config=self.config.retrieval,
             embedding_model=self._embedding_model,
@@ -428,6 +429,7 @@ class MTEBEvaluator:
             rerank_statuses: List[Optional[bool]] = []
             for i, query in enumerate(chunk_queries):
                 vector = chunk_vectors[i] if use_preembed else None
+                assert self._retrieval_executor is not None
                 detail, reranked_ok = self._retrieval_executor.execute(
                     query.query_text, query.relevant_doc_ids,
                     query_vector=vector,

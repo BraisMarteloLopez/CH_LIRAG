@@ -76,13 +76,13 @@ class RetrievalExecutor:
             configured_strategy = self._config.retrieval.strategy
 
             # Seleccionar metodo de retrieval
-            assert self._retriever is not None  # guarded by early return above
+            retriever = self._retriever  # narrowed: not None (guarded above)
             def _do_retrieve(top_k: int):
                 if query_vector is not None:
-                    return self._retriever.retrieve_by_vector(
+                    return retriever.retrieve_by_vector(
                         query_text, query_vector, top_k=top_k
                     )
-                return self._retriever.retrieve(query_text, top_k=top_k)
+                return retriever.retrieve(query_text, top_k=top_k)
 
             def _check_strategy(result) -> None:
                 """Detecta discrepancia entre estrategia configurada y ejecutada (DTm-38)."""

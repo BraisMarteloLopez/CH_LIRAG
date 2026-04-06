@@ -93,7 +93,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 - **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
 
 ### Baja — code quality
-- **DTm-82**: 22 errores mypy restantes (`return-value`, `assignment`, `arg-type`). [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9)
+(sin items pendientes)
 - **DTm-12**: Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente. Aceptado
 - **DTm-13**: No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02. Aceptado
 
@@ -113,6 +113,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 - **DTm-63**: Eviction por importancia en entity cap — reemplaza FIFO silencioso. Entidades con 1 doc y degree<=1 se evictan para dar paso a nuevas. `_find_eviction_candidate()`, `_evict_entity()` en `knowledge_graph.py`
 - **DTm-73**: Co-occurrence bridging reduce fragmentacion del grafo. `build_co_occurrence_edges()` conecta entidades que co-ocurren en un mismo doc. Cap 10 pares/doc. Se ejecuta en post-build
 - **DTm-72**: BFS weighted por edge strength. `_get_neighbors_weighted()` usa `log(1 + unique_docs)` como factor. Co-occurrence edges (w=1) puntuan ~0.69x, LLM edges fuertes (w=10) ~2.4x
+- **DTm-82**: 22 errores mypy corregidos. Counter→Dict[str,float], variable shadowing, type narrowing en closures, unused type-ignore cleanup. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9)
 
 ## Bare excepts aceptados (no criticos)
 

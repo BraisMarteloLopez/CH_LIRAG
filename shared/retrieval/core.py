@@ -337,7 +337,8 @@ class SimpleVectorRetriever(BaseRetriever):
         """
         if not self._vector_store or not doc_ids:
             return {}
-        return self._vector_store.get_documents_by_ids(doc_ids)
+        result: Dict[str, str] = self._vector_store.get_documents_by_ids(doc_ids)
+        return result
 
     def clear_index(self) -> None:
         if self._vector_store:
