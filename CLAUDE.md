@@ -37,7 +37,7 @@ sandbox_mteb/                  # Pipeline de evaluacion
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (352 unit tests, 30 files)
+tests/                         # pytest (399 unit tests, 35 files)
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
   test_*.py                    # Unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
@@ -129,7 +129,7 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | 352 en 30 archivos |
+| Tests unitarios | 399 en 35 archivos |
 | Tests integracion | 19 en 3 archivos |
 | mypy | 0 errores (27 source files) |
 | Modulos cubiertos | 29/31 (93%) |

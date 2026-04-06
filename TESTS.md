@@ -140,6 +140,8 @@ loader._manifest = None
 | test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 45 | _fuse_with_graph, fingerprint, VDBs, modes, DTm-62 conditional fusion |
 | test_dtm4_rrf.py | shared/retrieval/core.py | 11 | reciprocal_rank_fusion |
 | test_dt8_09_10_11_reranker_sort.py | shared/retrieval/reranker.py | 3 | rerank sorting |
+| test_reranker.py | shared/retrieval/reranker.py | 8 | empty passthrough, ordering, top_n, vector_scores, error fallback, metadata |
+| test_report.py | shared/report.py | 13 | to_json, to_summary_csv, to_detail_csv, export, LIGHT_RAG columns |
 | test_group_a_b_review.py | shared/retrieval/core.py, reranker.py, vector_store.py | 8 | get_documents_by_ids, batching, vector_scores |
 | test_dt7_08_csv_reranked.py | shared/report.py | 1 | reranked column CSV |
 | test_dtm17_generation_retrieval_metrics.py | shared/types.py, shared/report.py | 14 | generation_recall/hit, CSV columns |
@@ -158,6 +160,9 @@ loader._manifest = None
 | test_dt7_07_no_reranker.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 1 | sin reranker path |
 | test_dtm38_strategy_guardrail.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 8 | strategy mismatch, config_snapshot |
 | test_dtm5_12_13_secondary_metric_errors.py | sandbox_mteb/generation_executor.py | 3 | secondary metric errors |
+| test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
+| test_run_cli.py | sandbox_mteb/run.py | 11 | parse_args, setup_logging, main (dry-run, full, errors) |
+| test_preflight.py | sandbox_mteb/preflight.py | 8 | _check wrapper, dependencies, lock_file, config, main |
 | test_checkpoint.py | sandbox_mteb/checkpoint.py | 11 | save/load/delete checkpoint |
 | test_loader.py | sandbox_mteb/loader.py | 6 | check_connection, _populate_from_dataframes |
 | test_dtm4_loader_populate.py | sandbox_mteb/loader.py | 9 | _populate_from_dataframes detallado |
@@ -173,10 +178,7 @@ loader._manifest = None
 
 | Modulo | LOC | Riesgo |
 |--------|-----|--------|
-| shared/report.py | 287 | Bajo — ejercitado indirectamente por test_dtm17, test_dt7_08 |
 | shared/structured_logging.py | 124 | Bajo — utilidad de logging |
-| sandbox_mteb/preflight.py | 337 | Medio — validacion pre-run, requiere infra para test real |
-| sandbox_mteb/run.py | 121 | Bajo — CLI entry point, delega a evaluator |
 
 ## Gaps de cobertura conocidos
 
@@ -184,8 +186,6 @@ loader._manifest = None
 |------|---------|
 | loader.py:_safe_str() | Utility helper para None/NaN coercion, sin test dedicado (cubierta indirectamente por test_loader) |
 | loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
-| preflight.py | Sin tests unitarios (depende de NIM/MinIO reales) |
-| report.py | Sin test dedicado; cubierto indirectamente |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
 
 ## Reglas para modificar tests
