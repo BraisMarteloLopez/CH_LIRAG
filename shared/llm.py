@@ -197,7 +197,7 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     se usan desde el mismo event loop, eliminando el error
     "bound to a different event loop".
     """
-    return _persistent_loop.run(coro)  # type: ignore[return-value]
+    return _persistent_loop.run(coro)  # type: ignore[no-any-return]
 
 
 # =============================================================================

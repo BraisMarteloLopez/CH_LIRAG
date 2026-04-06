@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sys
 from collections import Counter, defaultdict, deque
@@ -32,7 +33,7 @@ try:
     HAS_IGRAPH = True
 except ImportError:
     HAS_IGRAPH = False
-    ig = None  # type: ignore[assignment]
+    ig = None  # type: ignore[assignment,unused-ignore]
 
 # =============================================================================
 # IMPORTACION CONDICIONAL — Snowball Stemmer
@@ -121,7 +122,7 @@ class KnowledgeGraph:
 
     @property
     def num_relations(self) -> int:
-        return self._graph.ecount()
+        return int(self._graph.ecount())
 
     @property
     def num_docs(self) -> int:
@@ -273,7 +274,7 @@ class KnowledgeGraph:
         vid = self._graph.vcount()
         self._graph.add_vertex(name=name, entity_type=entity_type)
         self._name_to_vid[name] = vid
-        return vid
+        return int(vid)
 
     def _has_node(self, name: str) -> bool:
         return name in self._name_to_vid
@@ -301,6 +302,30 @@ class KnowledgeGraph:
             return []
         neighbor_vids = self._graph.neighbors(vid)
         return [self._graph.vs[nv]["name"] for nv in neighbor_vids]
+
+    def _get_neighbors_weighted(self, name: str) -> List[Tuple[str, float]]:
+        """Return neighbors with edge weight factor (DTm-72).
+
+        Weight = log(1 + unique_docs_on_edge). Co-occurrence edges (1 doc)
+        get ~0.69, strong LLM edges (10 docs) get ~2.40.
+
+        Returns:
+            List of (neighbor_name, weight_factor) tuples.
+        """
+        vid = self._name_to_vid.get(name)
+        if vid is None:
+            return []
+        result: List[Tuple[str, float]] = []
+        for eid in self._graph.incident(vid):
+            edge = self._graph.es[eid]
+            neighbor_vid = edge.target if edge.source == vid else edge.source
+            neighbor_name = self._graph.vs[neighbor_vid]["name"]
+            # Edge weight = unique docs mentioning this edge
+            relations = edge["relations"]
+            unique_docs = len({r.get("doc_id", "") for r in relations if r.get("doc_id")})
+            weight_factor = math.log1p(max(unique_docs, 1))
+            result.append((neighbor_name, weight_factor))
+        return result
 
     # -----------------------------------------------------------------
     # DTm-63: Eviction por importancia
@@ -593,7 +618,7 @@ class KnowledgeGraph:
             pre_resolved: Si proporcionado, entity names ya resueltos por
                 VDB similarity search (DAM-1). Salta _resolve_entity_names.
         """
-        doc_scores: Counter = Counter()
+        doc_scores: Dict[str, float] = {}
 
         if pre_resolved is not None:
             # DAM-1: entidades resueltas externamente via entity VDB
@@ -605,34 +630,34 @@ class KnowledgeGraph:
             resolved = self._resolve_entity_names(entity_names)
 
         for norm, confidence in resolved:
-            # BFS con distancia
+            # BFS con distancia y peso de arista (DTm-72)
+            # Queue: (entity_name, depth, accumulated_weight_factor)
             visited: Set[str] = set()
-            queue: deque[Tuple[str, int]] = deque([(norm, 0)])
+            queue: deque[Tuple[str, int, float]] = deque([(norm, 0, 1.0)])
             visited.add(norm)
 
             while queue:
-                current, depth = queue.popleft()
+                current, depth, weight_acc = queue.popleft()
                 if depth > max_hops:
                     continue
 
-                # Score inversamente proporcional a la distancia,
-                # scaled by match confidence (DTm-70)
-                hop_score = confidence / (1.0 + depth)
+                # Score: distancia inversa * confidence * peso acumulado
+                hop_score = (confidence * weight_acc) / (1.0 + depth)
 
                 # Documentos asociados a esta entidad
                 for doc_id in self._entity_to_docs.get(current, set()):
-                    doc_scores[doc_id] += hop_score
+                    doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + hop_score
 
-                # Expandir vecinos
+                # Expandir vecinos con peso de arista (DTm-72)
                 if depth < max_hops:
-                    for neighbor in self._get_neighbors(current):
+                    for neighbor, edge_weight in self._get_neighbors_weighted(current):
                         if neighbor not in visited:
                             visited.add(neighbor)
-                            queue.append((neighbor, depth + 1))
+                            queue.append((neighbor, depth + 1, edge_weight))
 
         # Ordenar por score y limitar
-        ranked = doc_scores.most_common(max_docs)
-        return ranked
+        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:max_docs]
 
     def query_by_keywords(
         self,
@@ -644,7 +669,7 @@ class KnowledgeGraph:
 
         Usa indice invertido por token (DTm-30) en lugar de scan completo.
         """
-        doc_scores: Counter = Counter()
+        doc_scores: Dict[str, float] = {}
         keywords_lower = [k.lower().strip() for k in keywords if k.strip()]
 
         if not keywords_lower:
@@ -662,7 +687,7 @@ class KnowledgeGraph:
             if not entity:
                 continue
             for doc_id in entity.source_doc_ids:
-                doc_scores[doc_id] += 1.0
+                doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 1.0
 
         # Buscar relaciones via indice invertido (DTm-30)
         matched_relations: Set[Tuple[str, str, str]] = set()
@@ -673,9 +698,10 @@ class KnowledgeGraph:
 
         for _src, _tgt, doc_id in matched_relations:
             if doc_id:
-                doc_scores[doc_id] += 0.5
+                doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 0.5
 
-        return doc_scores.most_common(max_docs)
+        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:max_docs]
 
     # =================================================================
     # SERIALIZACION (DTm-34)
@@ -832,6 +858,68 @@ class KnowledgeGraph:
         Tambien se llama desde from_dict() al cargar desde cache.
         """
         self._rebuild_keyword_indices()
+
+    # -----------------------------------------------------------------
+    # DTm-73: Co-occurrence bridging
+    # -----------------------------------------------------------------
+
+    # Maximo de pares co-occurrence por documento para evitar O(N^2)
+    _MAX_COOCCURRENCE_PAIRS_PER_DOC = 10
+
+    def build_co_occurrence_edges(self) -> int:
+        """Crea aristas entre entidades que co-ocurren en un mismo documento.
+
+        Reduce fragmentacion del grafo (DTm-73) conectando entidades que
+        aparecen en el mismo doc pero no tienen relacion explicita del LLM.
+        Las aristas se crean con relacion "co-occurs" y peso bajo.
+
+        Debe llamarse despues de add_triplets() y antes de build_keyword_indices().
+
+        Returns:
+            Numero de aristas co-occurrence creadas.
+        """
+        edges_added = 0
+
+        for doc_id, entity_names in self._doc_to_entities.items():
+            names = [n for n in entity_names if n in self._entities and self._has_node(n)]
+            if len(names) < 2:
+                continue
+
+            pairs_this_doc = 0
+            for i in range(len(names)):
+                if pairs_this_doc >= self._MAX_COOCCURRENCE_PAIRS_PER_DOC:
+                    break
+                for j in range(i + 1, len(names)):
+                    if pairs_this_doc >= self._MAX_COOCCURRENCE_PAIRS_PER_DOC:
+                        break
+                    src, tgt = names[i], names[j]
+                    # Solo crear si no existe arista (no sobreescribir relaciones LLM)
+                    if self._get_edge_id(src, tgt) is not None:
+                        continue
+
+                    src_vid = self._name_to_vid[src]
+                    tgt_vid = self._name_to_vid[tgt]
+                    self._graph.add_edge(
+                        src_vid, tgt_vid,
+                        relations=[{
+                            "relation": "co-occurs",
+                            "description": f"co-occurrence in {doc_id}",
+                            "doc_id": doc_id,
+                        }],
+                    )
+                    edges_added += 1
+                    pairs_this_doc += 1
+
+        if edges_added > 0:
+            components_after = 0
+            if self._graph.vcount() > 0:
+                components_after = len(self._graph.connected_components())
+            logger.info(
+                f"KnowledgeGraph: {edges_added} co-occurrence edges added (DTm-73), "
+                f"{components_after} connected components"
+            )
+
+        return edges_added
 
     def _rebuild_keyword_indices(self) -> None:
         """Reconstruye _kw_entity_index y _kw_relation_index desde el estado actual."""

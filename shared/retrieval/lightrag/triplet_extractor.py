@@ -596,14 +596,14 @@ class TripletExtractor:
             # Process groups with concurrency control via chunks
             batch_sz = self._batch_size
             for start in range(0, len(groups), batch_sz):
-                chunk = groups[start:start + batch_sz]
-                tasks = [self._extract_multi_doc_async(g) for g in chunk]
-                chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in chunk_results:
-                    if isinstance(r, BaseException):
-                        logger.warning(f"TripletExtractor: batch extraction failed: {r}")
+                group_chunk = groups[start:start + batch_sz]
+                group_tasks = [self._extract_multi_doc_async(g) for g in group_chunk]
+                group_results = await asyncio.gather(*group_tasks, return_exceptions=True)
+                for gr in group_results:
+                    if isinstance(gr, BaseException):
+                        logger.warning(f"TripletExtractor: batch extraction failed: {gr}")
                         continue
-                    results.update(r)
+                    results.update(gr)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         total_entities = sum(len(e) for e, _ in results.values())

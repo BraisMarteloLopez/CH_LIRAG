@@ -282,6 +282,11 @@ class LightRAGRetriever(BaseRetriever):
         # DTm-49: emitir resumen una sola vez al final
         self._kg.log_entity_cap_summary()
 
+        # DTm-73: co-occurrence bridging para reducir fragmentacion del grafo
+        co_edges = self._kg.build_co_occurrence_edges()
+        if co_edges:
+            logger.info(f"LightRAGRetriever: {co_edges} co-occurrence edges creadas")
+
         # DTm-69: construir indices invertidos de keywords en fase post-build
         # (antes se hacia por cada tripleta, entrelazado con I/O del grafo)
         t_idx = time.perf_counter()
@@ -523,7 +528,10 @@ class LightRAGRetriever(BaseRetriever):
                     similarity = max(0.0, 1.0 - distance / 2.0)
                     doc_scores[doc_id] += similarity * weight
 
-        return doc_scores.most_common(top_k)
+        ranked: List[Tuple[str, float]] = [
+            (doc_id, float(score)) for doc_id, score in doc_scores.most_common(top_k)
+        ]
+        return ranked
 
     # -----------------------------------------------------------------
     # F.1: Chunk selection desde grafo (DTm-76)

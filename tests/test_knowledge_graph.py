@@ -983,3 +983,169 @@ def test_get_relations_for_docs_empty():
     """Doc sin relaciones retorna lista vacia."""
     kg = KnowledgeGraph()
     assert kg.get_relations_for_docs(["nonexistent"]) == []
+
+
+# =============================================================================
+# DTm-73: Co-occurrence bridging
+# =============================================================================
+
+
+def test_co_occurrence_bridges_disconnected_components():
+    """Entidades del mismo doc se conectan, reduciendo componentes."""
+    kg = KnowledgeGraph()
+    # Dos componentes desconectados
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc1", [_rel("C", "D", "r2")])
+    # A-B y C-D son 2 componentes (A,B no conectan con C,D via triplet)
+    components_before = len(kg._graph.connected_components())
+    assert components_before == 2
+
+    edges_added = kg.build_co_occurrence_edges()
+
+    # doc1 tiene A, B, C, D -> co-occurrence los conecta
+    assert edges_added > 0
+    components_after = len(kg._graph.connected_components())
+    assert components_after < components_before
+
+
+def test_co_occurrence_no_duplicate_edges():
+    """No crea aristas donde ya existe una relacion LLM."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    edges_before = kg._graph.ecount()
+
+    edges_added = kg.build_co_occurrence_edges()
+
+    # A y B ya estan conectados -> no se crea arista nueva
+    assert edges_added == 0
+    assert kg._graph.ecount() == edges_before
+
+
+def test_co_occurrence_single_entity_doc_no_edges():
+    """Doc con una sola entidad no genera aristas co-occurrence."""
+    kg = KnowledgeGraph()
+    # Un doc con self-loop entities (solo 1 entidad unica)
+    kg.add_triplets("doc1", [_rel("A", "A", "self")])
+
+    edges_added = kg.build_co_occurrence_edges()
+    assert edges_added == 0
+
+
+def test_co_occurrence_caps_pairs_per_doc():
+    """Maximo de pares por doc se respeta."""
+    kg = KnowledgeGraph()
+    # Crear muchas entidades en un solo doc (N entidades -> N*(N-1)/2 pares)
+    # Con 10 entidades -> 45 pares posibles
+    triplets = []
+    for i in range(10):
+        name_a = f"E{i}"
+        name_b = f"E{i+10}"
+        triplets.append(_rel(name_a, name_b, f"r{i}"))
+    kg.add_triplets("doc1", triplets)
+
+    edges_added = kg.build_co_occurrence_edges()
+    # Cap = 10 pares por doc, y ya hay 10 aristas LLM
+    # Pares sin arista: 20 entidades -> muchos pares posibles, capped at 10
+    assert edges_added <= kg._MAX_COOCCURRENCE_PAIRS_PER_DOC
+
+
+def test_co_occurrence_enables_bfs_across_components():
+    """BFS puede alcanzar docs de otro componente tras bridging."""
+    kg = KnowledgeGraph()
+    # Componente 1: A-B en doc1
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    # Componente 2: C-D en doc2
+    kg.add_triplets("doc2", [_rel("C", "D", "r2")])
+    # doc3 menciona B y C (bridge potencial)
+    kg.add_triplets("doc3", [_rel("B", "X", "r3")])
+    kg.add_triplets("doc3", [_rel("C", "Y", "r4")])
+
+    # Sin bridging: BFS desde A no alcanza doc2
+    kg.build_keyword_indices()
+    results_before = kg.query_entities(["A"], max_hops=3, max_docs=20)
+    doc_ids_before = {doc_id for doc_id, _ in results_before}
+
+    # Con bridging: B y C se conectan via doc3 co-occurrence
+    kg.build_co_occurrence_edges()
+    kg.build_keyword_indices()
+    results_after = kg.query_entities(["A"], max_hops=3, max_docs=20)
+    doc_ids_after = {doc_id for doc_id, _ in results_after}
+
+    # Ahora doc2 deberia ser alcanzable via A -> B -> (co-occur) -> C -> doc2
+    assert "doc2" in doc_ids_after
+    assert len(doc_ids_after) > len(doc_ids_before)
+
+
+# =============================================================================
+# DTm-72: BFS weighted by edge strength
+# =============================================================================
+
+
+def test_bfs_weighted_strong_edge_scores_higher():
+    """Docs alcanzados via aristas fuertes (multi-doc) puntuan mas alto."""
+    kg = KnowledgeGraph()
+    # A -> B via 5 docs (strong edge)
+    for i in range(5):
+        kg.add_triplets(f"doc_strong_{i}", [_rel("A", "B", "knows")])
+    # A -> C via 1 doc (weak edge)
+    kg.add_triplets("doc_weak", [_rel("A", "C", "met")])
+    # B asociado a doc_target_strong
+    kg.add_triplets("doc_target_strong", [_rel("B", "X", "r")])
+    # C asociado a doc_target_weak
+    kg.add_triplets("doc_target_weak", [_rel("C", "Y", "r")])
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(["A"], max_hops=2, max_docs=20)
+    score_map = dict(results)
+
+    # doc_target_strong reachable via A->B->X (strong edge A-B)
+    # doc_target_weak reachable via A->C->Y (weak edge A-C)
+    # Strong path should score higher
+    assert score_map.get("doc_target_strong", 0) > score_map.get("doc_target_weak", 0)
+
+
+def test_bfs_weighted_co_occurrence_lower_than_llm_edge():
+    """Co-occurrence edges (weight=1) producen scores mas bajos que LLM edges.
+
+    Setup: A is the query entity.
+    - B connected to A via LLM edge (2 docs -> weight=2)
+    - C connected to A via co-occurrence edge only (weight=1)
+    - Both B and C have exclusive docs only reachable at depth=1 from A
+    """
+    kg = KnowledgeGraph()
+    # A -> B via LLM (2 docs, weight=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    kg.add_triplets("doc2", [_rel("A", "B", "works_with")])
+    # B has exclusive doc (only reachable via A->B at depth=1)
+    kg.add_triplets("doc_b_only", [_rel("B", "Xb", "r")])
+    # A and C appear in same doc (no LLM relation between them)
+    kg.add_triplets("doc_shared", [_rel("A", "Za", "r")])
+    kg.add_triplets("doc_shared", [_rel("C", "Zc", "r")])
+    # C has exclusive doc (only reachable via A->C at depth=1)
+    kg.add_triplets("doc_c_only", [_rel("C", "Xc", "r")])
+    # Build co-occurrence: A-C connected via doc_shared
+    kg.build_co_occurrence_edges()
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(["A"], max_hops=1, max_docs=20)
+    score_map = dict(results)
+
+    # doc_b_only reachable via A->B (LLM edge, weight=2) at depth=1
+    # doc_c_only reachable via A->C (co-occurrence, weight=1) at depth=1
+    score_b = score_map.get("doc_b_only", 0)
+    score_c = score_map.get("doc_c_only", 0)
+    assert score_b > 0 and score_c > 0, f"Both docs should be reachable: b={score_b}, c={score_c}"
+    assert score_b > score_c, f"LLM edge score ({score_b}) should beat co-occurrence ({score_c})"
+
+
+def test_bfs_weighted_depth_zero_unaffected():
+    """Entidades a depth=0 (la propia) no se ven afectadas por edge weight."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(["A"], max_hops=1, max_docs=20)
+    score_map = dict(results)
+
+    # doc1 esta asociado directamente a A (depth=0), score = confidence / (1+0) = 1.0
+    assert score_map.get("doc1", 0) >= 1.0

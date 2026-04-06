@@ -133,7 +133,7 @@ loader._manifest = None
 | test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context (consolida dt6_01 y dt6_02) |
 | test_dt9_extract_score_fallback.py | shared/metrics.py | 6 | _extract_score_fallback regex |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
-| test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 53 | CRUD, BFS, keywords, persistence, VDB, stats |
+| test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
 | test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
 | test_gleaning.py | shared/retrieval/lightrag/triplet_extractor.py | 6 | glean_from_doc_async |
 | test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 45 | _fuse_with_graph, fingerprint, VDBs, modes, DTm-62 conditional fusion |
