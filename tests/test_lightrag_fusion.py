@@ -37,6 +37,7 @@ def _make_lightrag(
     vector_retriever=None,
     fusion_method="rrf",
     rrf_k=60,
+    lightrag_mode="hybrid",
 ):
     """Crea LightRAGRetriever con dependencias mockeadas."""
     retriever = object.__new__(LightRAGRetriever)
@@ -48,6 +49,7 @@ def _make_lightrag(
     retriever._kg = kg or MagicMock(spec=KnowledgeGraph)
     retriever._extractor = extractor or MagicMock()
     retriever._has_graph = True
+    retriever._lightrag_mode = lightrag_mode
     import threading
     from collections import OrderedDict
     retriever._query_keywords_cache = OrderedDict()
@@ -598,3 +600,144 @@ def test_select_chunks_ordered_by_score_descending():
 
     assert doc_ids == ["high", "mid", "low"]
     assert scores[0] > scores[1] > scores[2]
+
+
+# =============================================================================
+# F.2: _retrieve_via_graph — graph as primary retriever (DAM-3)
+# =============================================================================
+
+
+def test_retrieve_via_graph_uses_graph_as_main_source():
+    """graph_primary: docs vienen del grafo, no de vector search."""
+    r = _make_lightrag(lightrag_mode="graph_primary")
+    r._extractor.extract_query_keywords.return_value = (["alice"], ["research"])
+    r._kg.query_entities.return_value = [("doc_a", 1.0), ("doc_b", 0.5)]
+    r._kg.query_by_keywords.return_value = [("doc_c", 0.8)]
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "doc_a": "Content A",
+        "doc_b": "Content B",
+        "doc_c": "Content C",
+    }
+
+    result = r._retrieve_via_graph("query about alice", top_k=5)
+
+    assert "doc_a" in result.doc_ids
+    assert "doc_b" in result.doc_ids
+    assert "doc_c" in result.doc_ids
+    assert result.metadata["graph_primary"] is True
+    # Vector search directo no se llamo (suficientes docs del grafo)
+    r._vector_retriever.retrieve.assert_not_called()
+
+
+def test_retrieve_via_graph_fallback_when_insufficient():
+    """graph_primary: si el grafo produce pocos docs, complementa con vector."""
+    r = _make_lightrag(lightrag_mode="graph_primary")
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+    # Solo 1 doc del grafo (< top_k/2 = 2)
+    r._kg.query_entities.return_value = [("doc_a", 1.0)]
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "doc_a": "Content A",
+    }
+    r._vector_retriever.retrieve.return_value = _make_vector_result(
+        ["doc_v1", "doc_v2"], ["Vector 1", "Vector 2"], [0.9, 0.8],
+    )
+
+    result = r._retrieve_via_graph("query", top_k=5)
+
+    assert "doc_a" in result.doc_ids  # del grafo
+    assert "doc_v1" in result.doc_ids  # del vector fallback
+    assert result.metadata["vector_fallback_used"] is True
+
+
+def test_retrieve_via_graph_no_keywords_falls_back():
+    """graph_primary: sin keywords -> fallback completo a vector."""
+    r = _make_lightrag(lightrag_mode="graph_primary")
+    r._extractor.extract_query_keywords.return_value = ([], [])
+    r._vector_retriever.retrieve.return_value = _make_vector_result(
+        ["v1"], ["Content"], [0.9],
+    )
+
+    result = r._retrieve_via_graph("query", top_k=5)
+
+    assert result.doc_ids == ["v1"]
+    r._vector_retriever.retrieve.assert_called_once()
+
+
+def test_retrieve_mode_naive_skips_graph():
+    """Modo naive: solo vector search, ignora KG."""
+    r = _make_lightrag(lightrag_mode="naive")
+    r._vector_retriever.retrieve.return_value = _make_vector_result(
+        ["v1"], ["Content"], [0.9],
+    )
+
+    result = r.retrieve("query", top_k=5)
+
+    assert result.metadata["lightrag_mode"] == "naive"
+    assert result.metadata["graph_active"] is False
+    r._kg.query_entities.assert_not_called()
+
+
+def test_retrieve_mode_hybrid_preserves_fusion_behavior():
+    """Modo hybrid (default): vector + graph fusion como antes."""
+    r = _make_lightrag(lightrag_mode="hybrid")
+    r._extractor.extract_query_keywords.return_value = (["alice"], ["theme"])
+    r._kg.query_entities.return_value = [("doc_g", 0.8)]
+    r._kg.query_by_keywords.return_value = [("doc_g2", 0.5)]
+
+    vector_result = _make_vector_result(
+        ["doc_v1", "doc_v2"], ["V1", "V2"], [0.9, 0.8],
+    )
+    r._vector_retriever.retrieve.return_value = vector_result
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "doc_g": "Graph content",
+        "doc_g2": "Graph content 2",
+    }
+
+    result = r.retrieve("query about alice", top_k=5)
+
+    assert result.metadata["lightrag_mode"] == "hybrid"
+    assert result.metadata["graph_active"] is True
+    # Fusion debe haberse ejecutado (vector + graph)
+    r._vector_retriever.retrieve.assert_called_once()
+
+
+def test_retrieve_mode_local_only_uses_entities():
+    """Modo local: solo entity path, no relationship path."""
+    r = _make_lightrag(lightrag_mode="local")
+    r._extractor.extract_query_keywords.return_value = (["alice"], ["theme"])
+    r._kg.query_entities.return_value = [("doc_e", 0.9)]
+    r._kg.query_by_keywords.return_value = [("doc_r", 0.5)]
+
+    vector_result = _make_vector_result(["doc_v"], ["V"], [0.8])
+    r._vector_retriever.retrieve.return_value = vector_result
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "doc_e": "Entity content",
+    }
+
+    result = r.retrieve("query", top_k=5)
+
+    # query_entities se llamo (low-level)
+    r._kg.query_entities.assert_called_once()
+    # query_by_keywords NO se llamo (high-level desactivado en modo local)
+    r._kg.query_by_keywords.assert_not_called()
+
+
+def test_retrieve_mode_global_only_uses_relationships():
+    """Modo global: solo relationship path, no entity path."""
+    r = _make_lightrag(lightrag_mode="global")
+    r._extractor.extract_query_keywords.return_value = (["alice"], ["theme"])
+    r._kg.query_entities.return_value = [("doc_e", 0.9)]
+    r._kg.query_by_keywords.return_value = [("doc_r", 0.5)]
+
+    vector_result = _make_vector_result(["doc_v"], ["V"], [0.8])
+    r._vector_retriever.retrieve.return_value = vector_result
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "doc_r": "Relation content",
+    }
+
+    result = r.retrieve("query", top_k=5)
+
+    # query_entities NO se llamo (low-level desactivado en modo global)
+    r._kg.query_entities.assert_not_called()
+    # query_by_keywords se llamo (high-level)
+    r._kg.query_by_keywords.assert_called_once()

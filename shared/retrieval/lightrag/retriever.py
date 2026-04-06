@@ -89,6 +89,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
         self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
         self._kg_gleaning_rounds = config.kg_gleaning_rounds
+        self._lightrag_mode = config.lightrag_mode
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -590,25 +591,37 @@ class LightRAGRetriever(BaseRetriever):
         query: str,
         top_k: Optional[int] = None,
     ) -> RetrievalResult:
-        """Retrieval: vector search + graph traversal + fusion."""
+        """Retrieval con modo configurable (F.4/DTm-79).
+
+        Modos:
+          naive         — solo vector search (sin KG)
+          graph_primary — grafo como primary retriever, vector fallback (DAM-3)
+          local         — entity VDB + BFS + vector fusion
+          global        — relationship VDB + vector fusion
+          hybrid        — local + global + vector fusion (default)
+        """
         k = top_k or self.config.retrieval_k
         start_time = time.perf_counter()
 
-        # Paso 1: Vector search
-        vector_result = self._vector_retriever.retrieve(query, top_k=k)
+        mode = self._lightrag_mode
+        graph_available = self._has_graph and self._kg and self._extractor
 
-        # Paso 2: Graph expansion (si disponible)
-        if self._has_graph and self._kg and self._extractor:
-            result = self._fuse_with_graph(query, vector_result, k)
+        if mode == "naive" or not graph_available:
+            result = self._vector_retriever.retrieve(query, top_k=k)
+        elif mode == "graph_primary":
+            result = self._retrieve_via_graph(query, k)
         else:
-            result = vector_result
+            # local, global, hybrid: vector search + graph fusion
+            vector_result = self._vector_retriever.retrieve(query, top_k=k)
+            result = self._fuse_with_graph(query, vector_result, k)
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
         result.strategy_used = (
-            RetrievalStrategy.LIGHT_RAG if self._has_graph
+            RetrievalStrategy.LIGHT_RAG if graph_available and mode != "naive"
             else RetrievalStrategy.SIMPLE_VECTOR
         )
-        result.metadata["graph_active"] = self._has_graph
+        result.metadata["graph_active"] = graph_available and mode != "naive"
+        result.metadata["lightrag_mode"] = mode
         return result
 
     def retrieve_by_vector(
@@ -621,24 +634,157 @@ class LightRAGRetriever(BaseRetriever):
         k = top_k or self.config.retrieval_k
         start_time = time.perf_counter()
 
-        # Paso 1: Vector search con embedding pre-computado
-        vector_result = self._vector_retriever.retrieve_by_vector(
-            query_text, query_vector, top_k=k
-        )
+        mode = self._lightrag_mode
+        graph_available = self._has_graph and self._kg and self._extractor
 
-        # Paso 2: Graph expansion (si disponible)
-        if self._has_graph and self._kg and self._extractor:
-            result = self._fuse_with_graph(query_text, vector_result, k)
+        if mode == "naive" or not graph_available:
+            result = self._vector_retriever.retrieve_by_vector(
+                query_text, query_vector, top_k=k
+            )
+        elif mode == "graph_primary":
+            # graph_primary usa query text, no vector pre-computado
+            result = self._retrieve_via_graph(query_text, k)
         else:
-            result = vector_result
+            vector_result = self._vector_retriever.retrieve_by_vector(
+                query_text, query_vector, top_k=k
+            )
+            result = self._fuse_with_graph(query_text, vector_result, k)
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
         result.strategy_used = (
-            RetrievalStrategy.LIGHT_RAG if self._has_graph
+            RetrievalStrategy.LIGHT_RAG if graph_available and mode != "naive"
             else RetrievalStrategy.SIMPLE_VECTOR
         )
-        result.metadata["graph_active"] = self._has_graph
+        result.metadata["graph_active"] = graph_available and mode != "naive"
+        result.metadata["lightrag_mode"] = mode
         return result
+
+    # -----------------------------------------------------------------
+    # F.2: Graph as primary retriever (DAM-3)
+    # -----------------------------------------------------------------
+
+    def _retrieve_via_graph(
+        self,
+        query: str,
+        top_k: int,
+    ) -> RetrievalResult:
+        """Retrieval con grafo como mecanismo primario (DAM-3).
+
+        Flujo:
+        1. Extraer keywords (low-level + high-level)
+        2. Entity VDB → query_entities() → doc_ids (low-level)
+        3. Relationship VDB → doc_ids (high-level)
+        4. _select_chunks_from_graph() → top_k doc_ids
+        5. Recuperar contenido de ChromaDB
+        6. Si insuficientes resultados, complementar con vector search
+        """
+        if self._kg is None or self._extractor is None:
+            return self._vector_retriever.retrieve(query, top_k=top_k)
+
+        low_level, high_level = self._get_query_keywords(query)
+
+        if not low_level and not high_level:
+            logger.debug("graph_primary: sin keywords, fallback a vector")
+            return self._vector_retriever.retrieve(query, top_k=top_k)
+
+        # Low-level: entidades
+        entity_results: List[Tuple[str, float]] = []
+        if low_level:
+            pre_resolved = None
+            if self._entities_vdb is not None:
+                pre_resolved = self._resolve_entities_via_vdb(low_level)
+            entity_results = self._kg.query_entities(
+                low_level,
+                max_hops=self._kg_max_hops,
+                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
+                pre_resolved=pre_resolved,
+            )
+
+        # High-level: relaciones
+        relationship_results: List[Tuple[str, float]] = []
+        if high_level:
+            if self._relationships_vdb is not None:
+                relationship_results = self._resolve_relationships_via_vdb(
+                    high_level
+                )
+            else:
+                relationship_results = self._kg.query_by_keywords(
+                    high_level,
+                    max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
+                )
+
+        # F.1: Seleccionar chunks desde el grafo
+        graph_doc_ids, graph_scores = self._select_chunks_from_graph(
+            entity_results, relationship_results, top_k,
+        )
+
+        # Recuperar contenido desde ChromaDB
+        final_ids: List[str] = []
+        final_contents: List[str] = []
+        final_scores: List[float] = []
+
+        if graph_doc_ids:
+            contents_map = self._vector_retriever.get_documents_by_ids(
+                graph_doc_ids
+            )
+            for doc_id, score in zip(graph_doc_ids, graph_scores):
+                if doc_id in contents_map:
+                    final_ids.append(doc_id)
+                    final_contents.append(contents_map[doc_id])
+                    final_scores.append(score)
+
+        graph_resolved = len(final_ids)
+        graph_unresolved = len(graph_doc_ids) - graph_resolved
+
+        if graph_unresolved > 0:
+            logger.warning(
+                f"graph_primary: {graph_unresolved}/{len(graph_doc_ids)} "
+                f"docs del grafo sin contenido en ChromaDB"
+            )
+
+        # Fallback: si el grafo produjo menos de top_k/2, complementar con vector
+        vector_fallback_used = False
+        if len(final_ids) < max(top_k // 2, 1):
+            vector_fallback_used = True
+            logger.debug(
+                f"graph_primary: {len(final_ids)} docs insuficientes "
+                f"(< {top_k // 2}), complementando con vector search"
+            )
+            vector_result = self._vector_retriever.retrieve(
+                query, top_k=top_k,
+            )
+            seen = set(final_ids)
+            for doc_id, content, score in zip(
+                vector_result.doc_ids,
+                vector_result.contents,
+                vector_result.scores,
+            ):
+                if doc_id not in seen:
+                    final_ids.append(doc_id)
+                    final_contents.append(content)
+                    # Penalizar docs de fallback para que el grafo domine
+                    final_scores.append(score * 0.5)
+                    seen.add(doc_id)
+                if len(final_ids) >= top_k:
+                    break
+
+        return RetrievalResult(
+            doc_ids=final_ids[:top_k],
+            contents=final_contents[:top_k],
+            scores=final_scores[:top_k],
+            vector_scores=[0.0] * min(len(final_ids), top_k),
+            metadata={
+                "graph_primary": True,
+                "graph_docs_requested": len(graph_doc_ids),
+                "graph_resolved": graph_resolved,
+                "graph_unresolved": graph_unresolved,
+                "vector_fallback_used": vector_fallback_used,
+                "query_keywords": {
+                    "low": low_level,
+                    "high": high_level,
+                },
+            },
+        )
 
     def _fuse_with_graph(
         self,
@@ -667,11 +813,13 @@ class LightRAGRetriever(BaseRetriever):
             vector_result.metadata["query_keywords"] = {"low": [], "high": []}
             return vector_result
 
-        # Paso 2: Graph traversal
+        # Paso 2: Graph traversal (respeta lightrag_mode: local/global/hybrid)
+        use_local = self._lightrag_mode in ("local", "hybrid")
+        use_global = self._lightrag_mode in ("global", "hybrid")
         graph_docs: Dict[str, float] = {}
 
         # Low-level: entidades especificas
-        if low_level:
+        if use_local and low_level:
             # DAM-1: resolver entidades via VDB (semantic) si disponible,
             # fallback a string matching si no hay VDB.
             pre_resolved = None
@@ -687,7 +835,7 @@ class LightRAGRetriever(BaseRetriever):
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
 
         # High-level: temas abstractos
-        if high_level:
+        if use_global and high_level:
             # DAM-2: resolver relaciones via VDB (semantic) si disponible,
             # fallback a token matching si no hay VDB.
             if self._relationships_vdb is not None:

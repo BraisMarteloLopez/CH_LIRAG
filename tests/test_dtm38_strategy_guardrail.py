@@ -51,6 +51,7 @@ def _make_lightrag(has_graph=True):
     retriever._kg_rrf_k = 60
     retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
     retriever._relationships_vdb = None  # DAM-2: no VDB in unit tests by default
+    retriever._lightrag_mode = "hybrid"  # F.4/DTm-79
     retriever._vector_retriever = MagicMock()
     # Vector retriever returns 20 docs
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(
