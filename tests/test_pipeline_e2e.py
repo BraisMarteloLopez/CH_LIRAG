@@ -167,9 +167,12 @@ def test_pipeline_e2e_mocked(
     assert result.embedding_model == "test-embed"
     assert result.retrieval_strategy == "SIMPLE_VECTOR"
 
-    # Should have retrieval metrics
-    assert result.avg_mrr >= 0.0
-    assert result.avg_hit_rate_at_5 >= 0.0
+    # Retrieval metrics: retriever returns ["doc0","doc1","doc3"] for all queries.
+    # q0 relevant=["doc0","doc3"] -> MRR=1.0 (doc0@rank1), Hit@1=1, Recall@3=1.0
+    # q1 relevant=["doc1","doc4"] -> MRR=0.5 (doc1@rank2), Hit@1=0, Hit@3=1.0
+    # q2 relevant=["doc2","doc5"] -> MRR=0.0 (none found), Hit@3=0.0
+    assert result.avg_mrr == pytest.approx(0.5, abs=0.01)  # (1.0+0.5+0.0)/3
+    assert result.avg_hit_rate_at_5 == pytest.approx(2.0 / 3.0, abs=0.01)
 
     # Results contain query-level details
     assert len(result.query_results) == 3
@@ -177,6 +180,12 @@ def test_pipeline_e2e_mocked(
         assert qr.query_id.startswith("q")
         assert qr.retrieval is not None
         assert len(qr.retrieval.retrieved_doc_ids) > 0
+
+    # Verify individual query MRRs
+    mrrs = {qr.query_id: qr.retrieval.mrr for qr in result.query_results}
+    assert mrrs["q0"] == pytest.approx(1.0)
+    assert mrrs["q1"] == pytest.approx(0.5)
+    assert mrrs["q2"] == pytest.approx(0.0)
 
 
 # =============================================================================
@@ -270,9 +279,9 @@ def test_pipeline_e2e_lightrag(
     assert result.num_queries_evaluated == 3
     assert result.retrieval_strategy == "LIGHT_RAG"
 
-    # Should have retrieval metrics
-    assert result.avg_mrr >= 0.0
-    assert result.avg_hit_rate_at_5 >= 0.0
+    # Same retriever mock as SIMPLE_VECTOR -> same expected metrics
+    assert result.avg_mrr == pytest.approx(0.5, abs=0.01)
+    assert result.avg_hit_rate_at_5 == pytest.approx(2.0 / 3.0, abs=0.01)
 
     # Verify query results
     assert len(result.query_results) == 3

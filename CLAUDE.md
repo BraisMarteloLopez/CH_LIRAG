@@ -37,7 +37,7 @@ sandbox_mteb/                  # Pipeline de evaluacion
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (352 unit tests, 30 files)
+tests/                         # pytest (399 unit tests, 35 files)
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
   test_*.py                    # Unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
@@ -89,18 +89,32 @@ Diferencias entre esta implementacion y el [LightRAG original (EMNLP 2025)](http
 
 | # | Divergencia | Criticidad | Descripcion | Ubicacion |
 |---|---|---|---|---|
-| 1 | DAM-4: concat vs LLM synthesis (descripciones) | **7/10** | El paper usa LLM map-reduce para sintetizar descripciones de entidades repetidas. Aqui se concatena con `" \| "`. Las descripciones de entidades frecuentes crecen sin control, meten ruido en el contexto del graph traversal y degradan la calidad de generacion. Es la divergencia que mas distorsiona la representacion del conocimiento en el grafo. | `knowledge_graph.py` / [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) |
+| 1 | ~~DAM-4: concat vs LLM synthesis (descripciones)~~ | ~~**7/10**~~ → **RESUELTO** | Implementado `KG_DESCRIPTION_SYNTHESIS=true` (A5.1): LLM sintetiza descripciones de entidades multi-doc que excedan `KG_SYNTHESIS_CHAR_THRESHOLD` chars. Sin activar, mantiene concatenacion como fallback rapido. | `retriever.py:_synthesize_descriptions()` |
 | 2 | Sin validacion empirica (F.5 pendiente) | **6/10** | No es una divergencia arquitectonica, pero sin datos reales post-fases A-F no se puede saber si las correcciones cerraron la brecha. Los ultimos numeros (-48pp MRR) son pre-fix y obsoletos. Todas las demas correcciones son teoricas sin esto. | N/A — requiere infra NIM + MinIO |
 | 3 | Sin LLM synthesis en fusion final de contexto | **5/10** | El paper usa el LLM para sintetizar resultados de vector + graph antes de generar la respuesta. Aqui se concatena directamente. RRF mitiga parcialmente al priorizar chunks relevantes, pero con un graph ruidoso la diferencia puede ser notable. | `retriever.py:_fuse_with_graph()` |
-| 4 | Entity cap 100K con sesgo FIFO (DTm-63) | **4/10** | El paper no impone un cap tan agresivo. Con corpus grandes las primeras entidades indexadas dominan y las ultimas se pierden. Para HotpotQA (66K docs) probablemente no se alcanza el cap, pero limita escalabilidad a datasets mayores. | `knowledge_graph.py` |
+| 4 | Entity cap 100K con sesgo FIFO (DTm-63) | **4/10** → **3/10** | Eviction mejorada (A5.3): score compuesto `n_docs * (degree+1) * desc_factor` en vez de solo leaf nodes. Entidades con degree > 1 ahora son candidatas si son single-doc y bajo score. Cap 100K se mantiene. | `knowledge_graph.py` |
 | 5 | Grafo fragmentado sin bridging (DTm-73) | **3/10** | El paper asume un grafo mas conectado. Componentes desconectados no se enlazan. En HotpotQA (preguntas bridge entre 2 docs) puede impactar, pero el BFS 1-hop ya limita el alcance del traversal. | `knowledge_graph.py` |
 | 6 | BFS scoring uniforme (DTm-72) | **3/10** | Todas las aristas pesan igual en el traversal. El paper usa edge weights mas sofisticados. Con 1-hop el efecto es limitado. | `knowledge_graph.py` |
 
-**Nota:** Las divergencias 1 y 3 son las unicas que requieren cambios de logica de negocio (LLM calls adicionales, coste de tokens). Las demas son mejoras algoritmicas internas. La divergencia 2 (F.5) es prerequisito para priorizar cualquier fix — sin datos empiricos, el orden de prioridad es especulativo.
+**Nota:** La divergencia 1 fue resuelta (A5.1). La 3 sigue pendiente y requiere LLM calls adicionales. La 4 fue mitigada (A5.3). La divergencia 2 (F.5) sigue siendo prerequisito para validar empiricamente si las correcciones cerraron la brecha.
 
 ## Deuda tecnica vigente
 
-- **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. Requiere decision sobre coste/latencia. Diferido a post-F.5. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
+- ~~**DTm-80**~~: DAM-4 resuelto — `KG_DESCRIPTION_SYNTHESIS=true` activa LLM synthesis. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) cerrado por A5.1.
+
+### Resueltos en audit Fase 1
+
+- **A1.1**: `vector_store.py:delete_all_documents()` — recreacion movida a `finally` para evitar `_store` apuntando a coleccion borrada
+- **A1.2**: `knowledge_graph.py:merge_entity_descriptions()` — rsplit sin delimitador ya no devuelve string completo
+- **A1.3**: `knowledge_graph.py:add_triplets()` — tripletas con nombre vacio tras normalizacion ahora logean debug
+- **A1.5**: `loader.py:load_dataset()` — check individual de `queries_df`/`corpus_df` None (antes solo detectaba ambos None)
+- **A1.6**: `checkpoint.py:save_checkpoint()` — `os.replace()` + `fsync` para atomic write real
+- **A1.7**: `embedding_service.py:batch_embed_queries()` — retorna vectores parciales en vez de `[]` cuando un batch falla
+
+### Resueltos en audit Fase 2
+
+- **A2.4**: `retriever.py:_fuse_with_graph()` — overlap_ratio denominator cambiado de `min()` a `max()` para evitar falsa señal fuerte con canales asimetricos
+- **A2.7**: `loader.py:_populate_from_dataframes()` — `_safe_str()` para evitar coercion de None/NaN a strings `"None"`/`"nan"` en datos de dataset
 
 ## Bare excepts aceptados (no criticos)
 
@@ -115,10 +129,11 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | 352 en 30 archivos |
+| Tests unitarios | 447 en 38 archivos |
 | Tests integracion | 19 en 3 archivos |
 | mypy | 0 errores (27 source files) |
-| Modulos cubiertos | 29/31 (93%) |
+| Modulos con tests dedicados | 21/23 (91%) |
+| Modulos sin tests | structured_logging.py (bajo riesgo) |
 | Tests con assertions | 100% |
 | Mocks a nivel funcion | 100% |
 

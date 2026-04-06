@@ -129,18 +129,23 @@ loader._manifest = None
 | Test | Produccion | Tests | Que cubre |
 |------|-----------|-------|-----------|
 | test_metrics_reference_based.py | shared/metrics.py | 15 | normalize_text, f1_score, exact_match, accuracy |
-| test_dt6_01_faithfulness_sync.py | shared/metrics.py | 1 | faithfulness sync sin truncation |
-| test_dt6_02_faithfulness_async.py | shared/metrics.py | 1 | faithfulness async sin truncation |
-| test_dt6_context_truncation.py | shared/metrics.py | 2 | context pass-through, empty context |
+| test_semantic_similarity.py | shared/metrics.py | 9 | semantic_similarity coseno, vector cero, empty input, numpy guard |
+| test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context (consolida dt6_01 y dt6_02) |
 | test_dt9_extract_score_fallback.py | shared/metrics.py | 6 | _extract_score_fallback regex |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
 | test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
 | test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
 | test_gleaning.py | shared/retrieval/lightrag/triplet_extractor.py | 6 | glean_from_doc_async |
 | test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 45 | _fuse_with_graph, fingerprint, VDBs, modes, DTm-62 conditional fusion |
+| test_simple_vector_retriever.py | shared/retrieval/core.py | 10 | retrieve, retrieve_by_vector, index_documents, clear_index, get_documents_by_ids |
 | test_dtm4_rrf.py | shared/retrieval/core.py | 11 | reciprocal_rank_fusion |
 | test_dt8_09_10_11_reranker_sort.py | shared/retrieval/reranker.py | 3 | rerank sorting |
+| test_reranker.py | shared/retrieval/reranker.py | 8 | empty passthrough, ordering, top_n, vector_scores, error fallback, metadata |
+| test_report.py | shared/report.py | 13 | to_json, to_summary_csv, to_detail_csv, export, LIGHT_RAG columns |
 | test_group_a_b_review.py | shared/retrieval/core.py, reranker.py, vector_store.py | 8 | get_documents_by_ids, batching, vector_scores |
+| test_vector_store.py | shared/vector_store.py | 13 | add_documents batching, search, get_by_ids chunking, delete+recreate, error paths |
+| test_config_validation.py | shared/config_base.py | 11 | InfraConfig.validate(), RerankerConfig.validate() error paths |
+| test_retrieval_metrics_formulas.py | shared/types.py | 12 | NDCG, MRR, Hit@K, Recall@K, generation_hit/recall con valores exactos |
 | test_dt7_08_csv_reranked.py | shared/report.py | 1 | reranked column CSV |
 | test_dtm17_generation_retrieval_metrics.py | shared/types.py, shared/report.py | 14 | generation_recall/hit, CSV columns |
 
@@ -158,6 +163,9 @@ loader._manifest = None
 | test_dt7_07_no_reranker.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 1 | sin reranker path |
 | test_dtm38_strategy_guardrail.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 8 | strategy mismatch, config_snapshot |
 | test_dtm5_12_13_secondary_metric_errors.py | sandbox_mteb/generation_executor.py | 3 | secondary metric errors |
+| test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
+| test_run_cli.py | sandbox_mteb/run.py | 11 | parse_args, setup_logging, main (dry-run, full, errors) |
+| test_preflight.py | sandbox_mteb/preflight.py | 8 | _check wrapper, dependencies, lock_file, config, main |
 | test_checkpoint.py | sandbox_mteb/checkpoint.py | 11 | save/load/delete checkpoint |
 | test_loader.py | sandbox_mteb/loader.py | 6 | check_connection, _populate_from_dataframes |
 | test_dtm4_loader_populate.py | sandbox_mteb/loader.py | 9 | _populate_from_dataframes detallado |
@@ -167,25 +175,41 @@ loader._manifest = None
 
 | Test | Tests | Que cubre |
 |------|-------|-----------|
-| test_pipeline_e2e.py | 2 | MTEBEvaluator.run() completo (SIMPLE_VECTOR + LIGHT_RAG) |
+| test_pipeline_e2e.py | 2 | MTEBEvaluator.run() completo (SIMPLE_VECTOR + LIGHT_RAG), assertions con metricas exactas |
 
 ## Modulos sin tests dedicados
 
 | Modulo | LOC | Riesgo |
 |--------|-----|--------|
-| shared/report.py | 287 | Bajo — ejercitado indirectamente por test_dtm17, test_dt7_08 |
 | shared/structured_logging.py | 124 | Bajo — utilidad de logging |
-| sandbox_mteb/preflight.py | 337 | Medio — validacion pre-run, requiere infra para test real |
-| sandbox_mteb/run.py | 121 | Bajo — CLI entry point, delega a evaluator |
+
+## Archivos eliminados (consolidados)
+
+| Archivo | Motivo | Reemplazado por |
+|---------|--------|-----------------|
+| test_dt6_01_faithfulness_sync.py | Duplicado (1 test) | test_dt6_context_truncation.py (parametrize sync/async) |
+| test_dt6_02_faithfulness_async.py | Duplicado (1 test) | test_dt6_context_truncation.py (parametrize sync/async) |
 
 ## Gaps de cobertura conocidos
 
 | Area | Detalle |
 |------|---------|
-| loader.py:167-168 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
-| preflight.py | Sin tests unitarios (depende de NIM/MinIO reales) |
-| report.py | Sin test dedicado; cubierto indirectamente |
+| loader.py:_safe_str() | Utility helper para None/NaN coercion, sin test dedicado (cubierta indirectamente por test_loader) |
+| loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
+
+### Gaps cerrados en esta sesion
+
+| Area | Test nuevo | Detalle |
+|------|-----------|---------|
+| types.py:290-335 | test_retrieval_metrics_formulas.py | NDCG, MRR, Hit@K, Recall@K — formulas con valores exactos |
+| retrieval/core.py:171-347 | test_simple_vector_retriever.py | SimpleVectorRetriever completo (retrieve, index, clear, errors) |
+| metrics.py:299-354 | test_semantic_similarity.py | Coseno [-1,1]→[0,1], vector cero, empty input, numpy guard |
+| config_base.py:110-161 | test_config_validation.py | InfraConfig/RerankerConfig validate() error paths |
+| vector_store.py:50-272 | test_vector_store.py | Batching, search, get_by_ids chunking, delete+recreate |
+| pipeline E2E assertions | test_pipeline_e2e.py (reforzado) | avg_mrr=0.5, avg_hit@5=0.667, MRR por query |
+| faithfulness duplicados | dt6_01/dt6_02 eliminados | Consolidados en test_dt6_context_truncation.py |
+| test_loader acoplamiento | test_loader.py (corregido) | head_bucket sin assert de argumento exacto |
 
 ## Reglas para modificar tests
 

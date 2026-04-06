@@ -334,11 +334,15 @@ class KnowledgeGraph:
     def _find_eviction_candidate(
         self, exclude: Optional[set] = None,
     ) -> Optional[str]:
-        """Encuentra la entidad menos importante para evictar.
+        """Encuentra la entidad menos importante para evictar (A5.3).
 
-        Criterio: menor len(source_doc_ids), desempate por menor degree
-        en el grafo. Solo evicta entidades con source_doc_ids == 1 y
-        degree <= 1 (nodos hoja de baja importancia).
+        Criterio: score compuesto = n_docs * (degree + 1) * desc_factor.
+        Entidades con menor score son evictadas primero.
+
+        Prioridad de eviccion:
+          1. Single-doc, leaf (degree 0-1): score minimo
+          2. Single-doc, low-degree: score bajo
+          3. Multi-doc nunca se evictan (demasiado valiosas)
 
         Args:
             exclude: Nombres de entidades a excluir (ej: las del triplet actual).
@@ -347,8 +351,7 @@ class KnowledgeGraph:
             Nombre de la entidad a evictar, o None si no hay candidato.
         """
         best_name: Optional[str] = None
-        best_docs = float("inf")
-        best_degree = float("inf")
+        best_score = float("inf")
         _exclude = exclude or set()
 
         for name, entity in self._entities.items():
@@ -356,14 +359,16 @@ class KnowledgeGraph:
                 continue
             n_docs = len(entity.source_doc_ids)
             if n_docs > 1:
-                continue  # solo considerar entidades de un solo doc
+                continue  # multi-doc entities son demasiado valiosas
             vid = self._name_to_vid.get(name)
             degree = self._graph.degree(vid) if vid is not None else 0
-            if degree > 1:
-                continue  # solo considerar nodos hoja o quasi-hoja
-            if n_docs < best_docs or (n_docs == best_docs and degree < best_degree):
-                best_docs = n_docs
-                best_degree = degree
+            # Factor de descripcion: entidades con descripcion informativa
+            # son mas valiosas (1.0 si vacia, 1 + log(len) si tiene contenido)
+            desc_len = len(entity.description)
+            desc_factor = 1.0 if desc_len == 0 else (1.0 + (desc_len / 100.0))
+            score = n_docs * (degree + 1) * desc_factor
+            if score < best_score:
+                best_score = score
                 best_name = name
 
         return best_name
@@ -426,6 +431,12 @@ class KnowledgeGraph:
             tgt_name = self._normalize_name(triplet.target)
 
             if not src_name or not tgt_name:
+                dropped_this_call += 1
+                logger.debug(
+                    "Triplet dropped: empty name after normalization "
+                    f"(src={triplet.source!r} -> {src_name!r}, "
+                    f"tgt={triplet.target!r} -> {tgt_name!r})"
+                )
                 continue
 
             # Registrar/actualizar entidades (con cap DTm-21, eviction DTm-63)
@@ -978,7 +989,11 @@ class KnowledgeGraph:
             selected = unique[:self._MAX_DESCRIPTIONS_TO_MERGE]
             merged = " | ".join(selected)
             if len(merged) > self._MAX_MERGED_DESCRIPTION_CHARS:
-                merged = merged[:self._MAX_MERGED_DESCRIPTION_CHARS].rsplit(" | ", 1)[0]
+                truncated = merged[:self._MAX_MERGED_DESCRIPTION_CHARS]
+                parts = truncated.rsplit(" | ", 1)
+                # Si rsplit encontro delimitador, cortar en el ultimo limpio;
+                # si no, truncar directamente para no devolver el string completo.
+                merged = parts[0] if len(parts) > 1 else truncated
             entity.description = merged
             merged_count += 1
         if merged_count > 0:

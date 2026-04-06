@@ -299,6 +299,14 @@ class LightRAGRetriever(BaseRetriever):
         if merged:
             logger.info(f"LightRAGRetriever: {merged} entidades con descripciones consolidadas")
 
+        # A5.1/DAM-4 completo: LLM synthesis para descripciones largas
+        if self.config.kg_description_synthesis and self._llm_service:
+            synthesized = self._synthesize_descriptions()
+            if synthesized:
+                logger.info(
+                    f"LightRAGRetriever: {synthesized} entidades sintetizadas via LLM"
+                )
+
         # DAM-1: construir entity VDB (ChromaDB con embeddings de entidades)
         self._build_entities_vdb()
         # DAM-2: construir relationship VDB (ChromaDB con embeddings de relaciones)
@@ -309,6 +317,76 @@ class LightRAGRetriever(BaseRetriever):
             f"LightRAGRetriever: KG construido en {elapsed_ms:.0f}ms. "
             f"{total_triplets} tripletas de {len(documents)} docs."
         )
+
+    # A5.1: Prompt para LLM synthesis de descripciones (DAM-4 completo)
+    _SYNTHESIS_SYSTEM = (
+        "You are a knowledge graph curator. Your task is to synthesize "
+        "multiple descriptions of the same entity into a single, concise, "
+        "and informative description. Remove redundancy, keep key facts, "
+        "and produce a coherent summary."
+    )
+    _SYNTHESIS_PROMPT = (
+        "Entity: {entity_name}\n\n"
+        "Descriptions from different sources:\n{descriptions}\n\n"
+        "Synthesize these into a single concise description (max 2 sentences). "
+        "Keep only the most important facts. Respond with ONLY the synthesized description."
+    )
+
+    def _synthesize_descriptions(self) -> int:
+        """LLM synthesis para entidades con descripciones concatenadas largas (A5.1/DAM-4).
+
+        Solo aplica a entidades cuya descripcion concatenada excede el
+        threshold configurado. Usa el LLM para sintetizar en una descripcion
+        coherente, como en el paper original (map-reduce).
+
+        Returns:
+            Numero de entidades sintetizadas.
+        """
+        assert self._kg is not None
+        assert self._llm_service is not None
+
+        threshold = self.config.kg_synthesis_char_threshold
+        candidates = [
+            (name, entity)
+            for name, entity in self._kg._entities.items()
+            if len(entity._descriptions) > 1
+            and len(entity.description) > threshold
+        ]
+
+        if not candidates:
+            return 0
+
+        logger.info(
+            f"LightRAGRetriever: sintetizando {len(candidates)} entidades "
+            f"con descripciones > {threshold} chars"
+        )
+
+        synthesized = 0
+        for name, entity in candidates:
+            # Formatear descripciones como lista numerada
+            desc_list = "\n".join(
+                f"  {i+1}. {d}" for i, d in enumerate(entity._descriptions[:10])
+            )
+            prompt = self._SYNTHESIS_PROMPT.format(
+                entity_name=name,
+                descriptions=desc_list,
+            )
+            try:
+                result = self._llm_service.invoke(
+                    prompt,
+                    system_prompt=self._SYNTHESIS_SYSTEM,
+                    max_tokens=256,
+                )
+                if result and len(result.strip()) > 5:
+                    entity.description = result.strip()
+                    synthesized += 1
+            except Exception as e:
+                logger.debug(
+                    f"LLM synthesis failed for entity '{name}': {e}. "
+                    "Keeping concatenated description."
+                )
+
+        return synthesized
 
     def _build_entities_vdb(self) -> None:
         """Construye entity VDB: ChromaDB collection con embeddings de entidades.
@@ -914,7 +992,10 @@ class LightRAGRetriever(BaseRetriever):
 
         # Paso 5 (DTm-62): Conditional fusion — medir overlap entre canales
         overlap = set(vector_docs.keys()) & set(graph_docs.keys())
-        denominator = min(len(vector_docs), len(graph_docs)) if (vector_docs and graph_docs) else 1
+        # max() para ser conservador: evita falsa señal fuerte cuando un
+        # canal devuelve pocos resultados (ej. 1 vector + 100 graph → min=1
+        # daria overlap_ratio=1.0, pero max=100 da ratio mas realista).
+        denominator = max(len(vector_docs), len(graph_docs)) if (vector_docs and graph_docs) else 1
         overlap_ratio = len(overlap) / denominator if denominator > 0 else 0.0
         strong_signal = overlap_ratio >= self._fusion_overlap_threshold
 

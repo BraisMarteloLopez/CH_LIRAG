@@ -244,8 +244,13 @@ class ChromaVectorStore:
         try:
             # Eliminar coleccion via cliente nativo
             self._client.delete_collection(self.collection_name)
-
-            # Recrear wrapper LangChain apuntando a coleccion nueva
+        except Exception as e:
+            logger.error(f"Error eliminando coleccion: {e}")
+        finally:
+            # Siempre recrear wrapper — si delete fallo, get_or_create
+            # internamente devuelve la coleccion existente; si tuvo exito,
+            # crea una nueva. Esto evita que _store apunte a una coleccion
+            # borrada si la recreacion fallaba en el bloque try anterior.
             chroma_kwargs = {
                 "client": self._client,
                 "collection_name": self.collection_name,
@@ -257,9 +262,6 @@ class ChromaVectorStore:
             logger.debug(
                 f"Coleccion {self.collection_name} eliminada y recreada"
             )
-        except Exception as e:
-            logger.error(f"Error eliminando coleccion: {e}")
-            self._document_count = 0
 
     def get_document_count(self) -> int:
         return self._document_count

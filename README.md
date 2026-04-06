@@ -116,6 +116,8 @@ KG_EXTRACTION_MAX_TOKENS=4096         # Max tokens para triplet extraction
 KG_BATCH_DOCS_PER_CALL=5             # Docs por LLM call en batch
 KG_MAX_ENTITIES=0                     # Cap entidades (0 = default interno 100K)
 KG_CACHE_DIR=                         # Directorio para persistir KG (vacio = sin cache)
+KG_DESCRIPTION_SYNTHESIS=false        # LLM synthesis para descripciones multi-doc (DAM-4)
+KG_SYNTHESIS_CHAR_THRESHOLD=200       # Chars minimos para trigger LLM synthesis
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -175,7 +177,9 @@ Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarro
 
 **DTm-83:** Eliminacion completa de HYBRID_PLUS (-2,570 LOC, -3 deps).
 
-70+ issues resueltos (DT-1..9 + DTm-1..83 + Fases H/I/G). Ver historial git.
+**Audit Fase 1-2:** 8 bugfixes (atomic checkpoint, loader None checks, KG merge truncation, vector_store timing, embedding batch partial, overlap_ratio, NaN coercion, entity drop logging).
+
+70+ issues resueltos (DT-1..9 + DTm-1..83 + Fases H/I/G + Audit). Ver historial git.
 
 </details>
 

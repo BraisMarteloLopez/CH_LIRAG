@@ -109,10 +109,18 @@ class MinIOLoader:
             corpus_df = self._download_parquet(f"{dataset_name}/corpus.parquet")
             qrels_df = self._download_parquet(f"{dataset_name}/qrels.parquet")
 
-            # DTm-75: detectar cuando todas las descargas fallan
+            # DTm-75: detectar descargas fallidas (queries o corpus)
             if queries_df is None and corpus_df is None:
                 raise ValueError(
                     f"No se pudo descargar queries ni corpus para '{dataset_name}'"
+                )
+            if queries_df is None:
+                raise ValueError(
+                    f"No se pudo descargar queries para '{dataset_name}'"
+                )
+            if corpus_df is None:
+                raise ValueError(
+                    f"No se pudo descargar corpus para '{dataset_name}'"
                 )
 
             self._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
@@ -152,46 +160,59 @@ class MinIOLoader:
         Extraido de load_dataset() y _load_from_cache() para eliminar
         duplicacion (~50 lineas identicas).
         """
+        def _safe_str(val: object, default: str = "") -> str:
+            """Convierte a str, tratando None y NaN como default."""
+            if val is None:
+                return default
+            try:
+                # pandas NaN check
+                if val != val:  # NaN != NaN
+                    return default
+            except (TypeError, ValueError):
+                pass
+            s = str(val)
+            return default if s in ("None", "nan") else s
+
         qrels: Dict[str, List[str]] = {}
 
         if queries_df is not None:
             result.total_queries = len(queries_df)
             for _, row in queries_df.iterrows():
-                qid = str(row.get("query_id", ""))
-                raw_answer = str(row.get("answer", "")) if row.get("answer") else ""
-                raw_answer_type = str(row.get("answer_type", ""))
+                qid = _safe_str(row.get("query_id", ""))
+                raw_answer = _safe_str(row.get("answer"))
+                raw_answer_type = _safe_str(row.get("answer_type"))
                 if not raw_answer_type and raw_answer:
                     raw_answer_type = "text"
-                question_type = str(row.get("question_type", "") or row.get("type", ""))
+                question_type = _safe_str(row.get("question_type")) or _safe_str(row.get("type"))
                 # DTm-15: comparison queries (yes/no) son clasificacion, no extractiva
                 if question_type == "comparison" and raw_answer_type != "label":
                     raw_answer_type = "label"
 
                 result.queries.append(NormalizedQuery(
                     query_id=qid,
-                    query_text=str(row.get("text", "")),
+                    query_text=_safe_str(row.get("text", "")),
                     expected_answer=raw_answer or None,
                     answer_type=raw_answer_type or None,
                     metadata={
                         "question_type": question_type,
-                        "level": str(row.get("level", "")),
+                        "level": _safe_str(row.get("level")),
                     },
                 ))
 
         if corpus_df is not None:
             result.total_corpus = len(corpus_df)
             for _, row in corpus_df.iterrows():
-                did = str(row.get("doc_id", ""))
+                did = _safe_str(row.get("doc_id", ""))
                 result.corpus[did] = NormalizedDocument(
                     doc_id=did,
-                    title=str(row.get("title", "")),
-                    content=str(row.get("text", "")),
+                    title=_safe_str(row.get("title")),
+                    content=_safe_str(row.get("text")),
                 )
 
         if qrels_df is not None:
             for _, row in qrels_df.iterrows():
-                qid = str(row.get("query_id", ""))
-                did = str(row.get("doc_id", ""))
+                qid = _safe_str(row.get("query_id", ""))
+                did = _safe_str(row.get("doc_id", ""))
                 qrels.setdefault(qid, []).append(did)
 
         for query in result.queries:
