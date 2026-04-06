@@ -234,8 +234,8 @@ class KnowledgeGraph:
         if _STEMMER is not None:
             try:
                 tokens = _STEMMER.stemWords(tokens)
-            except Exception:
-                pass  # DTm-59: stemmer fallo, usar tokens sin stemming
+            except Exception as e:
+                logger.debug("Stemmer fallo, usando tokens sin stemming: %s", e)
         return tokens
 
     def _index_entity_tokens(self, entity_name: str) -> None:

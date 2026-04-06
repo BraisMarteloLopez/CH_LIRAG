@@ -75,10 +75,6 @@ class MinIOLoader:
             logger.error(f"Error conexion MinIO: {e}")
             return False
 
-    def list_available_datasets(self) -> List[str]:
-        manifest = self._get_manifest()
-        return manifest.get("datasets", [])
-
     def load_dataset(
         self,
         dataset_name: str,

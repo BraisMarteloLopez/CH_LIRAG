@@ -581,8 +581,8 @@ class MTEBEvaluator:
         if self._retriever:
             try:
                 self._retriever.clear_index()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Error en cleanup de retriever (no fatal): %s", e)
             self._retriever = None
         self._embedding_model = None
         self._llm_service = None

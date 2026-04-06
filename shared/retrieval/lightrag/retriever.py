@@ -325,8 +325,8 @@ class LightRAGRetriever(BaseRetriever):
         if self._entities_vdb is not None:
             try:
                 self._entities_vdb.delete_all_documents()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Error limpiando entity VDB (no fatal): %s", e)
 
         self._entities_vdb = ChromaVectorStore(
             config={
@@ -430,8 +430,8 @@ class LightRAGRetriever(BaseRetriever):
         if self._relationships_vdb is not None:
             try:
                 self._relationships_vdb.delete_all_documents()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Error limpiando relationship VDB (no fatal): %s", e)
 
         self._relationships_vdb = ChromaVectorStore(
             config={
@@ -1041,8 +1041,8 @@ class LightRAGRetriever(BaseRetriever):
             if vdb is not None:
                 try:
                     vdb.delete_all_documents()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Error limpiando %s (no fatal): %s", vdb_attr, e)
                 setattr(self, vdb_attr, None)
         self._has_graph = False
         with self._cache_lock:

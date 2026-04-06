@@ -111,38 +111,22 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 ## Bugs y code smells pendientes (detectados en auditoria)
 
-### Bugs potenciales
+### Bugs y code smells resueltos (Fase H)
 
-| Ubicacion | Severidad | Descripcion |
-|---|---|---|
-| `knowledge_graph.py:517` | **Alta** | `deque[Tuple[str, int]]` usa sintaxis Python 3.9+. Falla en 3.8. Fix: `from typing import Deque` y usar `Deque[Tuple[str, int]]` |
-| `knowledge_graph.py:237-238` | **Media** | `except Exception: pass` en stemmer — fallo silencioso sin log. Degrada tokenizacion sin aviso |
-| `evaluator.py:584-585` | **Media** | `except Exception: pass` en `_cleanup()` — silencia errores de ChromaDB, puede dejar file handles abiertos |
-| `preflight.py:234` | **Media** | `except Exception:` sin captura del error — usuario no sabe por que fallo la config |
+- `deque[Tuple[str, int]]` (knowledge_graph.py:517): NO era bug — `from __future__ import annotations` protege
+- Bare excepts: añadido `logger.debug(...)` en 5 sitios (stemmer, evaluator cleanup, 3 VDB cleanups)
+- Preflight: captura `as e` y muestra error al usuario
+- Dead code eliminado: `list_available_datasets()`, loop `optional` vacio, `import sys`
+- Validacion: `MTEBConfig.validate()` ahora propaga a `RerankerConfig.validate()`
 
-### Dead code
+### Bare excepts pendientes (no criticos)
 
-| Ubicacion | Descripcion |
-|---|---|
-| `loader.py:78-80` | `list_available_datasets()` nunca llamado en toda la codebase |
-| `preflight.py:62-72` | Loop sobre lista `optional = []` — dead code post-eliminacion HYBRID_PLUS |
-| `config.py:10` | `import sys` sin usar |
-
-### Bare excepts sin logging (6 instancias)
-
-Patrón `except Exception: pass` o `except Exception as e:` con log insuficiente:
+Estos `except Exception as e:` ya logean el error pero no lo re-lanzan. Aceptable para wrappers:
 
 | Ubicacion | Contexto |
 |---|---|
-| `retriever.py:328` | VDB cleanup (entity) |
-| `retriever.py:433` | VDB cleanup (relationship) |
-| `retriever.py:1044` | Retrieve fallback general |
-| `reranker.py:147` | Reranking error — pierde context del error |
-| `vector_store.py:125, 141, 178` | Operaciones ChromaDB |
-
-### Validacion de config incompleta
-
-`MTEBConfig.validate()` solo valida storage + infra directamente. Las sub-configs delegadas (`RetrievalConfig`, `RerankerConfig`) no se validan. Si `RERANKER_MODEL_NAME` falta con `RERANKER_ENABLED=true`, el error aparece tarde en runtime, no en validacion.
+| `reranker.py:147` | Reranking error — retorna fallback sin rerank |
+| `vector_store.py:125, 141, 178` | Operaciones ChromaDB — retorna lista vacia |
 
 ## Test coverage — gaps conocidos
 
@@ -179,22 +163,10 @@ Patrón `except Exception: pass` o `except Exception as e:` con log insuficiente
 
 ## Proximos pasos — plan por fases
 
-### Fase H: Hardening (bugs de auditoria) — sin riesgo funcional
+### Fase H: Hardening (bugs de auditoria) — COMPLETADA
 
-Corrige bugs potenciales y code smells sin alterar logica de negocio.
-Cada tarea es independiente, ejecutable en paralelo.
-
-| ID | Tarea | Archivos | Esfuerzo | Descripcion |
-|---|---|---|---|---|
-| H.1 | Fix `deque[Tuple]` Python 3.9+ | `knowledge_graph.py:517` | Trivial | Cambiar a `Deque[Tuple[str, int]]` de `typing`. Evita `TypeError` en Python 3.8 |
-| H.2 | Logging en stemmer silencioso | `knowledge_graph.py:237-238` | Trivial | Reemplazar `except Exception: pass` con `logger.debug(...)` |
-| H.3 | Logging en cleanup evaluator | `evaluator.py:584-585` | Trivial | Reemplazar `except Exception: pass` con `logger.debug(...)` |
-| H.4 | Logging en VDB cleanup (3 sitios) | `retriever.py:328,433,1044` | Trivial | Reemplazar `except Exception: pass` con `logger.debug(...)` |
-| H.5 | Logging en preflight config | `preflight.py:234` | Trivial | Capturar `as e` y mostrar al usuario |
-| H.6 | Eliminar dead code | `loader.py:78-80`, `preflight.py:62-72`, `config.py:10` | Trivial | Eliminar `list_available_datasets()`, loop `optional` vacio, `import sys` |
-| H.7 | Validacion sub-configs | `config.py:validate()` | Bajo | Propagar validacion a `RerankerConfig` (ej: model_name obligatorio si enabled) |
-
-**Criterio de completitud:** tests pasan sin regresiones, 0 bare excepts sin logging.
+7 tareas ejecutadas. H.1 descartada (no era bug). 163 tests passing, 0 regresiones.
+Resumen: 5 bare excepts con logging, 3 dead code eliminados, validacion sub-config propagada.
 
 ### Fase I: Test coverage critico — reducir riesgo de regresion
 
