@@ -130,7 +130,7 @@ loader._manifest = None
 |------|-----------|-------|-----------|
 | test_metrics_reference_based.py | shared/metrics.py | 15 | normalize_text, f1_score, exact_match, accuracy |
 | test_semantic_similarity.py | shared/metrics.py | 9 | semantic_similarity coseno, vector cero, empty input, numpy guard |
-| test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context (consolida dt6_01 y dt6_02) |
+| test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context |
 | test_dt9_extract_score_fallback.py | shared/metrics.py | 6 | _extract_score_fallback regex |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
 | test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
@@ -179,37 +179,17 @@ loader._manifest = None
 
 ## Modulos sin tests dedicados
 
-| Modulo | LOC | Riesgo |
-|--------|-----|--------|
-| shared/structured_logging.py | 124 | Bajo — utilidad de logging |
-
-## Archivos eliminados (consolidados)
-
-| Archivo | Motivo | Reemplazado por |
-|---------|--------|-----------------|
-| test_dt6_01_faithfulness_sync.py | Duplicado (1 test) | test_dt6_context_truncation.py (parametrize sync/async) |
-| test_dt6_02_faithfulness_async.py | Duplicado (1 test) | test_dt6_context_truncation.py (parametrize sync/async) |
+| Modulo | Riesgo |
+|--------|--------|
+| shared/structured_logging.py | Bajo — utilidad de logging |
 
 ## Gaps de cobertura conocidos
 
 | Area | Detalle |
 |------|---------|
-| loader.py:_safe_str() | Utility helper para None/NaN coercion, sin test dedicado (cubierta indirectamente por test_loader) |
+| loader.py:_safe_str() | Utility helper para None/NaN coercion, cubierta indirectamente por test_loader |
 | loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
-
-### Gaps cerrados en esta sesion
-
-| Area | Test nuevo | Detalle |
-|------|-----------|---------|
-| types.py:290-335 | test_retrieval_metrics_formulas.py | NDCG, MRR, Hit@K, Recall@K — formulas con valores exactos |
-| retrieval/core.py:171-347 | test_simple_vector_retriever.py | SimpleVectorRetriever completo (retrieve, index, clear, errors) |
-| metrics.py:299-354 | test_semantic_similarity.py | Coseno [-1,1]→[0,1], vector cero, empty input, numpy guard |
-| config_base.py:110-161 | test_config_validation.py | InfraConfig/RerankerConfig validate() error paths |
-| vector_store.py:50-272 | test_vector_store.py | Batching, search, get_by_ids chunking, delete+recreate |
-| pipeline E2E assertions | test_pipeline_e2e.py (reforzado) | avg_mrr=0.5, avg_hit@5=0.667, MRR por query |
-| faithfulness duplicados | dt6_01/dt6_02 eliminados | Consolidados en test_dt6_context_truncation.py |
-| test_loader acoplamiento | test_loader.py (corregido) | head_bucket sin assert de argumento exacto |
 
 ## Reglas para modificar tests
 

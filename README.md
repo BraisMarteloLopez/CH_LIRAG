@@ -44,7 +44,7 @@ sandbox_mteb/                    # Pipeline de evaluacion MTEB/BeIR
   preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
   env.example                    # Plantilla .env
 
-tests/                           # pytest (352 unit + 19 integration tests)
+tests/                           # pytest (447 unit + 19 integration tests, 38 archivos)
 ```
 
 ## Pipeline
@@ -154,9 +154,9 @@ DEV_CORPUS_SIZE=4000
 
 Limitacion: 10 pasajes/query (2 gold + 8 distractores). No comparable con benchmarks publicados (corpus 5.2M). Solo comparaciones relativas entre estrategias.
 
-## Deuda tecnica
+## Guia de desarrollo
 
-Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarrollo.
+Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda tecnica, y proximos pasos. Ver [`TESTS.md`](TESTS.md) para referencia de la suite de tests.
 
 <details>
 <summary>Historial de desarrollo</summary>
@@ -171,15 +171,15 @@ Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarro
 
 **Fase H (hardening):** Bare excepts con logging, dead code eliminado, validacion sub-configs.
 
-**Fase I (test coverage):** +42 tests nuevos (checkpoint.py, llm.py, embedding_service.py, gleaning, E2E LIGHT_RAG). Cobertura 86% → 93%.
+**Fase I (test coverage):** +42 tests nuevos. Cobertura 86% → 93%.
 
-**Fase G (deuda tecnica):** Stats resilientes, query dedup, keyword cap, entity normalization apostrofes, fingerprint robusto, mypy 26→22.
+**Fase G (deuda tecnica):** Stats resilientes, query dedup, keyword cap, entity normalization apostrofes, fingerprint robusto.
 
-**DTm-83:** Eliminacion completa de HYBRID_PLUS (-2,570 LOC, -3 deps).
+**DTm-62/63/72/73/82/83:** Conditional fusion, eviction mejorada, BFS weighted, co-occurrence bridging, mypy zero errors, eliminacion HYBRID_PLUS.
 
-**Audit Fase 1-2:** 8 bugfixes (atomic checkpoint, loader None checks, KG merge truncation, vector_store timing, embedding batch partial, overlap_ratio, NaN coercion, entity drop logging).
+**Audit Fases 1-5:** 8 bugfixes, 48 tests nuevos, DAM-4 LLM synthesis, eviction con score compuesto. 447 tests, 0 fallos.
 
-70+ issues resueltos (DT-1..9 + DTm-1..83 + Fases H/I/G + Audit). Ver historial git.
+80+ issues resueltos. Ver historial git.
 
 </details>
 
@@ -195,6 +195,6 @@ Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarro
 | Recall@5 | 0.940 | 0.690 | -25.0pp |
 | F1 | 0.754 | 0.776 | +2.2pp |
 
-Causa raiz: divergencias arquitectonicas (DAM-1..8). Las Fases C-F corrigieron las divergencias criticas pero falta validar con F.5.
+Causa raiz: divergencias arquitectonicas (DAM-1..8), corregidas en Fases A-F + Audit.
 
 </details>
