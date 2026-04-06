@@ -89,8 +89,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 (sin items pendientes)
 
 ### Media — mejoras funcionales
-- **DTm-64**: Normalizacion scores incomparable entre canales vector/graph. RRF mitiga parcialmente. Ubicacion: `retriever.py`
-- **DTm-72**: BFS scoring ciego a la relacion (todas las aristas pesan igual). Ubicacion: `knowledge_graph.py`
+- **DTm-64**: Normalizacion scores incomparable entre canales vector/graph. Mitigado por DTm-62 (conditional fusion) + RRF. Pendiente validacion F.5
 - **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
 
 ### Baja — code quality
@@ -113,6 +112,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 - **Tests audit**: assert faltante en test_evaluator.py, ClientError mock roto en test_loader.py. Suite: 340 passed, 0 failed
 - **DTm-63**: Eviction por importancia en entity cap — reemplaza FIFO silencioso. Entidades con 1 doc y degree<=1 se evictan para dar paso a nuevas. `_find_eviction_candidate()`, `_evict_entity()` en `knowledge_graph.py`
 - **DTm-73**: Co-occurrence bridging reduce fragmentacion del grafo. `build_co_occurrence_edges()` conecta entidades que co-ocurren en un mismo doc. Cap 10 pares/doc. Se ejecuta en post-build
+- **DTm-72**: BFS weighted por edge strength. `_get_neighbors_weighted()` usa `log(1 + unique_docs)` como factor. Co-occurrence edges (w=1) puntuan ~0.69x, LLM edges fuertes (w=10) ~2.4x
 
 ## Bare excepts aceptados (no criticos)
 

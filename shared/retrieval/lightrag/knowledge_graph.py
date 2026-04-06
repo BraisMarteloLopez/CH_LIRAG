@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sys
 from collections import Counter, defaultdict, deque
@@ -301,6 +302,30 @@ class KnowledgeGraph:
             return []
         neighbor_vids = self._graph.neighbors(vid)
         return [self._graph.vs[nv]["name"] for nv in neighbor_vids]
+
+    def _get_neighbors_weighted(self, name: str) -> List[Tuple[str, float]]:
+        """Return neighbors with edge weight factor (DTm-72).
+
+        Weight = log(1 + unique_docs_on_edge). Co-occurrence edges (1 doc)
+        get ~0.69, strong LLM edges (10 docs) get ~2.40.
+
+        Returns:
+            List of (neighbor_name, weight_factor) tuples.
+        """
+        vid = self._name_to_vid.get(name)
+        if vid is None:
+            return []
+        result: List[Tuple[str, float]] = []
+        for eid in self._graph.incident(vid):
+            edge = self._graph.es[eid]
+            neighbor_vid = edge.target if edge.source == vid else edge.source
+            neighbor_name = self._graph.vs[neighbor_vid]["name"]
+            # Edge weight = unique docs mentioning this edge
+            relations = edge["relations"]
+            unique_docs = len({r.get("doc_id", "") for r in relations if r.get("doc_id")})
+            weight_factor = math.log1p(max(unique_docs, 1))
+            result.append((neighbor_name, weight_factor))
+        return result
 
     # -----------------------------------------------------------------
     # DTm-63: Eviction por importancia
@@ -605,30 +630,30 @@ class KnowledgeGraph:
             resolved = self._resolve_entity_names(entity_names)
 
         for norm, confidence in resolved:
-            # BFS con distancia
+            # BFS con distancia y peso de arista (DTm-72)
+            # Queue: (entity_name, depth, accumulated_weight_factor)
             visited: Set[str] = set()
-            queue: deque[Tuple[str, int]] = deque([(norm, 0)])
+            queue: deque[Tuple[str, int, float]] = deque([(norm, 0, 1.0)])
             visited.add(norm)
 
             while queue:
-                current, depth = queue.popleft()
+                current, depth, weight_acc = queue.popleft()
                 if depth > max_hops:
                     continue
 
-                # Score inversamente proporcional a la distancia,
-                # scaled by match confidence (DTm-70)
-                hop_score = confidence / (1.0 + depth)
+                # Score: distancia inversa * confidence * peso acumulado
+                hop_score = (confidence * weight_acc) / (1.0 + depth)
 
                 # Documentos asociados a esta entidad
                 for doc_id in self._entity_to_docs.get(current, set()):
                     doc_scores[doc_id] += hop_score
 
-                # Expandir vecinos
+                # Expandir vecinos con peso de arista (DTm-72)
                 if depth < max_hops:
-                    for neighbor in self._get_neighbors(current):
+                    for neighbor, edge_weight in self._get_neighbors_weighted(current):
                         if neighbor not in visited:
                             visited.add(neighbor)
-                            queue.append((neighbor, depth + 1))
+                            queue.append((neighbor, depth + 1, edge_weight))
 
         # Ordenar por score y limitar
         ranked = doc_scores.most_common(max_docs)
