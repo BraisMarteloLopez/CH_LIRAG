@@ -70,12 +70,11 @@ Durante indexacion, spaCy NER extrae entidades, construye indice invertido in-me
 
 Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM, sin BM25 — el grafo reemplaza la funcion de bridging lexical.
 
-> **Limitaciones conocidas (ver DAM-1 a DAM-8 en deuda tecnica):**
-> Esta implementacion diverge del original en decisiones arquitectonicas clave.
-> El original usa **embedding similarity** (vector DBs) para resolver entidades y
-> relaciones; CH_LIRAG usa **string matching**. Resultado: el grafo actual degrada
-> el ranking (MRR ~0.52 vs ~0.86 con vector puro). El plan de Fases C-D aborda
-> la alineacion arquitectonica.
+> **Estado de alineacion con el original (ver DAM-1 a DAM-8 en deuda tecnica):**
+> Fases C-E implementaron entity VDB + relationship VDB + description merging,
+> alineando la resolucion semantica con el original. Fase F implemento el modo
+> `graph_primary` (grafo como retriever primario) y contexto estructurado JSON.
+> Pendiente: validacion con run comparativo (F.5).
 
 **Indexacion:**
 1. Extrae tripletas (entidad, relacion, entidad) de cada documento via LLM (`TripletExtractor`)
@@ -86,19 +85,18 @@ Implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.0
 1. Vector search (ChromaDB) → top_k candidatos con cosine similarity
 2. Query analysis via LLM → extrae keywords de bajo nivel (entidades especificas) y alto nivel (temas abstractos)
 3. Graph traversal dual-level:
-   - **Low-level**: BFS desde entidades de la query, scoring inversamente proporcional a hops (`1/(1+depth)`).
-     *Limitacion actual:* entity matching es lexico (exact + token overlap). Falla cuando query y entidad difieren lexicamente (DTm-70). El original usa embedding similarity. Fix planificado en Fase C.
-   - **High-level**: token matching en nombres de entidad y descripciones de relaciones (indice invertido por token, DTm-30).
-     *Limitacion actual:* devuelve docs directos sin graph traversal — no hace BFS desde entidades matcheadas, limitando bridging multi-hop (DTm-71). El original usa relationship VDB con semantic search. Fix planificado en Fase D.
-4. Fusion via Reciprocal Rank Fusion (RRF) con pesos configurables (`KG_FUSION_METHOD=rrf`, default). Fusion lineal disponible como alternativa (`KG_FUSION_METHOD=linear`).
+   - **Low-level**: Entity VDB (cosine similarity) resuelve entidades semanticamente. BFS desde entidades resueltas, scoring `1/(1+depth)`. Fallback a string matching si VDB no disponible.
+   - **High-level**: Relationship VDB (cosine similarity + edge weights) resuelve relaciones semanticamente. Fallback a token matching si VDB no disponible.
+4. Modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `graph_primary`, `local`, `global`, `naive`.
+5. Fusion via RRF (default) o modo `graph_primary` donde el grafo traza source docs directamente con vector search como fallback.
 
 **Fallback:** Sin `igraph` o sin LLM service → degrada automaticamente a SimpleVectorRetriever puro (warning en log).
 
 **Hardening (produccion):**
 - Batching de coroutines en chunks de 500 docs para evitar presion de memoria en `extract_batch_async()` (DTm-22)
-- Cap de entidades configurable (`KG_MAX_ENTITIES`, default 50K) para limitar crecimiento del grafo (DTm-21)
+- Cap de entidades configurable (`KG_MAX_ENTITIES`, default 100K) para limitar crecimiento del grafo (DTm-21, DTm-63)
 - Deduplicacion de relaciones en aristas (misma relacion + mismo doc no se duplica)
-- Validacion post-parse del output LLM: entity types normalizados a enum (`PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER`), nombres >= 2 chars, descriptions truncadas a 200 chars (DTm-16)
+- Validacion post-parse del output LLM: entity types normalizados a enum (`PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER`), nombres >= 1 char, descriptions truncadas a 200 chars (DTm-16)
 - Estimacion de memoria en `get_stats()` para observabilidad
 - Robustez para modelos de razonamiento (nemotron-3-nano thinking mode): strip de `<think>` tags en `llm.py` (incluye tags sin cerrar por truncamiento), `max_tokens` ampliados en extraccion (2048 tripletas, 512 keywords) para compensar tokens consumidos por razonamiento, y fallback `json.JSONDecoder.raw_decode()` para extraer JSON de respuestas con texto mixto
 - Trazas de depuracion (nivel DEBUG): log de chars eliminados por strip de `<think>` tags, y primeros 200 chars del raw response en fallos de parse JSON — permite diagnosticar problemas con NIM sin activar logging verboso en produccion
@@ -211,24 +209,21 @@ NIM_MAX_CONCURRENT_REQUESTS=32
 NIM_REQUEST_TIMEOUT=120
 
 # Retrieval
-RETRIEVAL_STRATEGY=SIMPLE_VECTOR      # SIMPLE_VECTOR | HYBRID_PLUS | LIGHT_RAG
+RETRIEVAL_STRATEGY=SIMPLE_VECTOR      # SIMPLE_VECTOR | LIGHT_RAG
 RETRIEVAL_K=20
-RETRIEVAL_PRE_FUSION_K=150
-RETRIEVAL_RRF_K=60
-RRF_BM25_WEIGHT=0.3
-RRF_VECTOR_WEIGHT=0.7
 
 # Knowledge Graph (solo LIGHT_RAG)
-KG_MAX_HOPS=2                         # Profundidad maxima BFS en graph traversal
+KG_MAX_HOPS=1                         # Profundidad maxima BFS (DAM-7: 1-hop como el original)
 KG_MAX_TEXT_CHARS=3000                 # Max chars de documento enviados al LLM para extraccion
-KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion (DTm-62: probar 0.10-0.15)
+KG_GRAPH_WEIGHT=0.3                   # Peso del score del grafo en fusion
 KG_VECTOR_WEIGHT=0.7                  # Peso del score vectorial en fusion
-KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 50K; DTm-63: probar 100K)
+KG_MAX_ENTITIES=0                     # Cap de entidades en KG (0 = default 100K)
 KG_CACHE_DIR=./data/kg_cache          # Directorio para persistir KG entre runs (vacio = sin cache)
 KG_FUSION_METHOD=rrf                  # rrf (default, robusto) o linear (legacy)
 KG_RRF_K=60                           # Constante k para RRF (default 60)
 KG_KEYWORD_MAX_TOKENS=1024            # Max tokens para keyword extraction LLM call
 KG_GRAPH_OVERFETCH_FACTOR=2           # Graph traversal pide N * top_k candidatos
+LIGHTRAG_MODE=hybrid                  # hybrid | graph_primary | local | global | naive
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
@@ -239,8 +234,8 @@ RERANKER_FETCH_K=0                    # Candidatos para reranker (0 = top_n * 3)
 
 # Dataset
 MTEB_DATASET_NAME=hotpotqa
-EVAL_MAX_QUERIES=0                    # 0 = todas
-EVAL_MAX_CORPUS=0                     # 0 = todo
+EVAL_MAX_QUERIES=50                   # 0 = todas (default en codigo: 50)
+EVAL_MAX_CORPUS=1000                  # 0 = todo (default en codigo: 1000)
 GENERATION_ENABLED=true
 CORPUS_SHUFFLE_SEED=42
 
@@ -248,14 +243,6 @@ CORPUS_SHUFFLE_SEED=42
 DEV_MODE=false
 DEV_QUERIES=200
 DEV_CORPUS_SIZE=4000
-
-# Entity cross-linking (solo HYBRID_PLUS)
-ENTITY_MAX_CROSS_REFS=3
-ENTITY_MIN_SHARED=1
-ENTITY_MAX_DOC_FRACTION=0.05
-
-# Graph expansion cap (HYBRID_PLUS / LIGHT_RAG). 0 = sin limite.
-MAX_GRAPH_EXPANSION=30
 
 # MinIO
 MINIO_ENDPOINT=http://<minio-host>:9000
@@ -401,15 +388,14 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 |---|---|---|---|---|
 | DAM-1 | **Critica** | **Entity VDB**: entity names + descriptions indexados como embeddings en ChromaDB (cosine distance). Similarity search reemplaza string matching en low-level retrieval. Threshold de distancia para filtrar matches irrelevantes. | Fase C. Resuelve DTm-70. | Implementado |
 | DAM-2 | **Critica** | **Relationship VDB**: relaciones indexadas como embeddings en ChromaDB (cosine distance). Similarity search reemplaza token matching en high-level retrieval. Scoring ponderado por edge weight. | Fase D. Resuelve DTm-71, DTm-74. | Implementado |
-| DAM-3 | **Alta** | **Grafo como suplemento vs retriever primario**: en el original, los modos local/global/hybrid usan el grafo como mecanismo principal de retrieval. En CH_LIRAG, vector search es primario y el grafo suma via RRF. | Fase F (pendiente). | Abierto |
+| DAM-3 | **Alta** | **Grafo como suplemento vs retriever primario**: en el original, los modos local/global/hybrid usan el grafo como mecanismo principal de retrieval. Modo `graph_primary` implementado en Fase F (F.2). | Fase F. | Implementado |
 | DAM-4 | **Alta** | **Merging de descripciones**: descripciones multi-doc se acumulan y consolidan (dedup + top 5 por longitud, max 500 chars). Sin LLM synthesis aun (concatenacion simple vs map-reduce del original). Ver DTm-80. | Fase E. | Parcial |
 | DAM-5 | **Media** | **Edge weights**: weight = docs unicos que mencionan la arista. Usado como factor de scoring en relationship VDB. | Fases D+E. | Implementado |
 | DAM-6 | **Media** | **Gleaning**: re-extraccion con prompt de continuacion. Configurable via `KG_GLEANING_ROUNDS` (default 0 = desactivado). | Fase E. | Implementado |
 | DAM-7 | **Media** | **BFS 1-hop**: default cambiado de 2 a 1 (como el original). Configurable via `KG_MAX_HOPS`. | Fase C. | Implementado |
-| DAM-8 | **Baja** | **Contexto raw vs estructurado para generacion**: el original pasa tablas CSV de entidades, relaciones y source chunks al LLM. CH_LIRAG pasa texto plano concatenado de los docs recuperados. | Fase F (pendiente). | Abierto |
+| DAM-8 | **Baja** | **Contexto estructurado para generacion**: JSON con 3 secciones (Entity, Relationship, Document Chunks) cuando `graph_primary` activo. Implementado en Fase F (F.3). | Fase F. | Implementado |
 
-**Estado (2026-04-06):** DAM-1, DAM-2, DAM-5, DAM-6, DAM-7 implementados (Fases C-E). DAM-4 parcial (concatenacion, sin LLM synthesis — ver DTm-80).
-DAM-3 y DAM-8 pendientes (Fase F). **Pendiente de validacion con run real** para medir impacto.
+**Estado (2026-04-06):** DAM-1, DAM-2, DAM-3, DAM-5, DAM-6, DAM-7, DAM-8 implementados (Fases C-F). DAM-4 parcial (concatenacion, sin LLM synthesis — ver DTm-80). **Pendiente: validacion con run comparativo (F.5).**
 
 **Correcciones de validacion aplicadas (V.1-V.6):**
 - V.1: VDBs usan cosine distance (no L2)
@@ -445,11 +431,11 @@ DAM-3 y DAM-8 pendientes (Fase F). **Pendiente de validacion con run real** para
 | DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Una relacion `directed_by` pesa igual que `same_year_as`. Para queries como "nationality of the director", la relacion `directed_by` deberia puntuar mas. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-73 | **Alta** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-74 | Baja | **Scoring flat en `query_by_keywords`**: entidad match siempre puntua 1.0, relacion match siempre 0.5. **Mitigado por DAM-2**: relationship VDB usa cosine similarity + edge weight, reemplazando el scoring flat en high-level path. Solo afecta al fallback lexico. | `shared/retrieval/lightrag/knowledge_graph.py` | Mitigado (DAM-2) |
-| DTm-75 | **Alta** | **Bug: loader silently succeeds when all downloads fail**. `_download_parquet()` captura `ClientError` y retorna `None`. `load_dataset()` marca `load_status="success"` aunque ningún archivo se descargó. Test `test_load_dataset_download_error` falla. [#2](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/2) | `sandbox_mteb/loader.py` | Abierto |
-| DTm-76 | **Alta** | **Chunk selection strategy (WEIGHT/VECTOR) del original no implementada**. El original selecciona chunks desde entidades/relaciones del grafo (weighted polling o re-ranking por similarity). CH_LIRAG busca chunks por vector similarity global sin filtrar por grafo. Prerequisito de DAM-3. [#3](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/3) | `shared/retrieval/lightrag/retriever.py` | Abierto |
+| DTm-75 | **Alta** | **Bug: loader silently succeeds when all downloads fail**. Fix: `ValueError` si queries y corpus son `None`. [#2](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/2) | `sandbox_mteb/loader.py` | Resuelto |
+| DTm-76 | **Alta** | **Chunk selection desde grafo**. `_select_chunks_from_graph()` combina doc_ids de entity + relationship results. Implementado en Fase F (F.1). [#3](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/3) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
 | DTm-77 | **Media** | **Test gap: gleaning (DAM-6) tiene 0 tests**. `glean_from_doc_async()` implementada pero sin tests unitarios. Feature marcada como completada sin cobertura. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) | `tests/` | Abierto |
 | DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. `test_pipeline_e2e.py` hardcodeado con SIMPLE_VECTOR. No hay validacion E2E de LIGHT_RAG ni HYBRID_PLUS (Fases C-E sin validacion integrada). [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
-| DTm-79 | Baja | **Modos de query explicitos (local/global/hybrid/mix/naive)**. El original expone 5 modos que controlan que canales se activan. CH_LIRAG ejecuta siempre el mismo flujo dentro de LIGHT_RAG. Facilita debugging y evaluacion. [#6](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/6) | `shared/retrieval/lightrag/retriever.py` | Abierto |
+| DTm-79 | Baja | **Modos de query explicitos**: `LIGHTRAG_MODE` con 5 modos (hybrid, graph_primary, local, global, naive). Implementado en Fase F (F.4). [#6](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/6) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
 | DTm-80 | Baja | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion con ` \| `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-81 | Baja | **Import fantasma `shared.retrieval.hybrid.core`** no existe. Mypy error `import-not-found`. [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | `shared/retrieval/hybrid/retriever.py:143` | Abierto |
 | DTm-82 | Baja | **23 errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
@@ -544,23 +530,18 @@ tengan material rico con el que trabajar.
 
 **Criterio de exito:** Descripciones de entidades ricas (multi-doc). Fragmentacion reducida >50%.
 
-### Fase F: Grafo como primary retriever (DAM-3, DAM-8)
+### Fase F: Grafo como primary retriever (DAM-3, DAM-8) — completada (F.1-F.4)
 
 **Objetivo:** Alinear el rol del grafo con el original — el grafo como mecanismo principal de
 retrieval, no como suplemento de vector search.
 
-**Prerrequisito:** Fases C-E completadas.
-
-**Referencia original:** Modos `local`/`global`/`hybrid` en `operate.py`. El grafo traza source
-chunks directamente. CSV tables de entidades/relaciones como contexto para generacion.
-
-| Tarea | Descripcion | DAM/DTm | Esfuerzo |
+| Tarea | Descripcion | DAM/DTm | Estado |
 |---|---|---|---|
-| F.1 Chunk selection desde grafo | Entidades/relaciones trazan source chunks via `source_doc_ids`. Dos modos: WEIGHT (weighted polling por frecuencia) y VECTOR (re-ranking por similarity). Prerequisito de F.2. | DTm-76 | Medio |
-| F.2 Modo `graph_primary` | El grafo traza source chunks directamente (como el original). Vector search como fallback. Usa F.1 para obtener chunks. | DAM-3 | Alto |
-| F.3 Contexto estructurado para generacion | JSON con 3 secciones: KG Data (Entity), KG Data (Relationship), Document Chunks. Como el original. | DAM-8 | Medio |
-| F.4 Modos de query explicitos | `local`/`global`/`hybrid` controlan que canales se activan. Configurable via `LIGHTRAG_MODE`. | DTm-79 | Medio |
-| F.5 Evaluar hibrido vs graph-primary | Comparar ambos modos. Decidir cual es default. | DTm-62 | Bajo (runs) |
+| F.1 Chunk selection desde grafo | `_select_chunks_from_graph()` combina doc_ids de entity + relationship results. | DTm-76 | Completada |
+| F.2 Modo `graph_primary` | `_retrieve_via_graph()`: grafo primario, vector fallback si < top_k/2. | DAM-3 | Completada |
+| F.3 Contexto estructurado | `format_structured_context()`: JSON con Entity + Relationship + Chunks. | DAM-8 | Completada |
+| F.4 Modos de query | `LIGHTRAG_MODE`: hybrid, graph_primary, local, global, naive. | DTm-79 | Completada |
+| F.5 Evaluar hibrido vs graph-primary | Runs comparativos naive vs hybrid vs graph_primary. | DTm-62 | **Pendiente** |
 
 **Criterio de exito:** LIGHT_RAG supera o iguala SIMPLE_VECTOR en MRR y Hit@5.
 
@@ -600,18 +581,16 @@ Fase A ✅ ──── Fase B ✅ [paralelo]
             Fase E ✅ (calidad grafo — DAM-4, DAM-6)
                   │
                   ▼
-            *** RUN COMPARATIVO PENDIENTE ***
+            Fase F ✅ (graph primary — DAM-3, DAM-8) [F.5 pendiente: runs]
                   │
                   ▼
-            Fase F (graph primary — DAM-3, DAM-8)
+            *** RUN COMPARATIVO PENDIENTE (F.5) ***
 
-Fase G (deuda menor) ─── en paralelo, sin bloqueo ────────────────
+Fase G (deuda tecnica) ─── en paralelo, sin bloqueo ────────────────
 ```
 
-Fases A-E completadas. Pendiente: run comparativo para medir impacto
-acumulado de VDBs + merging + 1-hop, y Fase F (graph as primary retriever).
-
-Fase G ampliada con DTm-75 a DTm-82 (bugs, test gaps, code quality).
+Fases A-F implementadas (F.5 pendiente: runs comparativos).
+Fase G: DTm-55 a DTm-83 (bugs, test gaps, code quality, eliminacion HYBRID_PLUS).
 
 ### Pendiente: Run comparativo post-VDBs
 
@@ -654,26 +633,6 @@ KG_GLEANING_ROUNDS=0       # DAM-6: activar con 1 para probar gleaning
 - KG componentes: ya no deberia ser bloqueante (entity VDB resuelve por semantica, no por nombre).
 - Logs: verificar que aparecen "entity VDB construido" y "relationship VDB construido".
 - Tiempo: los VDBs anaden overhead de embedding (~1 min para 3K entidades). Verificar que es aceptable.
-
-### Pendiente: Fase F — Grafo como primary retriever (DAM-3, DAM-8)
-
-**Decidir despues del run comparativo.** Si los VDBs ya cierran el gap con SIMPLE_VECTOR,
-Fase F puede no ser necesaria. Si el gap persiste, DAM-3 (cambio de rol del grafo) es el
-siguiente cambio arquitectonico.
-
-### Pendiente: Fase G — Deuda tecnica menor
-
-Ejecutable en cualquier momento, sin bloqueo.
-
-| Tarea | DTm | Esfuerzo |
-|---|---|---|
-| Stats extractor resilientes | DTm-55 | Bajo |
-| Fingerprint robusto | DTm-56 | Bajo |
-| `KG_KEYWORD_MAX_TOKENS=2048` | DTm-65 | Trivial |
-| Dedup queries en batch keywords | DTm-58 | Bajo |
-| Reset stats automatico | DTm-60 | Trivial |
-| Keyword size cap | DTm-61 | Trivial |
-| Entity normalization guiones | DTm-57 | Bajo |
 
 ### Variables de configuracion (referencia)
 
