@@ -90,6 +90,57 @@ class MTEBEvaluator:
         start_time = time.time()
         run_id = resume_run_id or f"mteb_{self.config.dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}"
 
+        self._log_run_start(run_id)
+
+        try:
+            # 1. Inicializar componentes
+            self._init_components()
+
+            # 2. Cargar y preparar datos
+            dataset, queries, corpus = self._load_and_prepare()
+
+            # 3. Indexar documentos
+            self._index_documents(dataset.name, corpus, run_id)
+
+            # 3b. Crear retrieval executor
+            self._retrieval_executor = RetrievalExecutor(
+                retriever=self._retriever,
+                reranker=self._reranker,
+                config=self.config,
+            )
+
+            # 4. Evaluar queries (pipeline async)
+            ds_config = get_dataset_config(dataset.name)
+            query_results = self._evaluate_queries(
+                queries, ds_config, dataset.name, run_id=run_id
+            )
+
+            # 5. Construir EvaluationRun
+            elapsed = time.time() - start_time
+            evaluation_run = self._build_run(
+                run_id=run_id,
+                dataset=dataset,
+                query_results=query_results,
+                elapsed_seconds=elapsed,
+                indexed_corpus_size=len(corpus),
+            )
+
+            self._log_run_complete(run_id, elapsed, evaluation_run)
+            return evaluation_run
+
+        except Exception as e:
+            logger.error(f"RUN FALLIDO: {e}")
+            structured_log("run_failed", run_id=run_id, error=str(e))
+            raise
+        finally:
+            self._cleanup()
+
+    # -----------------------------------------------------------------
+    # RUN PHASES
+    # -----------------------------------------------------------------
+
+    def _log_run_start(self, run_id: str) -> None:
+        """Log header y evento estructurado de inicio."""
         logger.info("=" * 60)
         logger.info("MTEB EVALUATION RUN")
         logger.info(f"  Run ID:     {run_id}")
@@ -103,7 +154,6 @@ class MTEBEvaluator:
             logger.info(f"  Corpus:     {self.config.max_corpus if self.config.max_corpus > 0 else 'ALL'}")
         logger.info("=" * 60)
 
-        # DT-3: evento estructurado de inicio de run
         structured_log(
             "run_start",
             run_id=run_id,
@@ -113,83 +163,47 @@ class MTEBEvaluator:
             dev_mode=self.config.dev_mode,
         )
 
-        try:
-            # 1. Inicializar componentes
-            self._init_components()
+    def _load_and_prepare(self) -> tuple:
+        """Carga dataset y selecciona subset de queries/corpus."""
+        dataset = self._load_dataset()
 
-            # 2. Cargar dataset
-            dataset = self._load_dataset()
+        if self.config.dev_mode:
+            if self.config.max_queries > 0 or self.config.max_corpus > 0:
+                logger.info(
+                    "  DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS"
+                )
+            queries, corpus = select_subset_dev(dataset, self.config)
+        else:
+            queries, corpus = select_subset_standard(dataset, self.config)
 
-            # 3. Seleccionar subset
-            if self.config.dev_mode:
-                if self.config.max_queries > 0 or self.config.max_corpus > 0:
-                    logger.info(
-                        "  DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS"
-                    )
-                queries, corpus = select_subset_dev(dataset, self.config)
-            else:
-                queries, corpus = select_subset_standard(dataset, self.config)
+        logger.info(
+            f"  Usando {len(queries)} queries, {len(corpus)} docs"
+        )
+        return dataset, queries, corpus
 
-            logger.info(
-                f"  Usando {len(queries)} queries, {len(corpus)} docs"
-            )
-
-            # 4. Indexar documentos
-            self._index_documents(dataset.name, corpus, run_id)
-
-            # 4b. Crear retrieval executor
-            self._retrieval_executor = RetrievalExecutor(
-                retriever=self._retriever,
-                reranker=self._reranker,
-                config=self.config,
-            )
-
-            # 5. Evaluar queries (pipeline async)
-            ds_config = get_dataset_config(dataset.name)
-            query_results = self._evaluate_queries(
-                queries, ds_config, dataset.name, run_id=run_id
-            )
-
-            # 6. Construir EvaluationRun
-            elapsed = time.time() - start_time
-            evaluation_run = self._build_run(
-                run_id=run_id,
-                dataset=dataset,
-                query_results=query_results,
-                elapsed_seconds=elapsed,
-                indexed_corpus_size=len(corpus),
-            )
-
-            logger.info(
-                f"RUN COMPLETADO en {elapsed:.1f}s | "
-                f"Hit@5={evaluation_run.avg_hit_rate_at_5:.4f} | "
-                f"MRR={evaluation_run.avg_mrr:.4f}"
-            )
-
-            # DT-3: evento estructurado de fin de run
-            structured_log(
-                "run_complete",
-                run_id=run_id,
-                elapsed_s=round(elapsed, 2),
-                queries_evaluated=evaluation_run.num_queries_evaluated,
-                queries_failed=evaluation_run.num_queries_failed,
-                hit_at_5=round(evaluation_run.avg_hit_rate_at_5, 4),
-                mrr=round(evaluation_run.avg_mrr, 4),
-                avg_generation_score=(
-                    round(evaluation_run.avg_generation_score, 4)
-                    if evaluation_run.avg_generation_score is not None
-                    else None
-                ),
-            )
-
-            return evaluation_run
-
-        except Exception as e:
-            logger.error(f"RUN FALLIDO: {e}")
-            structured_log("run_failed", run_id=run_id, error=str(e))
-            raise
-        finally:
-            self._cleanup()
+    def _log_run_complete(
+        self, run_id: str, elapsed: float, evaluation_run: EvaluationRun,
+    ) -> None:
+        """Log resumen y evento estructurado de fin de run."""
+        logger.info(
+            f"RUN COMPLETADO en {elapsed:.1f}s | "
+            f"Hit@5={evaluation_run.avg_hit_rate_at_5:.4f} | "
+            f"MRR={evaluation_run.avg_mrr:.4f}"
+        )
+        structured_log(
+            "run_complete",
+            run_id=run_id,
+            elapsed_s=round(elapsed, 2),
+            queries_evaluated=evaluation_run.num_queries_evaluated,
+            queries_failed=evaluation_run.num_queries_failed,
+            hit_at_5=round(evaluation_run.avg_hit_rate_at_5, 4),
+            mrr=round(evaluation_run.avg_mrr, 4),
+            avg_generation_score=(
+                round(evaluation_run.avg_generation_score, 4)
+                if evaluation_run.avg_generation_score is not None
+                else None
+            ),
+        )
 
     # -----------------------------------------------------------------
     # INICIALIZACION

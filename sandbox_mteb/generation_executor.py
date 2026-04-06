@@ -22,6 +22,7 @@ from shared.types import (
 from shared.llm import AsyncLLMService
 from shared.metrics import MetricsCalculator, MetricResult
 
+from shared.constants import GENERATION_QUERY_TIMEOUT_S
 from .config import GENERATION_PROMPTS
 from .retrieval_executor import format_context, format_structured_context
 
@@ -45,9 +46,6 @@ class GenMetricsResult:
         self.secondary_metrics = secondary_metrics or {}
 
 
-_DEFAULT_QUERY_TIMEOUT_S = 120
-
-
 class GenerationExecutor:
     """Ejecuta generacion LLM + calculo de metricas para queries."""
 
@@ -56,7 +54,7 @@ class GenerationExecutor:
         llm_service: AsyncLLMService,
         metrics_calculator: MetricsCalculator,
         max_context_chars: int,
-        query_timeout_s: float = _DEFAULT_QUERY_TIMEOUT_S,
+        query_timeout_s: float = GENERATION_QUERY_TIMEOUT_S,
     ):
         self._llm_service = llm_service
         self._metrics_calculator = metrics_calculator

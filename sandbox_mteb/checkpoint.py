@@ -26,7 +26,7 @@ from shared.types import (
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_CHUNK_SIZE = 50  # queries per checkpoint
+from shared.constants import CHECKPOINT_CHUNK_SIZE  # queries per checkpoint
 
 
 def checkpoint_path(results_dir: str, run_id: str) -> Path:

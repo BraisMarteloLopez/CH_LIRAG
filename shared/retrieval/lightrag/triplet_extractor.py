@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 # CONSTANTES DE VALIDACION (DTm-16)
 # =============================================================================
 
+from shared.constants import KG_MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS
+from shared.constants import KG_MIN_ENTITY_NAME_LEN as MIN_ENTITY_NAME_LEN
+
 VALID_ENTITY_TYPES = {"PERSON", "ORG", "PLACE", "CONCEPT", "EVENT", "OTHER"}
-MAX_DESCRIPTION_CHARS = 200
-MIN_ENTITY_NAME_LEN = 1
 
 
 # =============================================================================

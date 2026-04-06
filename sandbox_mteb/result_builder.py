@@ -6,7 +6,10 @@ Extraido de evaluator.py para reducir su tamano (DTm-36 fase 4).
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from shared.types import (
@@ -20,6 +23,24 @@ from shared.retrieval import RetrievalStrategy
 from .config import MTEBConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_config(config: MTEBConfig) -> Dict[str, Any]:
+    """Serializa toda la MTEBConfig a dict JSON-safe para snapshot."""
+
+    def _convert(obj: Any) -> Any:
+        if isinstance(obj, Enum):
+            return obj.name
+        if isinstance(obj, Path):
+            return str(obj)
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            return {f.name: _convert(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+        return obj
+
+    return {
+        f.name: _convert(getattr(config, f.name))
+        for f in dataclasses.fields(config)
+    }
 
 
 def build_run(
@@ -113,42 +134,23 @@ def build_run(
         if all_gen_values:
             avg_gen = sum(all_gen_values) / len(all_gen_values)
 
-    # Config snapshot
-    config_snapshot = {
-        "retrieval_strategy": config.retrieval.strategy.name,
-        "retrieval_k": config.retrieval.retrieval_k,
-        "corpus_shuffle_seed": config.corpus_shuffle_seed,
-        "max_queries": config.max_queries,
-        "max_corpus": config.max_corpus,
-        "generation_enabled": config.generation_enabled,
+    # Config snapshot: serializacion completa para reproducibilidad post-hoc
+    config_snapshot = _serialize_config(config)
+    # Campos derivados del run (no en config)
+    config_snapshot["_runtime"] = {
         "max_context_chars": max_context_chars,
-        "reranker_enabled": config.reranker.enabled,
-        "reranker_top_n": config.reranker.top_n if config.reranker.enabled else None,
         "rerank_failures": rerank_failures if config.reranker.enabled else None,
         "strategy_mismatches": strategy_mismatches,
         "corpus_total_available": len(dataset.corpus),
         "corpus_indexed": indexed_corpus_size,
         "gen_zero_count": gen_zero_count,
         "gen_nonzero_count": gen_nonzero_count,
-        "dev_mode": config.dev_mode,
-        # DTm-38: estrategia real vs configurada
         "strategy_actual": (
             config.retrieval.strategy.name
             if strategy_mismatches == 0
             else "FALLBACK_SIMPLE_VECTOR"
         ),
     }
-    if config.dev_mode:
-        config_snapshot["dev_queries"] = config.dev_queries
-        config_snapshot["dev_corpus_size"] = config.dev_corpus_size
-    if config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
-        config_snapshot["kg_max_hops"] = config.retrieval.kg_max_hops
-        config_snapshot["kg_max_text_chars"] = config.retrieval.kg_max_text_chars
-        config_snapshot["kg_max_entities"] = config.retrieval.kg_max_entities
-        config_snapshot["kg_graph_weight"] = config.retrieval.kg_graph_weight
-        config_snapshot["kg_vector_weight"] = config.retrieval.kg_vector_weight
-        config_snapshot["max_graph_expansion"] = config.retrieval.max_graph_expansion
-        config_snapshot["kg_cache_dir"] = config.retrieval.kg_cache_dir or None
 
     return EvaluationRun(
         run_id=run_id,
