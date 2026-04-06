@@ -445,6 +445,14 @@ DAM-3 y DAM-8 pendientes (Fase F). **Pendiente de validacion con run real** para
 | DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Una relacion `directed_by` pesa igual que `same_year_as`. Para queries como "nationality of the director", la relacion `directed_by` deberia puntuar mas. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `lightrag/knowledge_graph.py` | Abierto |
 | DTm-73 | **Alta** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `lightrag/knowledge_graph.py` | Abierto |
 | DTm-74 | Baja | **Scoring flat en `query_by_keywords`**: entidad match siempre puntua 1.0, relacion match siempre 0.5, sin distinguir proporcion de tokens matcheados. Una entidad que matchea 3/3 keywords deberia puntuar mas que 1/3. Fix: scoring proporcional a token overlap (TF-like). | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-75 | **Alta** | **Bug: loader silently succeeds when all downloads fail**. `_download_parquet()` captura `ClientError` y retorna `None`. `load_dataset()` marca `load_status="success"` aunque ningún archivo se descargó. Test `test_load_dataset_download_error` falla. [#2](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/2) | `sandbox_mteb/loader.py` | Abierto |
+| DTm-76 | **Alta** | **Chunk selection strategy (WEIGHT/VECTOR) del original no implementada**. El original selecciona chunks desde entidades/relaciones del grafo (weighted polling o re-ranking por similarity). CH_LIRAG busca chunks por vector similarity global sin filtrar por grafo. Prerequisito de DAM-3. [#3](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/3) | `lightrag/retriever.py` | Abierto |
+| DTm-77 | **Media** | **Test gap: gleaning (DAM-6) tiene 0 tests**. `glean_from_doc_async()` implementada pero sin tests unitarios. Feature marcada como completada sin cobertura. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) | `tests/` | Abierto |
+| DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. `test_pipeline_e2e.py` hardcodeado con SIMPLE_VECTOR. No hay validacion E2E de LIGHT_RAG ni HYBRID_PLUS (Fases C-E sin validacion integrada). [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
+| DTm-79 | Baja | **Modos de query explicitos (local/global/hybrid/mix/naive)**. El original expone 5 modos que controlan que canales se activan. CH_LIRAG ejecuta siempre el mismo flujo dentro de LIGHT_RAG. Facilita debugging y evaluacion. [#6](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/6) | `lightrag/retriever.py` | Abierto |
+| DTm-80 | Baja | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion con ` \| `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `lightrag/knowledge_graph.py` | Abierto |
+| DTm-81 | Baja | **Import fantasma `shared.retrieval.hybrid.core`** no existe. Mypy error `import-not-found`. [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | `shared/retrieval/hybrid/retriever.py:143` | Abierto |
+| DTm-82 | Baja | **23 errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
 
 ### Deuda resuelta (referencia)
 
@@ -545,11 +553,13 @@ retrieval, no como suplemento de vector search.
 **Referencia original:** Modos `local`/`global`/`hybrid` en `operate.py`. El grafo traza source
 chunks directamente. CSV tables de entidades/relaciones como contexto para generacion.
 
-| Tarea | Descripcion | DAM | Esfuerzo |
+| Tarea | Descripcion | DAM/DTm | Esfuerzo |
 |---|---|---|---|
-| F.1 Modo `graph_primary` | El grafo traza source chunks directamente (como el original). Vector search como fallback. | DAM-3 | Alto |
-| F.2 Contexto estructurado para generacion | Tablas CSV de entidades, relaciones y source chunks al LLM. | DAM-8 | Medio |
-| F.3 Evaluar hibrido vs graph-primary | Comparar ambos modos. Decidir cual es default. | DTm-62 | Bajo (runs) |
+| F.1 Chunk selection desde grafo | Entidades/relaciones trazan source chunks via `source_doc_ids`. Dos modos: WEIGHT (weighted polling por frecuencia) y VECTOR (re-ranking por similarity). Prerequisito de F.2. | DTm-76 | Medio |
+| F.2 Modo `graph_primary` | El grafo traza source chunks directamente (como el original). Vector search como fallback. Usa F.1 para obtener chunks. | DAM-3 | Alto |
+| F.3 Contexto estructurado para generacion | JSON con 3 secciones: KG Data (Entity), KG Data (Relationship), Document Chunks. Como el original. | DAM-8 | Medio |
+| F.4 Modos de query explicitos | `local`/`global`/`hybrid` controlan que canales se activan. Configurable via `LIGHTRAG_MODE`. | DTm-79 | Medio |
+| F.5 Evaluar hibrido vs graph-primary | Comparar ambos modos. Decidir cual es default. | DTm-62 | Bajo (runs) |
 
 **Criterio de exito:** LIGHT_RAG supera o iguala SIMPLE_VECTOR en MRR y Hit@5.
 
@@ -566,6 +576,12 @@ chunks directamente. CSV tables de entidades/relaciones como contexto para gener
 | G.5 Reset stats automatico | `reset_stats()` al inicio de `extract_batch()`. | DTm-60 | Trivial |
 | G.6 Keyword size cap | Max 20 keywords/nivel. | DTm-61 | Trivial |
 | G.7 Entity normalization | Preservar guiones internos en `_normalize_name`. | DTm-57 | Bajo |
+| G.8 Fix bug loader | `load_dataset()` debe detectar cuando todas las descargas fallan. | DTm-75 | Trivial |
+| G.9 Tests gleaning | Tests unitarios para `glean_from_doc_async()`. | DTm-77 | Bajo |
+| G.10 E2E LIGHT_RAG | Test pipeline E2E con estrategia LIGHT_RAG (mocked). | DTm-78 | Medio |
+| G.11 LLM synthesis merge | Descripciones multi-doc sintetizadas via LLM (map-reduce). | DTm-80 | Medio |
+| G.12 Import fantasma | Eliminar import `shared.retrieval.hybrid.core`. | DTm-81 | Trivial |
+| G.13 Mypy cleanup | Resolver 23 errores mypy (union-attr, dict-item, etc.). | DTm-82 | Bajo |
 
 ### Resumen de dependencias entre fases
 
@@ -592,6 +608,8 @@ Fase G (deuda menor) ─── en paralelo, sin bloqueo ────────
 
 Fases A-E completadas. Pendiente: run comparativo para medir impacto
 acumulado de VDBs + merging + 1-hop, y Fase F (graph as primary retriever).
+
+Fase G ampliada con DTm-75 a DTm-82 (bugs, test gaps, code quality).
 
 ### Pendiente: Run comparativo post-VDBs
 
