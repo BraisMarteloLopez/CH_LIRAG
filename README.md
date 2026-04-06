@@ -593,15 +593,78 @@ Fase G (deuda menor) ─── en paralelo, sin bloqueo ────────
 Fases A-E completadas. Pendiente: run comparativo para medir impacto
 acumulado de VDBs + merging + 1-hop, y Fase F (graph as primary retriever).
 
-### Variables de configuracion nuevas (referencia)
+### Pendiente: Run comparativo post-VDBs
 
-Anadidas en esta ronda, disponibles via .env:
+**Objetivo:** Medir el impacto real de las Fases C-E (entity VDB, relationship VDB,
+merging, 1-hop) comparando con el baseline SIMPLE_VECTOR (MRR=1.0) y el run
+LIGHT_RAG pre-VDBs (MRR=0.52).
+
+**Config sugerida para el run:**
+
+```bash
+# Mantener DEV_MODE para comparabilidad con runs anteriores
+RETRIEVAL_STRATEGY=LIGHT_RAG
+DEV_MODE=true
+DEV_QUERIES=50
+DEV_CORPUS_SIZE=3500
+CORPUS_SHUFFLE_SEED=42
+RERANKER_ENABLED=true
+
+# Nuevos defaults post-refactor (ya aplicados)
+KG_MAX_HOPS=1              # DAM-7: 1-hop como el original
+KG_GLEANING_ROUNDS=0       # DAM-6: activar con 1 para probar gleaning
+
+# IMPORTANTE: borrar KG_CACHE_DIR o limpiar cache para forzar rebuild
+# con los nuevos VDBs
+```
+
+**Metricas a comparar:**
+
+| Metrica | SIMPLE_VECTOR (baseline) | LIGHT_RAG pre-VDBs | LIGHT_RAG post-VDBs |
+|---|---|---|---|
+| MRR | 1.000 | 0.518 | *pendiente* |
+| Hit@5 | 1.000 | 0.793 | *pendiente* |
+| Recall@5 | 0.940 | 0.690 | *pendiente* |
+| Gen Recall | 0.970 | 0.983 | *pendiente* |
+| KG componentes | — | 473 | *pendiente* |
+| Tiempo total | 138s | 901s | *pendiente* |
+
+**Que buscar en el run:**
+- MRR: deberia mejorar significativamente vs 0.52. Si sube a >0.80, los VDBs funcionan.
+- KG componentes: ya no deberia ser bloqueante (entity VDB resuelve por semantica, no por nombre).
+- Logs: verificar que aparecen "entity VDB construido" y "relationship VDB construido".
+- Tiempo: los VDBs anaden overhead de embedding (~1 min para 3K entidades). Verificar que es aceptable.
+
+### Pendiente: Fase F — Grafo como primary retriever (DAM-3, DAM-8)
+
+**Decidir despues del run comparativo.** Si los VDBs ya cierran el gap con SIMPLE_VECTOR,
+Fase F puede no ser necesaria. Si el gap persiste, DAM-3 (cambio de rol del grafo) es el
+siguiente cambio arquitectonico.
+
+### Pendiente: Fase G — Deuda tecnica menor
+
+Ejecutable en cualquier momento, sin bloqueo.
+
+| Tarea | DTm | Esfuerzo |
+|---|---|---|
+| Stats extractor resilientes | DTm-55 | Bajo |
+| Fingerprint robusto | DTm-56 | Bajo |
+| `KG_KEYWORD_MAX_TOKENS=2048` | DTm-65 | Trivial |
+| Dedup queries en batch keywords | DTm-58 | Bajo |
+| Reset stats automatico | DTm-60 | Trivial |
+| Keyword size cap | DTm-61 | Trivial |
+| Entity normalization guiones | DTm-57 | Bajo |
+
+### Variables de configuracion (referencia)
 
 | Variable | Default | Descripcion |
 |---|---|---|
-| `KG_KEYWORD_MAX_TOKENS` | 1024 | Max tokens para LLM call de keyword extraction. Subir si thinking-mode exhaustion. |
-| `KG_EXTRACTION_MAX_TOKENS` | 4096 | Max tokens para LLM call de extraccion de tripletas. Antes hardcoded a 8192 (DTm-66). |
-| `KG_BATCH_DOCS_PER_CALL` | 5 | Docs por LLM call en batch extraction. Subir a 10 reduce calls 50% (DTm-67). |
+| `KG_MAX_HOPS` | 1 | Profundidad BFS. DAM-7: 1-hop como el original (antes 2). |
+| `KG_GLEANING_ROUNDS` | 0 | DAM-6: rounds de re-extraccion (0 = desactivado). Probar con 1. |
+| `KG_KEYWORD_MAX_TOKENS` | 1024 | Max tokens para LLM call de keyword extraction. |
+| `KG_EXTRACTION_MAX_TOKENS` | 4096 | Max tokens para LLM call de extraccion de tripletas. |
+| `KG_BATCH_DOCS_PER_CALL` | 5 | Docs por LLM call en batch extraction. |
 | `KG_GRAPH_OVERFETCH_FACTOR` | 2 | Multiplicador de candidatos en graph traversal (N * top_k). |
-| `KG_FUSION_METHOD` | rrf | Metodo de fusion: `rrf` (robusto) o `linear` (legacy, candidato a deprecar). |
+| `KG_FUSION_METHOD` | rrf | Metodo de fusion: `rrf` (robusto) o `linear` (legacy). |
 | `KG_RRF_K` | 60 | Constante k de Reciprocal Rank Fusion. |
+| `KG_MAX_ENTITIES` | 100000 | Cap de entidades en KG (DTm-63: subido de 50K a 100K). |
