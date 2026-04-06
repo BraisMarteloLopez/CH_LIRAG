@@ -7,7 +7,7 @@ Sistema de evaluacion RAG para benchmarking de pipelines de retrieval y generaci
 ## Estructura clave
 
 ```
-shared/                        # Libreria core (~3,800 LOC)
+shared/                        # Libreria core
   types.py                     # Tipos: NormalizedQuery, LoadedDataset, EvaluationRun, Protocols
   metrics.py                   # F1, EM, Accuracy, Faithfulness (LLM-judge)
   llm.py                       # AsyncLLMService (NIM client, async/sync bridge)
@@ -20,13 +20,13 @@ shared/                        # Libreria core (~3,800 LOC)
     __init__.py                # Factory get_retriever() — punto de entrada para crear retrievers
     reranker.py                # CrossEncoderReranker (NVIDIARerank)
     lightrag/
-      retriever.py             # LightRAGRetriever: vector + KG dual-level (~1,060 LOC)
-      knowledge_graph.py       # KnowledgeGraph in-memory (igraph): entidades, relaciones, BFS (~880 LOC)
-      triplet_extractor.py     # Extraccion de tripletas y keywords via LLM (~770 LOC)
+      retriever.py             # LightRAGRetriever: vector + KG dual-level
+      knowledge_graph.py       # KnowledgeGraph in-memory (igraph): entidades, relaciones, BFS
+      triplet_extractor.py     # Extraccion de tripletas y keywords via LLM
 
-sandbox_mteb/                  # Pipeline de evaluacion (~2,750 LOC)
+sandbox_mteb/                  # Pipeline de evaluacion
   config.py                    # MTEBConfig: .env → dataclass validada (+RerankerConfig.validate)
-  evaluator.py                 # Orquestador principal (<600 LOC)
+  evaluator.py                 # Orquestador principal
   run.py                       # Entry point CLI (--dry-run, -v, --resume)
   loader.py                    # MinIO/Parquet → LoadedDataset
   retrieval_executor.py        # Loop retrieval + reranking
@@ -37,9 +37,9 @@ sandbox_mteb/                  # Pipeline de evaluacion (~2,750 LOC)
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (~8,200 LOC, 352 unit tests)
+tests/                         # pytest (352 unit tests, 30 files)
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
-  test_*.py                    # 30 unit test files
+  test_*.py                    # Unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
 ```
 

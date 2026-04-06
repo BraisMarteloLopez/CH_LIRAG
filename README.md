@@ -44,7 +44,7 @@ sandbox_mteb/                    # Pipeline de evaluacion MTEB/BeIR
   preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
   env.example                    # Plantilla .env
 
-tests/                           # pytest (205+ tests, unit + integration)
+tests/                           # pytest (352 unit + 19 integration tests)
 ```
 
 ## Pipeline
