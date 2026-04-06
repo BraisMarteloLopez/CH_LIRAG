@@ -76,14 +76,12 @@ class TestMain:
         assert result == 1
 
     def test_invalid_config_returns_1(self, tmp_path):
-        # .env existe pero config es invalida (faltan campos obligatorios)
+        # .env existe pero config es invalida — from_env() lanza ValueError
         env_file = tmp_path / ".env"
         env_file.write_text("RETRIEVAL_STRATEGY=INVALID_STRATEGY\n")
         with patch("sys.argv", ["run.py", "--env", str(env_file)]):
             with patch("sandbox_mteb.run.MTEBConfig.from_env") as mock_from_env:
-                mock_config = MagicMock()
-                mock_config.validate.return_value = ["campo obligatorio falta"]
-                mock_from_env.return_value = mock_config
+                mock_from_env.side_effect = ValueError("campo obligatorio falta")
                 result = main()
         assert result == 1
 
@@ -93,7 +91,6 @@ class TestMain:
         with patch("sys.argv", ["run.py", "--env", str(env_file), "--dry-run"]):
             with patch("sandbox_mteb.run.MTEBConfig.from_env") as mock_from_env:
                 mock_config = MagicMock()
-                mock_config.validate.return_value = []
                 mock_config.summary.return_value = "Config summary"
                 mock_from_env.return_value = mock_config
                 result = main()
@@ -108,7 +105,6 @@ class TestMain:
                  patch("sandbox_mteb.run.MTEBEvaluator") as mock_eval_cls, \
                  patch("sandbox_mteb.run.RunExporter") as mock_exp_cls:
                 mock_config = MagicMock()
-                mock_config.validate.return_value = []
                 mock_config.summary.return_value = "Config"
                 mock_from_env.return_value = mock_config
 

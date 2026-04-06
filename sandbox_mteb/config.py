@@ -104,10 +104,14 @@ class MTEBConfig:
 
     @classmethod
     def from_env(cls, env_path: str = ".env") -> "MTEBConfig":
-        """Construye config completa desde .env."""
+        """Construye config completa desde .env.
+
+        Llama validate() automaticamente. Si hay errores de configuracion,
+        lanza ValueError con todos los errores concatenados.
+        """
         load_dotenv_file(env_path)
 
-        return cls(
+        config = cls(
             infra=InfraConfig.from_env(),
             storage=MinIOStorageConfig.from_env(),
             retrieval=RetrievalConfig.from_env(),
@@ -122,6 +126,14 @@ class MTEBConfig:
             dev_queries=_env_int("DEV_QUERIES", 200),
             dev_corpus_size=_env_int("DEV_CORPUS_SIZE", 4000),
         )
+
+        errors = config.validate()
+        if errors:
+            raise ValueError(
+                "Errores de configuracion:\n  - " + "\n  - ".join(errors)
+            )
+
+        return config
 
     def validate(self) -> List[str]:
         """Valida la configuracion. Retorna lista de errores (vacia = OK)."""
