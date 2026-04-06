@@ -393,45 +393,31 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 - V.5: Gleaning prompt incluye formato JSON explicito
 - V.6: Conversion cosine distance [0,2] → similarity [1.0, 0.0] correcta + threshold
 
-### Registro completo
+### Deuda vigente
 
 | ID | Severidad | Descripcion | Ubicacion | Estado |
 |---|---|---|---|---|
-| DTm-66 | **Alta** | **`max_tokens=8192` en extraccion batch causa generacion masiva en thinking mode**. Fix: configurable via `KG_EXTRACTION_MAX_TOKENS` (default 4096). | `shared/retrieval/lightrag/triplet_extractor.py` | Resuelto |
-| DTm-67 | **Alta** | **Batch docs/call configurable** via `KG_BATCH_DOCS_PER_CALL` (default 5). Subir a 10 reduce calls ~50%. | `shared/retrieval/lightrag/triplet_extractor.py` | Resuelto |
-| DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. | `shared/retrieval/lightrag/retriever.py` fusion | Abierto |
-| DTm-63 | **Alta** | Entity cap: subido de 50K a 100K (DTm-63). Sesgo FIFO persiste — orden de indexacion determina que entidades se descartan. | `shared/retrieval/lightrag/knowledge_graph.py` | Parcial |
-| DTm-68 | **Media** | **Re-serializacion JSON eliminada**: `_build_entities_relations()` recibe dict directamente. | `shared/retrieval/lightrag/triplet_extractor.py` | Resuelto |
-| DTm-69 | **Media** | **Token indexing diferido**: `build_keyword_indices()` como fase post-build, llamado desde `retriever.py:237`. | `shared/retrieval/lightrag/knowledge_graph.py` | Resuelto |
+| DTm-62 | **Alta** | Fusion KG destruye ranking: MRR -33pp con KG activo. Scores normalizados del grafo compiten con vectoriales, desplazando docs relevantes. Pendiente run comparativo (F.5). | `shared/retrieval/lightrag/retriever.py` | Abierto |
+| DTm-63 | **Alta** | Entity cap 100K: sesgo FIFO persiste — orden de indexacion determina que entidades se descartan. | `shared/retrieval/lightrag/knowledge_graph.py` | Parcial |
+| DTm-73 | **Alta** | **Grafo fragmentado limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos, el BFS no puede cruzar. Fix: entity co-reference o aristas implicitas entre entidades co-ocurrentes en el mismo doc. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-64 | **Media** | Normalizacion [0,1] incomparable entre canales: distribuciones vector (concentrada) vs graph (uniforme) generan scores engañosos. RRF mitiga parcialmente. | `shared/retrieval/lightrag/retriever.py` | Abierto |
-| DTm-65 | **Media** | Thinking-mode exhaustion: ~17% queries fallan en 1er intento. `KG_KEYWORD_MAX_TOKENS` configurable (default 1024). Puede requerir 2048 con modelos reasoning-heavy. | `shared/retrieval/lightrag/triplet_extractor.py` | Mitigado |
 | DTm-55 | **Media** | Stats extractor se corrompen si KG build falla a mitad. `_has_graph=False` pero stats parciales persisten. | `shared/retrieval/lightrag/retriever.py` | Abierto |
 | DTm-56 | **Media** | Fingerprint collision con corpus vacio: `sha256("")[:16]` es determinista pero edge case si dos configs distintas producen mismo hash. | `shared/retrieval/lightrag/retriever.py` | Abierto |
-| DTm-12 | Baja | Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. | `shared/metrics.py` | Aceptado |
-| DTm-13 | Baja | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. | `shared/vector_store.py` | Aceptado |
-| DTm-24 | Baja | ~~Naming ambiguo: `RRF_VECTOR_WEIGHT` vs `KG_VECTOR_WEIGHT`~~. Resuelto: HYBRID_PLUS eliminado (DTm-83). | — | Resuelto |
+| DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
+| DTm-77 | **Media** | **Test gap: gleaning (DAM-6) tiene 0 tests**. `glean_from_doc_async()` sin cobertura. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) | `tests/` | Abierto |
+| DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. No hay validacion E2E de LIGHT_RAG. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
+| DTm-80 | **Media** | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion. Original: LLM map-reduce. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
+| DTm-82 | Baja | **Errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
 | DTm-57 | Baja | Normalizacion entidades agresiva: pierde apostrofes/guiones. Colisiones raras. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
 | DTm-58 | Baja | No dedup queries identicas en batch keyword extraction: LLM calls duplicadas. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
 | DTm-60 | Baja | Stats extractor acumulan entre llamadas. `reset_stats()` nunca se llama auto. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
 | DTm-61 | Baja | No validacion tamano keywords del LLM: respuestas patologicas pasan sin limite. | `shared/retrieval/lightrag/triplet_extractor.py` | Abierto |
-| DTm-70 | **Alta** | **Entity matching exacto en `query_entities` impide bridging**: BFS solo arranca si el keyword del LLM matchea exactamente el nombre normalizado de la entidad. **Mitigado por DAM-1 (entity VDB)**: `_resolve_entities_via_vdb()` resuelve por embedding similarity, bypass de string matching. Fallback lexico sigue activo si VDB no disponible. | `shared/retrieval/lightrag/knowledge_graph.py` | Mitigado (DAM-1) |
-| DTm-71 | **Alta** | **`query_by_keywords` no hace graph traversal**: encuentra entidades por keyword pero solo devuelve sus docs directos (`source_doc_ids`), sin BFS. **Mitigado por DAM-2 (relationship VDB)**: `_resolve_relationships_via_vdb()` reemplaza `query_by_keywords` en high-level path. Fallback lexico sigue activo si VDB no disponible. | `shared/retrieval/lightrag/knowledge_graph.py` | Mitigado (DAM-2) |
-| DTm-72 | **Media** | **BFS scoring ciego a la relacion**: `hop_score = 1/(1+depth)` trata todas las aristas igual. Una relacion `directed_by` pesa igual que `same_year_as`. Para queries como "nationality of the director", la relacion `directed_by` deberia puntuar mas. Fix: ponderar hop score por token overlap entre relation type y keywords de la query. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
-| DTm-73 | **Alta** | **Grafo fragmentado (2831 componentes) limita bridging**: si los 2 gold docs de una query multi-hop generan entidades en componentes distintos (e.g. "Vlatko Gilić" vs "Gilić"), el BFS no puede cruzar. Fix: entity co-reference por token overlap de apellido, o aristas implicitas entre entidades co-ocurrentes en el mismo doc sin relacion explicita. | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
-| DTm-74 | Baja | **Scoring flat en `query_by_keywords`**: entidad match siempre puntua 1.0, relacion match siempre 0.5. **Mitigado por DAM-2**: relationship VDB usa cosine similarity + edge weight, reemplazando el scoring flat en high-level path. Solo afecta al fallback lexico. | `shared/retrieval/lightrag/knowledge_graph.py` | Mitigado (DAM-2) |
-| DTm-75 | **Alta** | **Bug: loader silently succeeds when all downloads fail**. Fix: `ValueError` si queries y corpus son `None`. [#2](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/2) | `sandbox_mteb/loader.py` | Resuelto |
-| DTm-76 | **Alta** | **Chunk selection desde grafo**. `_select_chunks_from_graph()` combina doc_ids de entity + relationship results. Implementado en Fase F (F.1). [#3](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/3) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
-| DTm-77 | **Media** | **Test gap: gleaning (DAM-6) tiene 0 tests**. `glean_from_doc_async()` implementada pero sin tests unitarios. Feature marcada como completada sin cobertura. [#4](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/4) | `tests/` | Abierto |
-| DTm-78 | **Media** | **Test gap: E2E pipeline solo cubre SIMPLE_VECTOR**. `test_pipeline_e2e.py` hardcodeado con SIMPLE_VECTOR. No hay validacion E2E de LIGHT_RAG. [#5](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/5) | `tests/test_pipeline_e2e.py` | Abierto |
-| DTm-79 | Baja | **Modos de query explicitos**: `LIGHTRAG_MODE` con 5 modos (hybrid, graph_primary, local, global, naive). Implementado en Fase F (F.4). [#6](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/6) | `shared/retrieval/lightrag/retriever.py` | Resuelto |
-| DTm-80 | Baja | **DAM-4 parcial: falta LLM synthesis para merge de descripciones**. Actual: concatenacion con ` \| `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) | `shared/retrieval/lightrag/knowledge_graph.py` | Abierto |
-| DTm-81 | Baja | ~~Import fantasma `shared.retrieval.hybrid.core`~~. Resuelto: modulo hybrid eliminado (DTm-83). [#8](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/8) | — | Resuelto |
-| DTm-82 | Baja | **23 errores mypy sin rastrear**: `union-attr` en evaluator.py, tipos incompatibles en vector_store.py, imports condicionales en reranker.py. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9) | Multiples archivos | Abierto |
-| DTm-83 | **Alta** | ~~Eliminar estrategia HYBRID_PLUS completa~~. Resuelto: eliminados ~2,570 LOC + 3 deps (spaCy, tantivy, rank-bm25). [#10](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/10) | — | Resuelto |
+| DTm-12 | Baja | Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente al LLM-judge. | `shared/metrics.py` | Aceptado |
+| DTm-13 | Baja | No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02 entre runs. | `shared/vector_store.py` | Aceptado |
 
 ### Deuda resuelta (referencia)
 
-DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59, DTm-66 a DTm-69 (35 issues). Ver historial git.
+DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59, DTm-65 a DTm-71, DTm-74 a DTm-76, DTm-79, DTm-81, DTm-83, DTm-24 (45 issues). Ver historial git.
 
 ## Plan de desarrollo por fases
 
@@ -479,18 +465,14 @@ retrieval, no como suplemento de vector search.
 |---|---|---|---|
 | G.1 Stats extractor resilientes | Snapshot/restore si KG build falla. | DTm-55 | Bajo |
 | G.2 Fingerprint robusto | Incluir `len(documents)` y config hash. | DTm-56 | Bajo |
-| G.3 `KG_KEYWORD_MAX_TOKENS=2048` | Validar si elimina retries. | DTm-65 | Trivial |
 | G.4 Dedup queries en batch keywords | Filtrar duplicadas pre-LLM. | DTm-58 | Bajo |
 | G.5 Reset stats automatico | `reset_stats()` al inicio de `extract_batch()`. | DTm-60 | Trivial |
 | G.6 Keyword size cap | Max 20 keywords/nivel. | DTm-61 | Trivial |
 | G.7 Entity normalization | Preservar guiones internos en `_normalize_name`. | DTm-57 | Bajo |
-| G.8 Fix bug loader | `load_dataset()` debe detectar cuando todas las descargas fallan. | DTm-75 | Trivial |
 | G.9 Tests gleaning | Tests unitarios para `glean_from_doc_async()`. | DTm-77 | Bajo |
 | G.10 E2E LIGHT_RAG | Test pipeline E2E con estrategia LIGHT_RAG (mocked). | DTm-78 | Medio |
 | G.11 LLM synthesis merge | Descripciones multi-doc sintetizadas via LLM (map-reduce). | DTm-80 | Medio |
-| ~~G.12 Import fantasma~~ | ~~Eliminar import `shared.retrieval.hybrid.core`~~. Resuelto (DTm-83). | DTm-81 | Resuelto |
-| G.13 Mypy cleanup | Resolver 23 errores mypy (union-attr, dict-item, etc.). | DTm-82 | Bajo |
-| ~~G.14 Eliminar HYBRID_PLUS~~ | ~~Eliminar estrategia, tests, deps~~. Resuelto: -2,570 LOC, -3 deps. | DTm-83 | Resuelto |
+| G.13 Mypy cleanup | Resolver errores mypy (union-attr, dict-item, etc.). | DTm-82 | Bajo |
 
 ### Resumen de dependencias entre fases
 
@@ -516,7 +498,7 @@ Fase G (deuda tecnica) ─── en paralelo, sin bloqueo ───────�
 ```
 
 Fases A-F implementadas (F.5 pendiente: runs comparativos).
-Fase G: DTm-55 a DTm-83 (bugs, test gaps, code quality). DTm-83 (HYBRID_PLUS) resuelto.
+Fase G: 10 tareas pendientes (bugs, test gaps, code quality). G.3/G.8/G.12/G.14 resueltos.
 
 ### Pendiente: Run comparativo post-VDBs
 
