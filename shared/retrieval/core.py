@@ -68,6 +68,13 @@ class RetrievalConfig:
     kg_gleaning_rounds: int = 0  # DAM-6: rounds de re-extraccion (0 = desactivado)
     lightrag_mode: str = "hybrid"  # F.4/DTm-79: "hybrid" (default), "graph_primary", "local", "global", "naive"
 
+    # DAM-4: LLM synthesis para merge de descripciones de entidades multi-doc.
+    # Cuando activado, entidades con descripciones concatenadas que excedan
+    # kg_synthesis_char_threshold se sintetizan via LLM map-reduce.
+    # Sin esto, se concatenan con " | " (rapido pero ruidoso).
+    kg_description_synthesis: bool = False  # A5.1: activar LLM synthesis
+    kg_synthesis_char_threshold: int = 200  # chars minimos para trigger LLM synthesis
+
     # DTm-62: Conditional fusion — previene que graph ruidoso destruya ranking vectorial
     kg_fusion_overlap_threshold: float = 0.3  # overlap ratio minimo para RRF completo
     kg_fusion_graph_only_cap: float = 0.2  # max fraccion de top_k que pueden ser graph-only docs
@@ -94,6 +101,8 @@ class RetrievalConfig:
             kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
             kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
             lightrag_mode=_env("LIGHTRAG_MODE", "hybrid"),
+            kg_description_synthesis=_env("KG_DESCRIPTION_SYNTHESIS", "false").lower() == "true",
+            kg_synthesis_char_threshold=_env_int("KG_SYNTHESIS_CHAR_THRESHOLD", 200),
             kg_fusion_overlap_threshold=_env_float("KG_FUSION_OVERLAP_THRESHOLD", 0.3),
             kg_fusion_graph_only_cap=_env_float("KG_FUSION_GRAPH_ONLY_CAP", 0.2),
         )

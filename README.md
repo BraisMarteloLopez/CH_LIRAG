@@ -116,6 +116,8 @@ KG_EXTRACTION_MAX_TOKENS=4096         # Max tokens para triplet extraction
 KG_BATCH_DOCS_PER_CALL=5             # Docs por LLM call en batch
 KG_MAX_ENTITIES=0                     # Cap entidades (0 = default interno 100K)
 KG_CACHE_DIR=                         # Directorio para persistir KG (vacio = sin cache)
+KG_DESCRIPTION_SYNTHESIS=false        # LLM synthesis para descripciones multi-doc (DAM-4)
+KG_SYNTHESIS_CHAR_THRESHOLD=200       # Chars minimos para trigger LLM synthesis
 
 # Reranker (opcional)
 RERANKER_ENABLED=false
