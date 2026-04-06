@@ -470,6 +470,9 @@ class LightRAGRetriever(BaseRetriever):
             f"({len(lc_docs)} relaciones indexadas)"
         )
 
+    # V.6: Max cosine distance for relationship matches (same scale as entity VDB).
+    _RELATIONSHIP_VDB_MAX_DISTANCE = 0.8
+
     def _resolve_relationships_via_vdb(
         self,
         keywords: List[str],
@@ -479,6 +482,9 @@ class LightRAGRetriever(BaseRetriever):
 
         Busca relaciones semanticamente similares a los keywords y retorna
         los doc_ids asociados con scores ponderados por edge weight (DAM-2, DAM-5).
+
+        V.6: Cosine distance [0, 2] → similarity [1.0, 0.0] via (1 - d/2).
+        Filtra por threshold antes de acumular scores.
 
         Returns:
             Lista de (doc_id, score) ordenada por score desc.
@@ -496,12 +502,14 @@ class LightRAGRetriever(BaseRetriever):
                 keyword, k=top_k,
             )
             for doc, distance in results:
+                # V.6: filter by cosine distance threshold
+                if distance > self._RELATIONSHIP_VDB_MAX_DISTANCE:
+                    continue
                 doc_id = doc.metadata.get("doc_id", "")
                 weight = doc.metadata.get("weight", 1)
                 if doc_id:
-                    # ChromaDB distance (lower = more similar)
-                    # Convert to similarity score and weight by edge frequency
-                    similarity = max(0.0, 1.0 - distance) if distance >= 0 else 1.0
+                    # V.6: cosine distance [0,2] -> similarity [1.0, 0.0]
+                    similarity = max(0.0, 1.0 - distance / 2.0)
                     doc_scores[doc_id] += similarity * weight
 
         return doc_scores.most_common(top_k)
