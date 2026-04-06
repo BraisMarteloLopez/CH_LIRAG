@@ -154,31 +154,7 @@ Limitacion: 10 pasajes/query (2 gold + 8 distractores). No comparable con benchm
 
 ## Deuda tecnica
 
-Ver `CLAUDE.md` para la lista priorizada completa. Resumen:
-
-- **3 issues alta**: fusion KG degrada ranking (DTm-62), entity cap FIFO (DTm-63), grafo fragmentado (DTm-73)
-- **7 issues media**: test gaps, score normalization, stats resilience, LLM synthesis
-- **7 issues baja**: mypy, entity normalization, dedup, keyword validation
-
-**Proximo paso critico:** Run comparativo F.5 (SIMPLE_VECTOR vs LIGHT_RAG post-VDBs) para validar Fases C-F.
-
-<details>
-<summary>Deuda arquitectonica (DAM-1 a DAM-8 vs LightRAG original)</summary>
-
-Analisis comparativo con [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG).
-
-| ID | Divergencia | Estado |
-|---|---|---|
-| DAM-1 | Entity VDB (cosine similarity reemplaza string matching) | Implementado |
-| DAM-2 | Relationship VDB (semantic search reemplaza token matching) | Implementado |
-| DAM-3 | Grafo como retriever primario (modo `graph_primary`) | Implementado |
-| DAM-4 | Merging descripciones (concatenacion, sin LLM synthesis) | Parcial |
-| DAM-5 | Edge weights (docs unicos por arista) | Implementado |
-| DAM-6 | Gleaning (re-extraccion configurable) | Implementado |
-| DAM-7 | BFS 1-hop (como el original) | Implementado |
-| DAM-8 | Contexto estructurado JSON para generacion | Implementado |
-
-</details>
+Ver [`CLAUDE.md`](CLAUDE.md) para la lista priorizada completa y guia de desarrollo.
 
 <details>
 <summary>Historial de desarrollo</summary>
