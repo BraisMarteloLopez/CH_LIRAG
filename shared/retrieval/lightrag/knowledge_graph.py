@@ -211,8 +211,8 @@ class KnowledgeGraph:
 
     # Articulos iniciales en ingles (DTm-18).
     _LEADING_ARTICLES = ("the ", "a ", "an ")
-    # Patron para eliminar puntuacion excepto guiones internos (DTm-18).
-    _RE_NON_ALNUM = re.compile(r"[^\w\s-]")
+    # Patron para eliminar puntuacion excepto guiones y apostrofes internos (DTm-18, G.7/DTm-57).
+    _RE_NON_ALNUM = re.compile(r"[^\w\s\-']")
 
     def _normalize_name(self, name: str) -> str:
         """Normalizacion de nombres de entidad (DTm-18)."""

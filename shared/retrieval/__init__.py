@@ -6,8 +6,13 @@ Estrategias soportadas:
   - LIGHT_RAG: Vector + Knowledge Graph dual-level (LLM triplet extraction)
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from shared.llm import AsyncLLMService
 
 from shared.types import EmbeddingModelProtocol
 
@@ -28,7 +33,7 @@ def get_retriever(
     embedding_model: EmbeddingModelProtocol,
     collection_name: Optional[str] = None,
     embedding_batch_size: int = 0,
-    llm_service: Optional[object] = None,
+    llm_service: Optional["AsyncLLMService"] = None,
 ) -> BaseRetriever:
     """
     Factory para obtener un retriever segun la estrategia en config.

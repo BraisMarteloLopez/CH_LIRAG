@@ -466,6 +466,7 @@ class MTEBEvaluator:
                 save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
 
         # Log summary
+        assert self._retrieval_executor is not None  # initialized in _init_components
         if self._retrieval_executor.strategy_mismatches > 0:
             logger.error(
                 f"  STRATEGY MISMATCH en {self._retrieval_executor.strategy_mismatches}/{n} queries: "

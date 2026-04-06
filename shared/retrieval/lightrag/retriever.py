@@ -162,6 +162,8 @@ class LightRAGRetriever(BaseRetriever):
 
         # Paso 2: Knowledge graph (si disponible)
         if self._kg and self._extractor:
+            # G.1/DTm-55: snapshot stats antes de build para restaurar si falla
+            stats_snapshot = self._extractor.get_stats()
             try:
                 cache_path = self._resolve_cache_path(documents)
                 if cache_path and cache_path.exists():
@@ -184,6 +186,11 @@ class LightRAGRetriever(BaseRetriever):
                     f"Continuando solo con vector search."
                 )
                 self._has_graph = False
+                # G.1/DTm-55: restaurar stats previos al fallo
+                if self._extractor:
+                    self._extractor.reset_stats()
+                    for k, v in stats_snapshot.items():
+                        self._extractor._stats[k] = v
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         self._is_indexed = True
@@ -558,21 +565,24 @@ class LightRAGRetriever(BaseRetriever):
     def _corpus_fingerprint(
         documents: List[Dict[str, Any]],
         max_text_chars: int = 0,
+        kg_max_entities: int = 0,
     ) -> str:
-        """Hash determinista del corpus para invalidar cache si cambia.
+        """Hash determinista del corpus + config para invalidar cache si cambia.
 
-        Incluye max_text_chars en el hash para que cambios en
-        KG_MAX_TEXT_CHARS invaliden el cache (el KG resultante difiere).
+        Incluye max_text_chars y kg_max_entities en el hash para que
+        cambios en config KG invaliden el cache (G.2/DTm-56).
         """
         h = hashlib.sha256()
         for doc in sorted(documents, key=lambda d: d.get("doc_id", "")):
             h.update(doc.get("doc_id", "").encode())
             content = doc.get("content", "")
             h.update(content.encode())
-        h.update(str(len(documents)).encode())
-        # max_text_chars afecta cuanto texto ve el LLM para extraccion
+        h.update(f"n={len(documents)}".encode())
+        # Config que afecta el KG resultante (G.2/DTm-56)
         if max_text_chars:
             h.update(f"mtc={max_text_chars}".encode())
+        if kg_max_entities:
+            h.update(f"me={kg_max_entities}".encode())
         return h.hexdigest()[:16]
 
     def _resolve_cache_path(
@@ -582,7 +592,9 @@ class LightRAGRetriever(BaseRetriever):
         if not self._kg_cache_dir:
             return None
         fingerprint = self._corpus_fingerprint(
-            documents, max_text_chars=self._kg_max_text_chars,
+            documents,
+            max_text_chars=self._kg_max_text_chars,
+            kg_max_entities=self._kg_max_entities,
         )
         return self._kg_cache_dir / f"kg_cache_{fingerprint}.json"
 

@@ -76,6 +76,7 @@ class RetrievalExecutor:
             configured_strategy = self._config.retrieval.strategy
 
             # Seleccionar metodo de retrieval
+            assert self._retriever is not None  # guarded by early return above
             def _do_retrieve(top_k: int):
                 if query_vector is not None:
                     return self._retriever.retrieve_by_vector(

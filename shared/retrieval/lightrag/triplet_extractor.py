@@ -563,6 +563,8 @@ class TripletExtractor:
         if batch_docs_per_call <= 0:
             batch_docs_per_call = self._DEFAULT_BATCH_DOCS_PER_CALL
 
+        # G.5/DTm-60: reset stats al inicio para evitar acumulacion entre llamadas
+        self.reset_stats()
         t0 = time.perf_counter()
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation]]] = {}
 
@@ -664,8 +666,9 @@ class TripletExtractor:
                     f"(respuesta comenzaba con: {text[:80]!r})"
                 )
 
-            low = [str(k) for k in data.get("low_level", []) if k]
-            high = [str(k) for k in data.get("high_level", []) if k]
+            _MAX_KEYWORDS_PER_LEVEL = 20  # G.6/DTm-61: cap para respuestas patologicas
+            low = [str(k) for k in data.get("low_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
+            high = [str(k) for k in data.get("high_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
             return low, high
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error parseando keywords JSON: {e}")
@@ -714,6 +717,21 @@ class TripletExtractor:
         # DTm-48: list comprehension (no mutable default sharing)
         results: List[Tuple[List[str], List[str]]] = [([], []) for _ in range(len(queries))]
 
+        # G.4/DTm-58: dedup queries identicas para evitar LLM calls duplicadas
+        unique_queries: Dict[str, int] = {}  # query_text -> first index
+        dedup_map: Dict[int, int] = {}  # idx -> first_idx (for duplicates)
+        for i, q in enumerate(queries):
+            if q in unique_queries:
+                dedup_map[i] = unique_queries[q]
+            else:
+                unique_queries[q] = i
+        deduped_count = len(queries) - len(unique_queries)
+        if deduped_count > 0:
+            logger.debug(f"Keyword batch: {deduped_count} queries duplicadas eliminadas")
+
+        # Solo extraer keywords para queries unicas
+        unique_indices = sorted(unique_queries.values())
+
         async def _extract_one(
             idx: int, query: str,
         ) -> Tuple[int, List[str], List[str]]:
@@ -721,10 +739,11 @@ class TripletExtractor:
             return (idx, low, high)
 
         batch_sz = self._batch_size
-        for start in range(0, len(queries), batch_sz):
+        for start in range(0, len(unique_indices), batch_sz):
+            chunk = unique_indices[start:start + batch_sz]
             chunk_tasks = [
-                _extract_one(i, q)
-                for i, q in enumerate(queries[start:start + batch_sz], start=start)
+                _extract_one(i, queries[i])
+                for i in chunk
             ]
             chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
             for r in chunk_results:
@@ -734,10 +753,14 @@ class TripletExtractor:
                 idx, low, high = r
                 results[idx] = (low, high)
 
+        # G.4: copiar resultados a queries duplicadas
+        for dup_idx, src_idx in dedup_map.items():
+            results[dup_idx] = results[src_idx]
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             f"TripletExtractor: query keywords batch {len(queries)} queries "
-            f"en {elapsed_ms:.0f}ms"
+            f"({len(unique_queries)} unicas) en {elapsed_ms:.0f}ms"
         )
 
         return results
