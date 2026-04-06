@@ -68,7 +68,7 @@ class RetrievalConfig:
     max_graph_expansion: int = 30
 
     # Knowledge graph (LIGHT_RAG)
-    kg_max_hops: int = 2
+    kg_max_hops: int = 1  # DAM-7: 1-hop como el original, configurable via KG_MAX_HOPS
     kg_max_text_chars: int = 3000
     kg_max_entities: int = 0
     kg_graph_weight: float = 0.3
@@ -97,7 +97,7 @@ class RetrievalConfig:
             entity_min_shared=_env_int("ENTITY_MIN_SHARED", 1),
             entity_max_doc_fraction=_env_float("ENTITY_MAX_DOC_FRACTION", 0.05),
             max_graph_expansion=_env_int("MAX_GRAPH_EXPANSION", 30),
-            kg_max_hops=_env_int("KG_MAX_HOPS", 2),
+            kg_max_hops=_env_int("KG_MAX_HOPS", 1),
             kg_max_text_chars=_env_int("KG_MAX_TEXT_CHARS", 3000),
             kg_max_entities=_env_int("KG_MAX_ENTITIES", 0),
             kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),

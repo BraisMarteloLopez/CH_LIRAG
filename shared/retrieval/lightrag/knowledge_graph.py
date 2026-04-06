@@ -127,6 +127,10 @@ class KnowledgeGraph:
     def num_docs(self) -> int:
         return len(self._doc_to_entities)
 
+    def get_all_entities(self) -> Dict[str, "KGEntity"]:
+        """Retorna dict de entity_name -> KGEntity para todas las entidades."""
+        return self._entities
+
     # Articulos iniciales en ingles (DTm-18).
     _LEADING_ARTICLES = ("the ", "a ", "an ")
     # Patron para eliminar puntuacion excepto guiones internos (DTm-18).
@@ -398,18 +402,30 @@ class KnowledgeGraph:
         entity_names: List[str],
         max_hops: int = 2,
         max_docs: int = 20,
+        pre_resolved: Optional[List[str]] = None,
     ) -> List[Tuple[str, float]]:
         """Low-level retrieval: busca doc_ids conectados a entidades dadas.
 
         Traversal BFS hasta max_hops desde cada entidad query.
         Scoring: docs mas cercanos (menos hops) reciben score mas alto.
 
-        Usa _resolve_entity_names (DTm-70) para fuzzy matching cuando
-        el nombre exacto no existe en el KG.
+        Args:
+            entity_names: Keywords de entidad de la query.
+            max_hops: Profundidad maxima de BFS.
+            max_docs: Maximo de docs a retornar.
+            pre_resolved: Si proporcionado, entity names ya resueltos por
+                VDB similarity search (DAM-1). Salta _resolve_entity_names.
         """
         doc_scores: Counter = Counter()
 
-        resolved = self._resolve_entity_names(entity_names)
+        if pre_resolved is not None:
+            # DAM-1: entidades resueltas externamente via entity VDB
+            resolved = [
+                (name, 1.0) for name in pre_resolved
+                if name in self._entities and self._has_node(name)
+            ]
+        else:
+            resolved = self._resolve_entity_names(entity_names)
 
         for norm, confidence in resolved:
             # BFS con distancia

@@ -49,6 +49,7 @@ def _make_lightrag(has_graph=True):
     retriever._QUERY_CACHE_MAX_SIZE = 10_000
     retriever._kg_fusion_method = "rrf"
     retriever._kg_rrf_k = 60
+    retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
     retriever._vector_retriever = MagicMock()
     # Vector retriever returns 20 docs
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(

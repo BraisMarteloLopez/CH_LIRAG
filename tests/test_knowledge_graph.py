@@ -703,3 +703,54 @@ def test_query_entities_fuzzy_confidence_scales_score():
         exact_score = dict(results_exact).get("doc1", 0)
         fuzzy_score = dict(results_fuzzy).get("doc1", 0)
         assert fuzzy_score <= exact_score
+
+
+# =============================================================================
+# query_entities con pre_resolved (DAM-1)
+# =============================================================================
+
+def test_query_entities_pre_resolved_skips_string_matching():
+    """Con pre_resolved, query_entities salta _resolve_entity_names."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="friendship", source_doc_id="doc1"),
+    ])
+    kg.build_keyword_indices()
+
+    # Pre-resolved con nombre normalizado que existe
+    results = kg.query_entities(
+        ["irrelevant"], max_hops=1, max_docs=10,
+        pre_resolved=["alice"],
+    )
+    doc_ids = [d for d, _ in results]
+    assert "doc1" in doc_ids
+
+
+def test_query_entities_pre_resolved_filters_unknown_entities():
+    """pre_resolved filtra entidades que no existen en el KG."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="friendship", source_doc_id="doc1"),
+    ])
+    kg.build_keyword_indices()
+
+    results = kg.query_entities(
+        [], max_hops=1, max_docs=10,
+        pre_resolved=["nonexistent_entity"],
+    )
+    assert results == []
+
+
+def test_get_all_entities_returns_dict():
+    """get_all_entities retorna dict de entidades."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    entities = kg.get_all_entities()
+    assert "alice" in entities
+    assert "bob" in entities
+    assert entities["alice"].name == "alice"

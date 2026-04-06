@@ -119,6 +119,11 @@ class LightRAGRetriever(BaseRetriever):
                 f"Fallback a SimpleVector."
             )
 
+        # Entity VDB (DAM-1): ChromaDB collection para resolver entidades
+        # por embedding similarity en vez de string matching.
+        self._entities_vdb: Any = None  # ChromaVectorStore, lazy init
+        self._embedding_model = embedding_model
+
         # Cache de keywords de queries con limite (DTm-47) y lock (DTm-51)
         self._QUERY_CACHE_MAX_SIZE = 10_000
         self._query_keywords_cache: OrderedDict[str, Tuple[List[str], List[str]]] = OrderedDict()
@@ -162,6 +167,8 @@ class LightRAGRetriever(BaseRetriever):
                         f"LightRAGRetriever: KG cargado desde cache "
                         f"({self._kg.num_entities} entidades)"
                     )
+                    # DAM-1: rebuild entity VDB from cached KG
+                    self._build_entities_vdb()
                 else:
                     self._build_knowledge_graph(documents)
                     if cache_path:
@@ -238,11 +245,109 @@ class LightRAGRetriever(BaseRetriever):
         idx_ms = (time.perf_counter() - t_idx) * 1000
         logger.info(f"LightRAGRetriever: keyword indices construidos en {idx_ms:.0f}ms")
 
+        # DAM-1: construir entity VDB (ChromaDB con embeddings de entidades)
+        self._build_entities_vdb()
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             f"LightRAGRetriever: KG construido en {elapsed_ms:.0f}ms. "
             f"{total_triplets} tripletas de {len(documents)} docs."
         )
+
+    def _build_entities_vdb(self) -> None:
+        """Construye entity VDB: ChromaDB collection con embeddings de entidades.
+
+        Cada entidad se indexa como "entity_name: description" para que
+        similarity search encuentre entidades semanticamente relevantes
+        a la query, sin depender de string matching (DAM-1).
+
+        Referencia: entities_vdb.query() en HKUDS/LightRAG operate.py.
+        """
+        if self._kg is None:
+            return
+
+        entities = self._kg.get_all_entities()
+        if not entities:
+            logger.warning("LightRAGRetriever: KG sin entidades, entity VDB no construido")
+            return
+
+        t0 = time.perf_counter()
+
+        from shared.vector_store import ChromaVectorStore
+        from langchain_core.documents import Document
+
+        # Collection name: {base}_entities para no colisionar con docs
+        base_name = self._vector_retriever._vector_store.collection_name
+        entity_collection_name = f"{base_name}_entities"
+
+        # Limpiar VDB anterior si existe
+        if self._entities_vdb is not None:
+            try:
+                self._entities_vdb.delete_all_documents()
+            except Exception:
+                pass
+
+        self._entities_vdb = ChromaVectorStore(
+            config={
+                "CHROMA_COLLECTION_NAME": entity_collection_name,
+                "EMBEDDING_BATCH_SIZE": 50,
+            },
+            embedding_model=self._embedding_model,
+        )
+
+        # Indexar entidades como "name: description"
+        lc_docs = []
+        for entity_name, entity in entities.items():
+            desc = entity.description or ""
+            text = f"{entity.name}: {desc}" if desc else entity.name
+            lc_docs.append(Document(
+                page_content=text,
+                metadata={
+                    "entity_name": entity_name,
+                    "entity_type": entity.entity_type,
+                },
+            ))
+
+        self._entities_vdb.add_documents(lc_docs)
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"LightRAGRetriever: entity VDB construido en {elapsed_ms:.0f}ms "
+            f"({len(lc_docs)} entidades indexadas)"
+        )
+
+    def _resolve_entities_via_vdb(
+        self,
+        keywords: List[str],
+        top_k: int = 10,
+    ) -> List[str]:
+        """Resuelve keywords de query a entity names via embedding similarity.
+
+        Reemplaza _resolve_entity_names (string matching) con semantic search
+        contra entities_vdb (DAM-1).
+
+        Returns:
+            Lista de entity names (normalizados) encontrados en el KG.
+        """
+        if not self._entities_vdb or not keywords:
+            return []
+
+        resolved_names: List[str] = []
+        seen: set = set()
+
+        for keyword in keywords:
+            if not keyword.strip():
+                continue
+            results = self._entities_vdb.similarity_search_with_score(
+                keyword, k=top_k,
+            )
+            for doc, score in results:
+                entity_name = doc.metadata.get("entity_name", "")
+                if entity_name and entity_name not in seen:
+                    seen.add(entity_name)
+                    resolved_names.append(entity_name)
+
+        return resolved_names
 
     @staticmethod
     def _corpus_fingerprint(
@@ -363,10 +468,16 @@ class LightRAGRetriever(BaseRetriever):
 
         # Low-level: entidades especificas
         if low_level:
+            # DAM-1: resolver entidades via VDB (semantic) si disponible,
+            # fallback a string matching si no hay VDB.
+            pre_resolved = None
+            if self._entities_vdb is not None:
+                pre_resolved = self._resolve_entities_via_vdb(low_level)
             entity_results = self._kg.query_entities(
                 low_level,
                 max_hops=self._kg_max_hops,
                 max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
+                pre_resolved=pre_resolved,
             )
             for doc_id, score in entity_results:
                 graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
@@ -556,11 +667,17 @@ class LightRAGRetriever(BaseRetriever):
         self._vector_retriever.clear_index()
         if self._kg:
             self._kg = KnowledgeGraph(max_entities=self._kg_max_entities)
+        if self._entities_vdb is not None:
+            try:
+                self._entities_vdb.delete_all_documents()
+            except Exception:
+                pass
+            self._entities_vdb = None
         self._has_graph = False
         with self._cache_lock:
             self._query_keywords_cache.clear()
         self._is_indexed = False
-        logger.debug("LightRAGRetriever: indice y grafo limpiados")
+        logger.debug("LightRAGRetriever: indice, grafo y entity VDB limpiados")
 
 
 __all__ = [

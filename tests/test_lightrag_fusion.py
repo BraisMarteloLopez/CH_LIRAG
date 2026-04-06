@@ -56,6 +56,7 @@ def _make_lightrag(
     retriever._vector_retriever = vector_retriever or MagicMock()
     retriever._kg_fusion_method = fusion_method
     retriever._kg_rrf_k = rrf_k
+    retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
     return retriever
 
 
@@ -381,3 +382,74 @@ def test_corpus_fingerprint_changes_with_max_text_chars():
     assert fp_default != fp_3000
     # Distintos valores deben producir fingerprints distintos
     assert fp_3000 != fp_5000
+
+
+# =============================================================================
+# Entity VDB (DAM-1)
+# =============================================================================
+
+def test_fuse_with_entity_vdb_resolves_via_similarity():
+    """Con entity VDB activo, low-level usa _resolve_entities_via_vdb."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "barack obama", "entity_type": "PERSON"}
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+
+    r = _make_lightrag()
+    r._entities_vdb = mock_vdb
+
+    # KG returns docs for the resolved entity
+    r._kg.query_entities.return_value = [("doc_1", 1.0)]
+    r._kg.query_by_keywords.return_value = []
+    r._extractor.extract_query_keywords.return_value = (["Obama"], ["politics"])
+    r._vector_retriever.get_documents_by_ids.return_value = {"doc_1": "content1"}
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._fuse_with_graph("Who is Obama?", vr, top_k=5)
+
+    # VDB was called with the low-level keyword
+    mock_vdb.similarity_search_with_score.assert_called_once_with("Obama", k=10)
+    # query_entities was called with pre_resolved
+    r._kg.query_entities.assert_called_once()
+    call_kwargs = r._kg.query_entities.call_args
+    assert call_kwargs[1].get("pre_resolved") == ["barack obama"]
+
+
+def test_fuse_without_entity_vdb_falls_back_to_string_matching():
+    """Sin entity VDB, low-level usa _resolve_entity_names (string matching)."""
+    r = _make_lightrag()
+    assert r._entities_vdb is None
+
+    r._kg.query_entities.return_value = [("doc_1", 0.8)]
+    r._kg.query_by_keywords.return_value = []
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    r._fuse_with_graph("alice", vr, top_k=5)
+
+    # query_entities called without pre_resolved (None)
+    call_kwargs = r._kg.query_entities.call_args
+    assert call_kwargs[1].get("pre_resolved") is None
+
+
+def test_resolve_entities_via_vdb_deduplicates():
+    """_resolve_entities_via_vdb no retorna entidades duplicadas."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "entity_a"}
+    # Same entity returned for both keywords
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+
+    r = _make_lightrag()
+    r._entities_vdb = mock_vdb
+
+    result = r._resolve_entities_via_vdb(["keyword1", "keyword2"], top_k=5)
+    assert result == ["entity_a"]  # deduplicated
+
+
+def test_resolve_entities_via_vdb_empty_keywords():
+    """_resolve_entities_via_vdb con keywords vacios retorna []."""
+    r = _make_lightrag()
+    r._entities_vdb = MagicMock()
+    assert r._resolve_entities_via_vdb([]) == []
+    assert r._resolve_entities_via_vdb(["", "  "]) == []
