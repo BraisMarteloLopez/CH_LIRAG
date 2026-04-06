@@ -417,7 +417,13 @@ explican la degradacion de ranking observada (MRR 0.52 vs ~0.86 con vector puro)
 
 ### Deuda resuelta (referencia)
 
-DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59, DTm-65 a DTm-71, DTm-74 a DTm-76, DTm-79, DTm-81, DTm-83, DTm-24 (45 issues). Ver historial git.
+Dos series de numeracion. Ver historial git para detalles de cada fix.
+
+**Serie DT (bugs originales):** DT-1 a DT-9 (9 issues). Correcciones directas en codigo: logging estructurado (DT-3), protocolos centralizados (DT-4), trazabilidad pre-rerank (DT-5), faithfulness context (DT-6), rerank status/sort (DT-7, DT-8), regex fallback (DT-9).
+
+**Serie DTm (refactor/mejoras):** DTm-1 a DTm-11, DTm-14 a DTm-38, DTm-45 a DTm-54, DTm-59, DTm-65 a DTm-71, DTm-74 a DTm-76, DTm-79, DTm-81, DTm-83, DTm-24 (56 issues). Incluye loader fix (DTm-1), vector store API (DTm-2), conftest mocks (DTm-4), generation error handling (DTm-5), embedding retry (DTm-6), run_id determinista (DTm-10), entity/relationship VDBs (DTm-70/71/74), chunk selection (DTm-76), HYBRID_PLUS eliminado (DTm-83).
+
+**Nota:** DTm-39 a DTm-44 no se asignaron (gap en numeracion).
 
 ## Plan de desarrollo por fases
 
