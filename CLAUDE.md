@@ -129,7 +129,8 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 | Tests unitarios | 393 en 33 archivos |
 | Tests integracion | 19 en 3 archivos |
 | Ratio test/produccion | 0.97x (~8,670 / ~8,940 LOC) |
-| Modulos cubiertos | 31/31 (100%) |
+| Modulos con tests dedicados | 21/23 (91%) |
+| Modulos sin tests | structured_logging.py (bajo riesgo), preflight.py (requiere infra) |
 | Tests con assertions | 100% |
 | Mocks a nivel funcion | 100% |
 
