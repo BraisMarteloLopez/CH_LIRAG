@@ -37,7 +37,7 @@ sandbox_mteb/                  # Pipeline de evaluacion (~2,750 LOC)
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (~7,700 LOC, 205+ tests)
+tests/                         # pytest (~8,200 LOC, 352 unit tests)
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
   test_*.py                    # 30 unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
@@ -83,37 +83,9 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 **Alineacion con original (DAM-1 a DAM-8)**: Entity VDB, Relationship VDB, edge weights, gleaning, BFS 1-hop, graph_primary mode, contexto estructurado — todo implementado. DAM-4 parcial (concatenacion sin LLM synthesis). Pendiente validacion con run comparativo (F.5).
 
-## Deuda tecnica vigente (priorizada)
+## Deuda tecnica vigente
 
-### Alta — afectan calidad de resultados
-(sin items pendientes)
-
-### Media — mejoras funcionales
-- **DTm-64**: Normalizacion scores incomparable entre canales vector/graph. Mitigado por DTm-62 (conditional fusion) + RRF. Pendiente validacion F.5
-- **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
-
-### Baja — code quality
-(sin items pendientes)
-- **DTm-12**: Sesgo LLM-judge en faithfulness para respuestas cortas. Inherente. Aceptado
-- **DTm-13**: No-determinismo HNSW: ChromaDB no expone `hnsw:random_seed`. ±0.02. Aceptado
-
-### Resueltos en esta sesion
-- **DTm-55** (G.1): Stats snapshot/restore si KG build falla
-- **DTm-56** (G.2): Fingerprint incluye `kg_max_entities` en hash
-- **DTm-57** (G.7): Entity normalization preserva apostrofes (`O'Brien`)
-- **DTm-58** (G.4): Dedup queries identicas en batch keyword extraction
-- **DTm-60** (G.5): `reset_stats()` auto al inicio de `extract_batch_async()`
-- **DTm-61** (G.6): Keyword size cap 20/nivel
-- **DTm-77** (I.5): Tests gleaning — 6 tests en `test_gleaning.py`
-- **DTm-78** (I.4): Test E2E LIGHT_RAG en `test_pipeline_e2e.py`
-- **DTm-83**: HYBRID_PLUS eliminado (-2,570 LOC, -3 deps)
-- **Fase H**: Bare excepts con logging, dead code, validacion sub-configs
-- **DTm-62**: Conditional fusion en `_fuse_with_graph()` — overlap gate previene graph ruidoso destruir ranking vectorial. Config: `KG_FUSION_OVERLAP_THRESHOLD`, `KG_FUSION_GRAPH_ONLY_CAP`
-- **Tests audit**: assert faltante en test_evaluator.py, ClientError mock roto en test_loader.py. Suite: 340 passed, 0 failed
-- **DTm-63**: Eviction por importancia en entity cap — reemplaza FIFO silencioso. Entidades con 1 doc y degree<=1 se evictan para dar paso a nuevas. `_find_eviction_candidate()`, `_evict_entity()` en `knowledge_graph.py`
-- **DTm-73**: Co-occurrence bridging reduce fragmentacion del grafo. `build_co_occurrence_edges()` conecta entidades que co-ocurren en un mismo doc. Cap 10 pares/doc. Se ejecuta en post-build
-- **DTm-72**: BFS weighted por edge strength. `_get_neighbors_weighted()` usa `log(1 + unique_docs)` como factor. Co-occurrence edges (w=1) puntuan ~0.69x, LLM edges fuertes (w=10) ~2.4x
-- **DTm-82**: 22 errores mypy corregidos. Counter→Dict[str,float], variable shadowing, type narrowing en closures, unused type-ignore cleanup. [#9](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/9)
+- **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. Requiere decision sobre coste/latencia. Diferido a post-F.5. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
 
 ## Bare excepts aceptados (no criticos)
 
@@ -128,9 +100,9 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor |
 |---|---|
-| Tests unitarios | 340 en 30 archivos |
+| Tests unitarios | 352 en 30 archivos |
 | Tests integracion | 19 en 3 archivos |
-| Ratio test/produccion | 0.86x (~7,700 / ~8,940 LOC) |
+| mypy | 0 errores (27 source files) |
 | Modulos cubiertos | 29/31 (93%) |
 | Tests con assertions | 100% |
 | Mocks a nivel funcion | 100% |
@@ -148,7 +120,7 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ## Proximos pasos
 
-### Pendiente: Run comparativo F.5 (requiere infra NIM + MinIO)
+### Run comparativo F.5 (requiere infra NIM + MinIO)
 
 | Tarea | Descripcion |
 |---|---|
@@ -157,8 +129,9 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 | F.5c | Run LIGHT_RAG graph_primary |
 | F.5d | Analisis comparativo: MRR, Hit@5, Recall |
 
-**Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs 0.52 pre-VDBs). Si no, revisar DTm-62/DTm-64.
+**Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs 0.52 pre-VDBs). Resultados de F.5 determinan si DTm-80 (LLM synthesis) es necesario.
 
-### Pendiente: DTm-80 — LLM synthesis para merge de descripciones (DAM-4 completo)
+### Limitaciones conocidas (no accionables)
 
-Feature que cambia logica de negocio. Actual: concatenacion con ` | `. Original: LLM map-reduce cuando tokens exceden umbral. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
+- Sesgo LLM-judge en faithfulness para respuestas cortas (inherente)
+- No-determinismo HNSW ±0.02 (ChromaDB no expone `hnsw:random_seed`)
