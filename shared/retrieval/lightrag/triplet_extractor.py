@@ -70,6 +70,22 @@ Rules:
 Return JSON in this exact format (one entry per document, preserve doc_id):
 {{"documents": [{{"doc_id": "id1", "entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}]}}]}}"""
 
+GLEANING_CONTINUATION_PROMPT = """Many entities and relationships were missed in the previous extraction.
+Review the text again and extract ADDITIONAL entities and relationships that were not captured before.
+
+Previously extracted entities: {previous_entities}
+
+Focus on:
+- Less prominent entities (secondary characters, places, dates)
+- Implicit relationships
+- Entities mentioned indirectly
+
+Return ONLY new entities and relationships not in the previous list.
+Same JSON format as before.
+
+Text:
+{text}"""
+
 QUERY_KEYWORDS_SYSTEM = """You are a query analysis system for knowledge graph retrieval.
 Extract specific entities and abstract themes from the query.
 Do NOT reason or think step-by-step. Do NOT use <think> tags.
@@ -295,6 +311,41 @@ class TripletExtractor:
     ) -> Tuple[List[KGEntity], List[KGRelation]]:
         """Wrapper sincrono de extract_from_doc_async."""
         return run_sync(self.extract_from_doc_async(doc_id, text))
+
+    async def glean_from_doc_async(
+        self,
+        doc_id: str,
+        text: str,
+        previous_entities: List[KGEntity],
+    ) -> Tuple[List[KGEntity], List[KGRelation]]:
+        """Gleaning: re-extraccion para capturar entidades perdidas (DAM-6).
+
+        Envia el texto con un prompt de continuacion que lista las entidades
+        ya extraidas y pide al LLM que busque las que faltan.
+
+        Referencia: gleaning loop en HKUDS/LightRAG operate.py.
+        """
+        if not text.strip() or not previous_entities:
+            return [], []
+
+        truncated = text[:self._max_text_chars]
+        prev_names = ", ".join(e.name for e in previous_entities[:20])
+        prompt = GLEANING_CONTINUATION_PROMPT.format(
+            text=truncated,
+            previous_entities=prev_names,
+        )
+
+        try:
+            raw = await self._llm.invoke_async(
+                prompt,
+                system_prompt=TRIPLET_EXTRACTION_SYSTEM,
+                max_tokens=self._extraction_max_tokens,
+            )
+            entities, relations = self._parse_extraction_json(raw, doc_id)
+            return entities, relations
+        except Exception as e:
+            logger.debug(f"Gleaning fallo para {doc_id}: {e}")
+            return [], []
 
     # -------------------------------------------------------------------------
     # MULTI-DOC BATCH EXTRACTION

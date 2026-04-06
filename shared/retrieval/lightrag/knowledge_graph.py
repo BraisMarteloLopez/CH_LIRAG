@@ -59,8 +59,9 @@ class KGEntity:
     """Entidad extraida por LLM."""
     name: str                       # nombre normalizado
     entity_type: str                # PERSON, ORG, CONCEPT, etc.
-    description: str = ""           # descripcion del LLM
+    description: str = ""           # descripcion consolidada (DAM-4)
     source_doc_ids: Set[str] = field(default_factory=set)
+    _descriptions: List[str] = field(default_factory=list)  # DAM-4: all descriptions
 
 
 @dataclass
@@ -87,7 +88,7 @@ class KnowledgeGraph:
     """
 
     # Cap por defecto de entidades. 0 = sin limite.
-    _DEFAULT_MAX_ENTITIES = 50_000
+    _DEFAULT_MAX_ENTITIES = 100_000  # DTm-63: subido de 50K a 100K
 
     def __init__(self, max_entities: int = 0) -> None:
         if not HAS_IGRAPH:
@@ -346,13 +347,19 @@ class KnowledgeGraph:
     def add_entity_metadata(
         self, name: str, entity_type: str, description: str
     ) -> None:
-        """Actualiza metadata de una entidad (tipo, descripcion del LLM)."""
+        """Actualiza metadata de una entidad (tipo, descripcion del LLM).
+
+        DAM-4: Acumula descripciones de multiples docs en _descriptions.
+        La descripcion consolidada se genera en merge_entity_descriptions().
+        """
         norm = self._normalize_name(name)
         if norm in self._entities:
             if entity_type and entity_type != "UNKNOWN":
                 self._entities[norm].entity_type = entity_type
             if description:
-                self._entities[norm].description = description
+                # DAM-4: acumular en vez de sobrescribir
+                self._entities[norm]._descriptions.append(description)
+                self._entities[norm].description = description  # last-write para compat
             # Actualizar atributo del nodo
             vid = self._name_to_vid.get(norm)
             if vid is not None:
@@ -537,6 +544,7 @@ class KnowledgeGraph:
                 "entity_type": e.entity_type,
                 "description": e.description,
                 "source_doc_ids": sorted(e.source_doc_ids),
+                "_descriptions": e._descriptions,  # DAM-4: persist raw descriptions
             }
             for name, e in self._entities.items()
         }
@@ -608,6 +616,7 @@ class KnowledgeGraph:
                 entity_type=e_data["entity_type"],
                 description=e_data.get("description", ""),
                 source_doc_ids=set(e_data.get("source_doc_ids", [])),
+                _descriptions=e_data.get("_descriptions", []),  # DAM-4
             )
 
         # Reconstruir indices
@@ -691,6 +700,45 @@ class KnowledgeGraph:
             tgt_name = self._graph.vs[edge.target]["name"]
             for rel_info in edge["relations"]:
                 self._index_relation_tokens(src_name, tgt_name, rel_info)
+
+    def merge_entity_descriptions(self) -> int:
+        """Consolida descripciones multi-doc por entidad (DAM-4).
+
+        Para cada entidad con >1 descripcion, deduplica y concatena
+        las descripciones unicas separadas por " | ". El resultado es
+        una descripcion rica que mejora los embeddings en entity VDB.
+
+        Referencia: _merge_nodes_then_upsert() en HKUDS/LightRAG.
+        El original usa LLM para sintetizar; aqui usamos concatenacion
+        con dedup como primer paso (LLM synthesis se puede anadir despues).
+
+        Returns:
+            Numero de entidades con descripciones mergeadas.
+        """
+        merged_count = 0
+        for entity in self._entities.values():
+            descs = entity._descriptions
+            if len(descs) <= 1:
+                continue
+            # Dedup por contenido (case-insensitive, stripped)
+            seen: set = set()
+            unique: list = []
+            for d in descs:
+                key = d.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    unique.append(d.strip())
+            if len(unique) > 1:
+                entity.description = " | ".join(unique)
+                merged_count += 1
+            elif unique:
+                entity.description = unique[0]
+        if merged_count > 0:
+            logger.info(
+                f"KnowledgeGraph: descripciones mergeadas para "
+                f"{merged_count} entidades (multi-doc)"
+            )
+        return merged_count
 
     def save(self, path: Path) -> None:
         """Persiste el KG a un archivo JSON."""

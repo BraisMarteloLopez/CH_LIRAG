@@ -80,6 +80,7 @@ class RetrievalConfig:
     kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
     kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction (DTm-67)
     kg_graph_overfetch_factor: int = 2  # graph traversal pide N * top_k candidatos
+    kg_gleaning_rounds: int = 0  # DAM-6: rounds de re-extraccion (0 = desactivado)
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -109,6 +110,7 @@ class RetrievalConfig:
             kg_extraction_max_tokens=_env_int("KG_EXTRACTION_MAX_TOKENS", 4096),
             kg_batch_docs_per_call=_env_int("KG_BATCH_DOCS_PER_CALL", 5),
             kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
+            kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
         )
 
 

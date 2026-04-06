@@ -88,6 +88,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
         self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
         self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
+        self._kg_gleaning_rounds = config.kg_gleaning_rounds
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -237,6 +238,36 @@ class LightRAGRetriever(BaseRetriever):
                     entity.name, entity.entity_type, entity.description
                 )
 
+        # DAM-6: gleaning — re-extraccion para capturar entidades perdidas
+        if self._kg_gleaning_rounds > 0 and self._extractor:
+            for gleaning_round in range(self._kg_gleaning_rounds):
+                t_glean = time.perf_counter()
+                gleaning_count = 0
+                for doc in documents:
+                    doc_id = doc.get("doc_id", "")
+                    text = doc.get("content", "")
+                    prev_entities = extraction_results.get(doc_id, ([], []))[0]
+                    if not prev_entities:
+                        continue
+                    new_entities, new_relations = run_sync(
+                        self._extractor.glean_from_doc_async(
+                            doc_id, text, prev_entities,
+                        )
+                    )
+                    if new_relations:
+                        added = self._kg.add_triplets(doc_id, new_relations)
+                        total_triplets += added
+                        gleaning_count += added
+                    for entity in new_entities:
+                        self._kg.add_entity_metadata(
+                            entity.name, entity.entity_type, entity.description
+                        )
+                glean_ms = (time.perf_counter() - t_glean) * 1000
+                logger.info(
+                    f"LightRAGRetriever: gleaning round {gleaning_round + 1} "
+                    f"en {glean_ms:.0f}ms, +{gleaning_count} tripletas"
+                )
+
         # DTm-49: emitir resumen una sola vez al final
         self._kg.log_entity_cap_summary()
 
@@ -246,6 +277,11 @@ class LightRAGRetriever(BaseRetriever):
         self._kg.build_keyword_indices()
         idx_ms = (time.perf_counter() - t_idx) * 1000
         logger.info(f"LightRAGRetriever: keyword indices construidos en {idx_ms:.0f}ms")
+
+        # DAM-4: merge descripciones multi-doc antes de construir VDBs
+        merged = self._kg.merge_entity_descriptions()
+        if merged:
+            logger.info(f"LightRAGRetriever: {merged} entidades con descripciones consolidadas")
 
         # DAM-1: construir entity VDB (ChromaDB con embeddings de entidades)
         self._build_entities_vdb()

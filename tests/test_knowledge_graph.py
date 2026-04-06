@@ -778,3 +778,68 @@ def test_get_all_relations_returns_list():
         assert "weight" in rel
     # Weight = number of relations on the edge (2: knows + works_with)
     assert any(r["weight"] == 2 for r in relations)
+
+
+# =============================================================================
+# merge_entity_descriptions (DAM-4)
+# =============================================================================
+
+def test_merge_entity_descriptions_single_doc():
+    """Entidad con 1 descripcion no se modifica."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    merged = kg.merge_entity_descriptions()
+    assert merged == 0
+    assert kg.get_all_entities()["alice"].description == "Alice is a researcher"
+
+
+def test_merge_entity_descriptions_multi_doc():
+    """Entidad con N descripciones distintas se concatenan."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    kg.add_entity_metadata("Alice", "PERSON", "Alice works at MIT")
+    merged = kg.merge_entity_descriptions()
+    assert merged == 1
+    desc = kg.get_all_entities()["alice"].description
+    assert "researcher" in desc
+    assert "MIT" in desc
+
+
+def test_merge_entity_descriptions_dedup():
+    """Descripciones duplicadas se deduplican."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    kg.add_entity_metadata("Alice", "PERSON", "Alice is a researcher")
+    kg.add_entity_metadata("Alice", "PERSON", "Alice works at MIT")
+    merged = kg.merge_entity_descriptions()
+    assert merged == 1
+    desc = kg.get_all_entities()["alice"].description
+    # Should have 2 unique descriptions, not 3
+    assert desc.count("|") == 1
+
+
+def test_merge_entity_descriptions_serialization_roundtrip():
+    """_descriptions sobreviven a serialization/deserialization."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        KGRelation(source="Alice", target="Bob", relation="knows",
+                   description="test", source_doc_id="doc1"),
+    ])
+    kg.add_entity_metadata("Alice", "PERSON", "desc1")
+    kg.add_entity_metadata("Alice", "PERSON", "desc2")
+
+    data = kg.to_dict()
+    kg2 = KnowledgeGraph.from_dict(data)
+    assert kg2.get_all_entities()["alice"]._descriptions == ["desc1", "desc2"]
