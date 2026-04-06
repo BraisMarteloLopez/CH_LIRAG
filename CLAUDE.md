@@ -86,7 +86,6 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 ## Deuda tecnica vigente (priorizada)
 
 ### Alta — afectan calidad de resultados
-- **DTm-63**: Entity cap 100K con sesgo FIFO en orden de indexacion. Ubicacion: `knowledge_graph.py`
 - **DTm-73**: Grafo fragmentado impide bridging entre componentes desconectados. Ubicacion: `knowledge_graph.py`
 
 ### Media — mejoras funcionales
@@ -112,6 +111,7 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 - **Fase H**: Bare excepts con logging, dead code, validacion sub-configs
 - **DTm-62**: Conditional fusion en `_fuse_with_graph()` — overlap gate previene graph ruidoso destruir ranking vectorial. Config: `KG_FUSION_OVERLAP_THRESHOLD`, `KG_FUSION_GRAPH_ONLY_CAP`
 - **Tests audit**: assert faltante en test_evaluator.py, ClientError mock roto en test_loader.py. Suite: 340 passed, 0 failed
+- **DTm-63**: Eviction por importancia en entity cap — reemplaza FIFO silencioso. Entidades con 1 doc y degree<=1 se evictan para dar paso a nuevas. `_find_eviction_candidate()`, `_evict_entity()` en `knowledge_graph.py`
 
 ## Bare excepts aceptados (no criticos)
 

@@ -334,18 +334,37 @@ def test_add_entity_metadata_unknown_entity():
 # KG16: max_entities cap (DTm-21)
 # =============================================================================
 
-def test_max_entities_cap():
-    """Entidades nuevas se rechazan al alcanzar el cap."""
+def test_max_entities_cap_with_eviction():
+    """Al alcanzar el cap, entidades de baja importancia se evictan (DTm-63)."""
     kg = KnowledgeGraph(max_entities=3)
     # A, B -> 2 entidades
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
     assert kg.num_entities == 2
 
-    # C, D -> C se acepta (3ra), D se rechaza (4ta > cap)
-    # La tripleta entera se salta porque D no puede crearse
+    # C, D -> cap=3, C se acepta (3ra). D necesita evictar: A o B son
+    # candidatos (1 doc, degree 1). Uno se evicta, D entra.
     added = kg.add_triplets("doc2", [_rel("C", "D", "r")])
-    assert kg.num_entities == 3
-    assert added == 0  # tripleta descartada porque D no cabe
+    assert kg.num_entities == 3  # cap respetado
+    assert added == 1  # tripleta anadida gracias a eviction
+    assert kg._entities_evicted >= 1
+    # C y D deben estar en el grafo
+    assert "c" in kg._entities  # normalized
+    assert "d" in kg._entities
+
+
+def test_max_entities_cap_no_eviction_possible():
+    """Sin candidatos evictables, la tripleta se descarta como antes."""
+    kg = KnowledgeGraph(max_entities=2)
+    # A, B -> 2 entidades, ambos en doc1 y doc2 (multi-doc = no evictable)
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "r2")])
+    assert kg.num_entities == 2
+    # Ahora A y B tienen source_doc_ids={doc1, doc2} -> no evictables
+
+    # C, D -> no caben, no hay candidato evictable -> drop
+    added = kg.add_triplets("doc3", [_rel("C", "D", "r")])
+    assert kg.num_entities == 2
+    assert added == 0
     assert kg._entities_dropped > 0
 
 
@@ -359,6 +378,59 @@ def test_max_entities_existing_entities_still_updated():
     added = kg.add_triplets("doc2", [_rel("A", "B", "collaborates")])
     assert added == 1
     assert kg.num_entities == 2  # sin entidades nuevas
+
+
+def test_eviction_prefers_low_doc_count():
+    """Eviction elige entidades con menos source_doc_ids (DTm-63)."""
+    kg = KnowledgeGraph(max_entities=4)
+    # A, B en doc1 y doc2 — 2 docs cada uno (no evictables)
+    kg.add_triplets("doc1", [_rel("A", "B", "r1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "r2")])
+    # C, D en doc3 — 1 doc cada uno, degree 1 (evictables)
+    kg.add_triplets("doc3", [_rel("C", "D", "r3")])
+    assert kg.num_entities == 4
+
+    # E necesita 1 slot nuevo -> C o D evicta (1 doc, degree 1)
+    # A necesita A existente (ya existe, no consume slot)
+    added = kg.add_triplets("doc4", [_rel("A", "E", "r4")])
+    assert added == 1
+    assert kg.num_entities == 4  # cap respetado
+    assert "a" in kg._entities  # A sobrevive (2 docs)
+    assert "b" in kg._entities  # B sobrevive (2 docs)
+    assert "e" in kg._entities  # E entro
+    # C o D fue evicta (la que el algoritmo eligio)
+    evicted = {"c", "d"} - set(kg._entities.keys())
+    assert len(evicted) == 1
+
+
+def test_eviction_cleans_indices():
+    """Eviction limpia _entity_to_docs y _doc_to_entities (DTm-63)."""
+    kg = KnowledgeGraph(max_entities=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    assert "a" in kg._entity_to_docs
+    assert "a" in kg._doc_to_entities.get("doc1", set())
+
+    # C, D necesitan evictar A o B
+    kg.add_triplets("doc2", [_rel("C", "D", "r")])
+    # La entidad evicta no debe estar en los indices
+    evicted = {"a", "b"} - set(kg._entities.keys())
+    assert len(evicted) >= 1
+    evicted_name = evicted.pop()
+    assert evicted_name not in kg._entity_to_docs
+
+
+def test_eviction_serialization_roundtrip():
+    """entities_evicted se preserva en to_dict/from_dict (DTm-63)."""
+    kg = KnowledgeGraph(max_entities=2)
+    kg.add_triplets("doc1", [_rel("A", "B", "r")])
+    kg.add_triplets("doc2", [_rel("C", "D", "r")])  # triggers eviction
+
+    data = kg.to_dict()
+    assert "entities_evicted" in data
+    assert data["entities_evicted"] >= 1
+
+    kg2 = KnowledgeGraph.from_dict(data)
+    assert kg2._entities_evicted == kg._entities_evicted
 
 
 # =============================================================================
@@ -412,6 +484,7 @@ def test_get_stats_includes_memory_and_cap():
     assert "approx_memory_mb" in stats
     assert stats["approx_memory_mb"] >= 0
     assert stats["entities_dropped"] == 0
+    assert stats["entities_evicted"] == 0
     assert stats["max_entities"] == 100
 
 

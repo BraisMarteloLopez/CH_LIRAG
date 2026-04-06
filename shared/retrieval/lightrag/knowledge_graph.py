@@ -107,6 +107,8 @@ class KnowledgeGraph:
         self._entities_dropped = 0
         # DTm-49: contador de tripletas completas descartadas por entity cap
         self._triplets_dropped_by_cap = 0
+        # DTm-63: contador de entidades evictas por importancia
+        self._entities_evicted = 0
         # Indices invertidos para query_by_keywords (DTm-30)
         # token -> set de entity names que contienen ese token
         self._kw_entity_index: Dict[str, Set[str]] = defaultdict(set)
@@ -301,6 +303,83 @@ class KnowledgeGraph:
         return [self._graph.vs[nv]["name"] for nv in neighbor_vids]
 
     # -----------------------------------------------------------------
+    # DTm-63: Eviction por importancia
+    # -----------------------------------------------------------------
+
+    def _find_eviction_candidate(
+        self, exclude: Optional[set] = None,
+    ) -> Optional[str]:
+        """Encuentra la entidad menos importante para evictar.
+
+        Criterio: menor len(source_doc_ids), desempate por menor degree
+        en el grafo. Solo evicta entidades con source_doc_ids == 1 y
+        degree <= 1 (nodos hoja de baja importancia).
+
+        Args:
+            exclude: Nombres de entidades a excluir (ej: las del triplet actual).
+
+        Returns:
+            Nombre de la entidad a evictar, o None si no hay candidato.
+        """
+        best_name: Optional[str] = None
+        best_docs = float("inf")
+        best_degree = float("inf")
+        _exclude = exclude or set()
+
+        for name, entity in self._entities.items():
+            if name in _exclude:
+                continue
+            n_docs = len(entity.source_doc_ids)
+            if n_docs > 1:
+                continue  # solo considerar entidades de un solo doc
+            vid = self._name_to_vid.get(name)
+            degree = self._graph.degree(vid) if vid is not None else 0
+            if degree > 1:
+                continue  # solo considerar nodos hoja o quasi-hoja
+            if n_docs < best_docs or (n_docs == best_docs and degree < best_degree):
+                best_docs = n_docs
+                best_degree = degree
+                best_name = name
+
+        return best_name
+
+    def _evict_entity(self, name: str) -> None:
+        """Remueve una entidad del KG (DTm-63).
+
+        Elimina de _entities, _entity_to_docs, _doc_to_entities,
+        y las aristas del grafo asociadas. El vertice igraph queda
+        huerfano (sin aristas) para evitar reindexacion O(V).
+        """
+        # Remover aristas del grafo
+        vid = self._name_to_vid.get(name)
+        if vid is not None:
+            # Eliminar todas las aristas conectadas a este nodo
+            edge_ids = self._graph.incident(vid)
+            if edge_ids:
+                self._graph.delete_edges(edge_ids)
+
+        # Limpiar indices
+        doc_ids = self._entity_to_docs.pop(name, set())
+        for doc_id in doc_ids:
+            discard_set = self._doc_to_entities.get(doc_id)
+            if discard_set is not None:
+                discard_set.discard(name)
+
+        # Remover relaciones asociadas del indice _doc_to_relations
+        for doc_id in doc_ids:
+            rels = self._doc_to_relations.get(doc_id)
+            if rels is not None:
+                self._doc_to_relations[doc_id] = [
+                    r for r in rels
+                    if self._normalize_name(r.source) != name
+                    and self._normalize_name(r.target) != name
+                ]
+
+        # Remover de _entities (libera el slot para el cap)
+        self._entities.pop(name, None)
+        self._entities_evicted += 1
+
+    # -----------------------------------------------------------------
 
     def add_triplets(self, doc_id: str, triplets: List[KGRelation]) -> int:
         """Anade tripletas al grafo desde un documento.
@@ -324,16 +403,25 @@ class KnowledgeGraph:
             if not src_name or not tgt_name:
                 continue
 
-            # Registrar/actualizar entidades (con cap DTm-21, warning DTm-49)
+            # Registrar/actualizar entidades (con cap DTm-21, eviction DTm-63)
             skip_triplet = False
+            triplet_names = {src_name, tgt_name}
             for name in (src_name, tgt_name):
                 if name not in self._entities:
                     if len(self._entities) >= self._max_entities:
-                        self._entities_dropped += 1
-                        self._triplets_dropped_by_cap += 1
-                        dropped_this_call += 1
-                        skip_triplet = True
-                        break
+                        # DTm-63: intentar evictar entidad de baja importancia
+                        candidate = self._find_eviction_candidate(
+                            exclude=triplet_names,
+                        )
+                        if candidate is not None:
+                            self._evict_entity(candidate)
+                        else:
+                            # Sin candidato evictable — drop como antes
+                            self._entities_dropped += 1
+                            self._triplets_dropped_by_cap += 1
+                            dropped_this_call += 1
+                            skip_triplet = True
+                            break
                     self._entities[name] = KGEntity(
                         name=name,
                         entity_type="UNKNOWN",
@@ -389,6 +477,11 @@ class KnowledgeGraph:
         Debe llamarse una vez al final de la construccion del KG,
         no por cada doc (DTm-49).
         """
+        if self._entities_evicted > 0:
+            logger.info(
+                f"KnowledgeGraph: {self._entities_evicted} entidades evictas "
+                f"por baja importancia (DTm-63)"
+            )
         if self._triplets_dropped_by_cap > 0:
             logger.warning(
                 f"KnowledgeGraph: {self._entities_dropped} entidades nuevas "
@@ -640,6 +733,7 @@ class KnowledgeGraph:
             "max_entities": self._max_entities,
             "entities_dropped": self._entities_dropped,
             "triplets_dropped_by_cap": self._triplets_dropped_by_cap,
+            "entities_evicted": self._entities_evicted,
             "entities": entities_ser,
             "doc_to_relations": relations_ser,
             "entity_to_docs": {
@@ -660,6 +754,7 @@ class KnowledgeGraph:
         kg = cls(max_entities=data.get("max_entities", 0))
         kg._entities_dropped = data.get("entities_dropped", 0)
         kg._triplets_dropped_by_cap = data.get("triplets_dropped_by_cap", 0)
+        kg._entities_evicted = data.get("entities_evicted", 0)
 
         # Reconstruir entidades
         for name, e_data in data.get("entities", {}).items():
@@ -864,6 +959,7 @@ class KnowledgeGraph:
             ),
             "graph_connected_components": components,
             "entities_dropped": self._entities_dropped,
+            "entities_evicted": self._entities_evicted,
             "triplets_dropped_by_cap": self._triplets_dropped_by_cap,
             "max_entities": self._max_entities,
             "approx_memory_mb": round(mem_bytes / (1024 * 1024), 2),
