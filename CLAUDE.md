@@ -83,6 +83,21 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 **Alineacion con original (DAM-1 a DAM-8)**: Entity VDB, Relationship VDB, edge weights, gleaning, BFS 1-hop, graph_primary mode, contexto estructurado — todo implementado. DAM-4 parcial (concatenacion sin LLM synthesis). Pendiente validacion con run comparativo (F.5).
 
+## Divergencias con el paper original — evaluacion de criticidad
+
+Diferencias entre esta implementacion y el [LightRAG original (EMNLP 2025)](https://arxiv.org/abs/2410.05779), evaluadas por impacto en calidad de resultados.
+
+| # | Divergencia | Criticidad | Descripcion | Ubicacion |
+|---|---|---|---|---|
+| 1 | DAM-4: concat vs LLM synthesis (descripciones) | **7/10** | El paper usa LLM map-reduce para sintetizar descripciones de entidades repetidas. Aqui se concatena con `" \| "`. Las descripciones de entidades frecuentes crecen sin control, meten ruido en el contexto del graph traversal y degradan la calidad de generacion. Es la divergencia que mas distorsiona la representacion del conocimiento en el grafo. | `knowledge_graph.py` / [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7) |
+| 2 | Sin validacion empirica (F.5 pendiente) | **6/10** | No es una divergencia arquitectonica, pero sin datos reales post-fases A-F no se puede saber si las correcciones cerraron la brecha. Los ultimos numeros (-48pp MRR) son pre-fix y obsoletos. Todas las demas correcciones son teoricas sin esto. | N/A — requiere infra NIM + MinIO |
+| 3 | Sin LLM synthesis en fusion final de contexto | **5/10** | El paper usa el LLM para sintetizar resultados de vector + graph antes de generar la respuesta. Aqui se concatena directamente. RRF mitiga parcialmente al priorizar chunks relevantes, pero con un graph ruidoso la diferencia puede ser notable. | `retriever.py:_fuse_with_graph()` |
+| 4 | Entity cap 100K con sesgo FIFO (DTm-63) | **4/10** | El paper no impone un cap tan agresivo. Con corpus grandes las primeras entidades indexadas dominan y las ultimas se pierden. Para HotpotQA (66K docs) probablemente no se alcanza el cap, pero limita escalabilidad a datasets mayores. | `knowledge_graph.py` |
+| 5 | Grafo fragmentado sin bridging (DTm-73) | **3/10** | El paper asume un grafo mas conectado. Componentes desconectados no se enlazan. En HotpotQA (preguntas bridge entre 2 docs) puede impactar, pero el BFS 1-hop ya limita el alcance del traversal. | `knowledge_graph.py` |
+| 6 | BFS scoring uniforme (DTm-72) | **3/10** | Todas las aristas pesan igual en el traversal. El paper usa edge weights mas sofisticados. Con 1-hop el efecto es limitado. | `knowledge_graph.py` |
+
+**Nota:** Las divergencias 1 y 3 son las unicas que requieren cambios de logica de negocio (LLM calls adicionales, coste de tokens). Las demas son mejoras algoritmicas internas. La divergencia 2 (F.5) es prerequisito para priorizar cualquier fix — sin datos empiricos, el orden de prioridad es especulativo.
+
 ## Deuda tecnica vigente
 
 - **DTm-80**: DAM-4 parcial: merge de descripciones por concatenacion, sin LLM synthesis. Requiere decision sobre coste/latencia. Diferido a post-F.5. [#7](https://github.com/BraisMarteloLopez/CH_LIRAG/issues/7)
