@@ -173,9 +173,13 @@ def batch_embed_queries(
                     logger.warning(
                         f"  Error en batch embed (offset={batch_start}) "
                         f"tras {max_retries + 1} intentos: {e}. "
-                        "Fallback a retrieval sin pre-embed."
+                        "Descartando todos los vectores (pre-embed incompleto)."
                     )
-                    return []
+                    # Retornar los vectores parciales acumulados hasta aqui.
+                    # El caller detecta len(vectors) < n_queries y hace
+                    # fallback a retrieval sin pre-embed para TODAS las queries,
+                    # lo cual es consistente (no mezcla queries con/sin vector).
+                    return all_vectors
 
         batch_end = batch_start + len(batch)
         if batch_end % 500 == 0 or batch_end == n:

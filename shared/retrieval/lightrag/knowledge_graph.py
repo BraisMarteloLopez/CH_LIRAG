@@ -426,6 +426,12 @@ class KnowledgeGraph:
             tgt_name = self._normalize_name(triplet.target)
 
             if not src_name or not tgt_name:
+                dropped_this_call += 1
+                logger.debug(
+                    "Triplet dropped: empty name after normalization "
+                    f"(src={triplet.source!r} -> {src_name!r}, "
+                    f"tgt={triplet.target!r} -> {tgt_name!r})"
+                )
                 continue
 
             # Registrar/actualizar entidades (con cap DTm-21, eviction DTm-63)
@@ -978,7 +984,11 @@ class KnowledgeGraph:
             selected = unique[:self._MAX_DESCRIPTIONS_TO_MERGE]
             merged = " | ".join(selected)
             if len(merged) > self._MAX_MERGED_DESCRIPTION_CHARS:
-                merged = merged[:self._MAX_MERGED_DESCRIPTION_CHARS].rsplit(" | ", 1)[0]
+                truncated = merged[:self._MAX_MERGED_DESCRIPTION_CHARS]
+                parts = truncated.rsplit(" | ", 1)
+                # Si rsplit encontro delimitador, cortar en el ultimo limpio;
+                # si no, truncar directamente para no devolver el string completo.
+                merged = parts[0] if len(parts) > 1 else truncated
             entity.description = merged
             merged_count += 1
         if merged_count > 0:
