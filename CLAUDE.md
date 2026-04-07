@@ -100,7 +100,15 @@ Diferencias restantes entre esta implementacion y el [LightRAG original (EMNLP 2
 
 ## Deuda tecnica vigente
 
-Sin items accionables pendientes. DTm-80 (DAM-4 LLM synthesis) resuelto por A5.1. La divergencia #2 (fusion synthesis) es el unico item pendiente pero requiere decision de coste/latencia post-F.5.
+| # | Item | Severidad | Ubicacion | Mitigacion temporal |
+|---|---|---|---|---|
+| 1 | ChromaDB no se limpia entre runs | **ALTO** | `evaluator.py:_cleanup()` llama `clear_index()` pero solo pone `_is_indexed=False` — no borra la coleccion ChromaDB. Cada run crea `eval_{run_id}`, las viejas se acumulan (~500MB-1GB tras 10 runs) | Borrar manualmente `VECTOR_DB_DIR` antes de cada run |
+| 2 | Preflight no valida datos reales | **MEDIO** | `preflight.py` solo verifica bucket MinIO (`head_bucket` + `list_objects MaxKeys=1`). No descarga ni parsea Parquet — dataset corrupto solo falla horas despues. No verifica espacio en disco | `--dry-run` primero y verificar que el dataset carga |
+| 3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
+| 4 | LLM Judge puede devolver scores por defecto | **MEDIO-BAJO** | `metrics.py:_extract_score_fallback()` intenta 4 regex patterns; si todos fallan retorna 0.5 — sesga metricas silenciosamente. Se logea a WARNING | Post-run, buscar `"Score extraction fallback"` en logs y contar ocurrencias |
+| 5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). Puede truncar docs importantes. Se logea WARNING | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` |
+
+La divergencia #2 (fusion synthesis) sigue pendiente pero requiere decision de coste/latencia post-F.5.
 
 ## Bare excepts aceptados (no criticos)
 
