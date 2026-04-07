@@ -1,8 +1,8 @@
 {
-  "run_id": "mteb_hotpotqa_20260407_100810",
+  "run_id": "mteb_hotpotqa_20260407_124234",
   "dataset_name": "hotpotqa",
   "embedding_model": "llama-embed-nemotron-8b",
-  "retrieval_strategy": "SIMPLE_VECTOR",
+  "retrieval_strategy": "LIGHT_RAG",
   "config_snapshot": {
     "infra": {
       "llm_base_url": "http://172.30.79.99:8000/v1",
@@ -26,26 +26,26 @@
       "vector_db_dir": "data/vector_db"
     },
     "retrieval": {
-      "strategy": "SIMPLE_VECTOR",
+      "strategy": "LIGHT_RAG",
       "retrieval_k": 20,
       "hnsw_num_threads": 1,
       "max_graph_expansion": 30,
       "kg_max_hops": 1,
       "kg_max_text_chars": 3000,
       "kg_max_entities": 0,
-      "kg_graph_weight": 0.3,
-      "kg_vector_weight": 0.7,
+      "kg_graph_weight": 0.4,
+      "kg_vector_weight": 0.6,
       "kg_cache_dir": "",
       "kg_fusion_method": "rrf",
       "kg_rrf_k": 60,
-      "kg_keyword_max_tokens": 1024,
-      "kg_extraction_max_tokens": 4096,
-      "kg_batch_docs_per_call": 5,
+      "kg_keyword_max_tokens": 2048,
+      "kg_extraction_max_tokens": 8192,
+      "kg_batch_docs_per_call": 2,
       "kg_graph_overfetch_factor": 2,
       "kg_gleaning_rounds": 0,
       "lightrag_mode": "hybrid",
       "kg_description_synthesis": false,
-      "kg_synthesis_char_threshold": 200,
+      "kg_synthesis_char_threshold": 250,
       "kg_fusion_overlap_threshold": 0.3,
       "kg_fusion_graph_only_cap": 0.2
     },
@@ -73,7 +73,7 @@
       "corpus_indexed": 4000,
       "gen_zero_count": 17,
       "gen_nonzero_count": 108,
-      "strategy_actual": "SIMPLE_VECTOR"
+      "strategy_actual": "LIGHT_RAG"
     }
   },
   "num_queries_evaluated": 125,
@@ -107,9 +107,9 @@
   "avg_generation_recall": 0.984,
   "avg_generation_hit": 1.0,
   "reranker_rescue_count": 0,
-  "avg_generation_score": 0.7764,
-  "execution_time_seconds": 194.72,
-  "timestamp": "2026-04-07T10:11:24.927004",
+  "avg_generation_score": 0.7877,
+  "execution_time_seconds": 9002.11,
+  "timestamp": "2026-04-07T15:12:37.063497",
   "status": "completed",
   "query_results": [
     {
@@ -161,12 +161,12 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "vice-admiral",
+      "generated_response": "flotilla",
       "expected_response": "flotilla",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.0,
+      "primary_metric_value": 1.0,
       "secondary_metrics": {
-        "exact_match": 0.0,
+        "exact_match": 1.0,
         "faithfulness": 1.0
       },
       "status": "completed",
@@ -1208,12 +1208,12 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "Maximum Overdrive",
+      "generated_response": "The Outsiders",
       "expected_response": "The Outsiders",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.0,
+      "primary_metric_value": 1.0,
       "secondary_metrics": {
-        "exact_match": 0.0,
+        "exact_match": 1.0,
         "faithfulness": 1.0
       },
       "status": "completed",
@@ -1303,13 +1303,13 @@
         "20": 0.6131471927654584
       },
       "mrr": 1.0,
-      "generated_response": "law firm",
+      "generated_response": "N/A",
       "expected_response": "to ensure wide visibility and understanding of cases in a region",
       "primary_metric_type": "f1_score",
       "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
-        "faithfulness": 1.0
+        "faithfulness": 0.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -1500,7 +1500,7 @@
       "secondary_metrics": {
         "f1_score": 1.0,
         "exact_match": 1.0,
-        "faithfulness": 1.0
+        "faithfulness": 0.2
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -1969,10 +1969,10 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "Tugurt",
+      "generated_response": "Tugurt language",
       "expected_response": "The Tugurt language",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.5,
+      "primary_metric_value": 0.8,
       "secondary_metrics": {
         "exact_match": 0.0,
         "faithfulness": 1.0
@@ -2356,7 +2356,7 @@
       "secondary_metrics": {
         "f1_score": 0.5,
         "exact_match": 0.0,
-        "faithfulness": 0.1
+        "faithfulness": 1.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -2546,7 +2546,7 @@
       "primary_metric_value": 1.0,
       "secondary_metrics": {
         "exact_match": 1.0,
-        "faithfulness": 0.9
+        "faithfulness": 0.8
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -2825,10 +2825,10 @@
         "20": 0.7631539858737962
       },
       "mrr": 1.0,
-      "generated_response": "Paris, France",
+      "generated_response": "Charles de Gaulle Airport",
       "expected_response": "France.",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.6667,
+      "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
         "faithfulness": 1.0
@@ -3111,12 +3111,12 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "grammar, logic, rhetoric",
+      "generated_response": "grammar, logic, and rhetoric",
       "expected_response": "Grammar, logic, and rhetoric",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.8571,
+      "primary_metric_value": 1.0,
       "secondary_metrics": {
-        "exact_match": 0.0,
+        "exact_match": 1.0,
         "faithfulness": 1.0
       },
       "status": "completed",
@@ -3782,7 +3782,7 @@
       "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
-        "faithfulness": 0.2
+        "faithfulness": 1.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -3871,13 +3871,13 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "Argentinian",
+      "generated_response": "Argentine",
       "expected_response": "Argentinian",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 1.0,
+      "primary_metric_value": 0.0,
       "secondary_metrics": {
-        "exact_match": 1.0,
-        "faithfulness": 1.0
+        "exact_match": 0.0,
+        "faithfulness": 0.9
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -4258,7 +4258,7 @@
       "primary_metric_value": 1.0,
       "secondary_metrics": {
         "exact_match": 1.0,
-        "faithfulness": 0.1
+        "faithfulness": 0.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -4544,7 +4544,7 @@
       "secondary_metrics": {
         "f1_score": 1.0,
         "exact_match": 1.0,
-        "faithfulness": 0.2
+        "faithfulness": 0.1
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -5498,7 +5498,7 @@
       "secondary_metrics": {
         "f1_score": 1.0,
         "exact_match": 1.0,
-        "faithfulness": 0.1
+        "faithfulness": 0.2
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -5784,7 +5784,7 @@
       "secondary_metrics": {
         "f1_score": 1.0,
         "exact_match": 1.0,
-        "faithfulness": 1.0
+        "faithfulness": 0.1
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -5975,7 +5975,7 @@
       "secondary_metrics": {
         "f1_score": 1.0,
         "exact_match": 1.0,
-        "faithfulness": 0.1
+        "faithfulness": 0.2
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -6064,10 +6064,10 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "Perfect Storm",
+      "generated_response": "the Perfect Storm",
       "expected_response": "1991 Perfect Storm",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.8,
+      "primary_metric_value": 0.6667,
       "secondary_metrics": {
         "exact_match": 0.0,
         "faithfulness": 1.0
@@ -6730,13 +6730,13 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "PlayStation",
+      "generated_response": "PlayStation 4",
       "expected_response": "PlayStation 4",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.6667,
+      "primary_metric_value": 1.0,
       "secondary_metrics": {
-        "exact_match": 0.0,
-        "faithfulness": 0.8
+        "exact_match": 1.0,
+        "faithfulness": 1.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -7784,7 +7784,7 @@
       "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
-        "faithfulness": 0.2
+        "faithfulness": 0.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -7873,12 +7873,12 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "Tarawa",
+      "generated_response": "Battle of Tarawa",
       "expected_response": "The Battle of Tarawa",
       "primary_metric_type": "accuracy",
       "primary_metric_value": 0.0,
       "secondary_metrics": {
-        "f1_score": 0.4,
+        "f1_score": 0.8571,
         "exact_match": 0.0,
         "faithfulness": 1.0
       },
@@ -8261,7 +8261,7 @@
       "secondary_metrics": {
         "f1_score": 1.0,
         "exact_match": 1.0,
-        "faithfulness": 0.2
+        "faithfulness": 0.1
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -8737,7 +8737,7 @@
       "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
-        "faithfulness": 0.9
+        "faithfulness": 1.0
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -8927,7 +8927,7 @@
       "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
-        "faithfulness": 0.0
+        "faithfulness": 0.2
       },
       "status": "completed",
       "generation_doc_ids": [
@@ -9492,12 +9492,12 @@
         "20": 0.6240505200038379
       },
       "mrr": 0.5,
-      "generated_response": "Dorset",
+      "generated_response": "West Dorset, South West England",
       "expected_response": "West Dorset, South West England.",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 0.3333,
+      "primary_metric_value": 1.0,
       "secondary_metrics": {
-        "exact_match": 0.0,
+        "exact_match": 1.0,
         "faithfulness": 1.0
       },
       "status": "completed",
@@ -10918,12 +10918,12 @@
         "20": 1.0
       },
       "mrr": 1.0,
-      "generated_response": "most awarded female act of all-time",
+      "generated_response": "most awarded female act of all‑time",
       "expected_response": "most awarded female act of all-time",
       "primary_metric_type": "f1_score",
-      "primary_metric_value": 1.0,
+      "primary_metric_value": 0.7692,
       "secondary_metrics": {
-        "exact_match": 1.0,
+        "exact_match": 0.0,
         "faithfulness": 1.0
       },
       "status": "completed",
@@ -11779,7 +11779,7 @@
       "primary_metric_value": 0.0,
       "secondary_metrics": {
         "exact_match": 0.0,
-        "faithfulness": 0.2
+        "faithfulness": 0.0
       },
       "status": "completed",
       "generation_doc_ids": [
