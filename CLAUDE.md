@@ -81,22 +81,52 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 **Fallback**: sin igraph o sin LLM → degrada a SimpleVectorRetriever puro.
 
-**Alineacion con original (DAM-1 a DAM-8)**: Entity VDB, Relationship VDB, edge weights (log1p), gleaning, BFS 1-hop weighted, graph_primary mode, contexto estructurado, co-occurrence bridging, LLM description synthesis — todo implementado.
+**Alineacion con original (DAM-1 a DAM-8)**: Entity VDB, Relationship VDB, edge weights (log1p), gleaning, BFS 1-hop weighted, graph_primary mode, co-occurrence bridging, LLM description synthesis — todo implementado.
+
+**Divergencia arquitectonica critica**: pese a lo anterior, el pipeline de retrieval+generacion **no replica la arquitectura del paper**. La indexacion es fiel, pero la forma en que se consumen los resultados del KG difiere fundamentalmente (ver seccion siguiente).
 
 ## Divergencias con el paper original — evaluacion de criticidad
 
-Diferencias restantes entre esta implementacion y el [LightRAG original (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
+Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, EMNLP 2025)](https://arxiv.org/abs/2410.05779). Validadas empiricamente en F.5 (125q, 4000 docs, seed=42): LIGHT_RAG produjo metricas de retrieval **identicas** a SIMPLE_VECTOR, confirmando que las divergencias arquitectonicas anulan la contribucion del KG.
+
+### Divergencias arquitectonicas (descubiertas en F.5)
+
+| # | Divergencia | Criticidad | Detalle |
+|---|---|---|---|
+| 4 | **Contexto aplanado a ranking de docs** — el original presenta entidades, relaciones y chunks como **secciones separadas** en el prompt del LLM; aqui todo se aplana a un ranking unico de doc_ids | **9/10** | El LLM del original recibe contexto estructurado (`"Knowledge Graph Data:"` + `"Document Chunks:"`) con presupuesto de tokens por tipo. Aqui el KG solo sirve como puntero a documentos, perdiendo las descripciones de entidades/relaciones. `retrieval_executor.py:format_structured_context()` intenta mitigar esto pero opera post-reranker, sobre docs ya filtrados. |
+| 5 | **RRF fusiona KG + vector en un ranking unico** — el original no fusiona, presenta ambos canales por separado al LLM | **8/10** | El original no usa RRF ni fusion lineal. Entidades y relaciones son secciones independientes con token budgets propios (`max_entity_tokens`, `max_relation_tokens`). CH_LIRAG convierte todo a scores de documentos y fusiona via RRF (`core.py:reciprocal_rank_fusion()`), descartando la granularidad entity/relation. |
+| 6 | **Reranker post-fusion anula senal del grafo** — el original no usa reranker (adicion post-publicacion al repo) | **8/10** | El `CrossEncoderReranker` se aplica incondicionalmente a ambas estrategias (`retrieval_executor.py:100-146`). Evalua similitud query↔doc en aislamiento — los docs multi-hop que el KG aporta (indirectamente relevantes) puntuan bajo y caen del top-N. En F.5, el reranker colapso el ranking LIGHT_RAG al mismo top-20 que SIMPLE_VECTOR en las 125 queries. |
+| 7 | **Sin token budgets separados por tipo** — el original asigna presupuesto independiente a entidades, relaciones y chunks | **5/10** | Un unico `max_context_chars` se aplica al contexto concatenado. Las descripciones de entidades/relaciones compiten con los chunks por el mismo espacio, en vez de tener presupuesto garantizado. |
+
+### Divergencias menores (preexistentes)
 
 | # | Divergencia | Criticidad | Estado |
 |---|---|---|---|
-| 1 | Validacion empirica parcial (F.5b-d pendientes) | **5/10** | F.5a completado (SIMPLE_VECTOR, 125q, MRR 0.992). Falta LIGHT_RAG y comparativo. Sin run LightRAG, no se puede validar la implementacion del paper. |
-| 2 | Sin LLM synthesis en fusion final de contexto | **7/10** | El paper sintetiza vector + graph antes de generar. Aqui se concatena. **Esta es la diferencia fundamental entre LightRAG y un vector search + graph lookup concatenado.** Sin esto y sin F.5, no se puede afirmar que esto implementa LightRAG. RRF no sustituye la synthesis. |
-| 3 | Entity cap 100K | **3/10** | Eviction mejorada con score compuesto, pero cap se mantiene. Para HotpotQA (66K docs) no se alcanza. |
+| 2 | Sin LLM synthesis en fusion final de contexto | **5/10** | Subsumida por #4/#5: la fusion synthesis del paper opera sobre el contexto estructurado (secciones separadas). Sin ese contexto, synthesis no resolveria el problema de fondo. |
+| 3 | Entity cap 100K | **3/10** | Eviction mejorada con score compuesto. Para HotpotQA (66K docs, ~24K entidades) no se alcanza. |
 
-**Resueltas:**
+### Resueltas (indexacion)
+
 - ~~DAM-4 (7/10)~~: LLM synthesis para descripciones → `KG_DESCRIPTION_SYNTHESIS=true` (A5.1)
 - ~~Grafo fragmentado (3/10)~~: Co-occurrence bridging (DTm-73)
 - ~~BFS scoring uniforme (3/10)~~: Edge weights via `log(1 + n_docs)` (DTm-72)
+
+### Resultado F.5 (validacion empirica)
+
+Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, seed=42, reranker ON).
+
+| Metrica | SIMPLE_VECTOR | LIGHT_RAG | Delta |
+|---|---|---|---|
+| Hit@5 | 1.000 | 1.000 | 0 |
+| MRR | 0.992 | 0.992 | 0 |
+| Recall@5 | 0.968 | 0.968 | 0 |
+| Recall@20 | 0.988 | 0.988 | 0 |
+| Avg gen score | 0.7764 | 0.7877 | +0.011 (ruido LLM) |
+| Tiempo total | 194.7s | 9002.1s | ×46 |
+
+**Todas las metricas de retrieval son identicas query por query.** El KG aporto ~49 docs exclusivos por query, pero el reranker colapso el ranking final al mismo top-20 que SIMPLE_VECTOR. Las 10 diferencias en generacion son no-determinismo del LLM (mismo contexto, distinta respuesta).
+
+**Conclusion**: la indexacion KG funciona correctamente (23K entidades, 55K relaciones, 32K co-occurrence edges), pero las divergencias #4/#5/#6 impiden que su senal llegue al LLM.
 
 ## Deuda tecnica vigente
 
@@ -112,7 +142,7 @@ Diferencias restantes entre esta implementacion y el [LightRAG original (EMNLP 2
 | 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, la infraestructura (checkpoint, preflight, JSONL, export dual, subset selection, DEV_MODE) es considerable. Sin embargo, el run F.5a demostro que esta infraestructura funciona y es util en practica | Aceptado — la infraestructura se justifica con uso real |
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 
-La divergencia #2 (fusion synthesis) es mas critica de lo documentado previamente — es lo que define a LightRAG como algo mas que vector+graph concatenado. Requiere decision de implementacion, no solo coste/latencia.
+Las divergencias arquitectonicas #4/#5/#6 son la causa raiz de que LIGHT_RAG no aporte valor. Ver seccion "Divergencias con el paper original".
 
 ## Bare excepts aceptados (no criticos)
 
@@ -158,22 +188,17 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ## Proximos pasos
 
-### Run comparativo F.5 (requiere infra NIM + MinIO)
+### Alinear pipeline LIGHT_RAG con el paper original
 
-| Tarea | Descripcion | Estado |
-|---|---|---|
-| F.5a | Run SIMPLE_VECTOR baseline: 125q, 4000 docs, DEV_MODE, seed=42 | **COMPLETADO** — MRR 0.992, Hit@5 1.0, Recall@5 0.968. Resultados en `data/results/mteb_hotpotqa_20260407_100810*` |
-| F.5b | Run LIGHT_RAG hybrid: misma config (con `KG_DESCRIPTION_SYNTHESIS=true`) | **EN CURSO** |
-| F.5c | Run LIGHT_RAG graph_primary | Pendiente |
-| F.5d | Analisis comparativo: MRR, Hit@5, Recall | Pendiente (requiere F.5b+c) |
+F.5 demostro que la indexacion KG funciona pero el pipeline de consumo no. Acciones ordenadas por impacto:
 
-**Resultados F.5a (SIMPLE_VECTOR baseline):**
-- MRR: 0.992 | Hit@5: 1.0 | Recall@5: 0.968 | NDCG@5: 0.960
-- 125 queries, 0 fallos, reranker activo (nvidia/llama-3.2-nv-rerankqa-1b-v2)
-- Generation: avg_score 0.776, gen_recall 0.984, 17 zero-score / 108 non-zero
-- Tiempo: 194.7s
-
-**Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs baseline 0.992). Si no, evaluar divergencia #2 (fusion synthesis).
+| Prioridad | Tarea | Divergencia | Descripcion |
+|---|---|---|---|
+| **P0** | Contexto estructurado al LLM | #4 | Pasar entidades + relaciones + chunks como secciones separadas en el prompt, con token budgets independientes. Requiere refactor de `retrieval_executor.py:format_structured_context()` y `generation_executor.py` |
+| **P0** | Eliminar RRF entre KG y vector | #5 | No fusionar en un ranking unico. Cada canal (entidades, relaciones, vector chunks) mantiene su propio conjunto de resultados. El LLM decide que es relevante |
+| **P1** | Desactivar reranker para LIGHT_RAG | #6 | Flag `RERANKER_SKIP_FOR_LIGHT_RAG` o desactivar incondicionalmente cuando strategy=LIGHT_RAG. El cross-encoder single-hop es incompatible con retrieval multi-hop |
+| **P2** | Token budgets por tipo | #7 | `max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens` en config, en vez de un unico `max_context_chars` |
+| **P3** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado |
 
 ### Limitaciones conocidas (no accionables)
 
