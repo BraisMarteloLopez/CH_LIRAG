@@ -201,8 +201,8 @@ def test_config_snapshot_strategy_fields():
         strategy_mismatches=executor.strategy_mismatches,
     )
 
-    assert run.config_snapshot["strategy_mismatches"] == 1
-    assert run.config_snapshot["strategy_actual"] == "FALLBACK_SIMPLE_VECTOR"
+    assert run.config_snapshot["_runtime"]["strategy_mismatches"] == 1
+    assert run.config_snapshot["_runtime"]["strategy_actual"] == "FALLBACK_SIMPLE_VECTOR"
 
 
 def test_config_snapshot_no_mismatch():
@@ -230,8 +230,8 @@ def test_config_snapshot_no_mismatch():
         strategy_mismatches=executor.strategy_mismatches,
     )
 
-    assert run.config_snapshot["strategy_mismatches"] == 0
-    assert run.config_snapshot["strategy_actual"] == "SIMPLE_VECTOR"
+    assert run.config_snapshot["_runtime"]["strategy_mismatches"] == 0
+    assert run.config_snapshot["_runtime"]["strategy_actual"] == "SIMPLE_VECTOR"
 
 
 # =============================================================================

@@ -17,9 +17,8 @@ from .config import MTEBConfig
 logger = logging.getLogger(__name__)
 
 
-# Constantes para derivar limite de contexto desde model context window.
-_CHARS_PER_TOKEN: float = 4.0
-_OVERHEAD_TOKENS: int = 1024  # system prompt + user template + max_output
+from shared.constants import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
+from shared.constants import OVERHEAD_TOKENS as _OVERHEAD_TOKENS
 
 
 def query_model_context_window(llm_base_url: str) -> Optional[int]:

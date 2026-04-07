@@ -83,17 +83,13 @@ def main() -> int:
         logger.error("Copiar .env.example a .env y completar valores.")
         return 1
 
-    config = MTEBConfig.from_env(str(env_path))
-
-    # 2. Validar
-    errors = config.validate()
-    if errors:
-        logger.error("Errores de configuracion:")
-        for e in errors:
-            logger.error(f"  - {e}")
+    try:
+        config = MTEBConfig.from_env(str(env_path))
+    except ValueError as e:
+        logger.error(str(e))
         return 1
 
-    # 3. Mostrar resumen
+    # 2. Mostrar resumen
     print(config.summary())
     config.ensure_directories()
 

@@ -4,7 +4,7 @@ Tests unitarios para TripletExtractor (DTm-23, Fase 1.2 + DTm-16, Fase 4).
 Cobertura:
   TE1. _parse_extraction_json con JSON valido.
   TE2. _parse_extraction_json con markdown code block.
-  TE3. _parse_extraction_json con JSON malformado -> ([], []).
+  TE3. _parse_extraction_json con JSON malformado -> re-raises exception.
   TE4. _parse_extraction_json con campos faltantes.
   TE5. Entity type invalido -> normalizado a OTHER (DTm-16).
   TE6. Truncation: doc > max_text_chars se trunca.
@@ -104,20 +104,18 @@ def test_parse_json_with_markdown():
 # =============================================================================
 
 def test_parse_malformed_json():
-    """JSON roto -> ([], []), no exception."""
+    """JSON roto -> re-raises para que el caller (extract_from_doc_async) lo maneje."""
     ext = _make_extractor()
-    entities, relations = ext._parse_extraction_json("not json at all", "doc1")
-    assert entities == []
-    assert relations == []
+    with pytest.raises((json.JSONDecodeError, ValueError)):
+        ext._parse_extraction_json("not json at all", "doc1")
 
 
 def test_parse_truncated_json():
-    """JSON truncado (incompleto) -> ([], [])."""
+    """JSON truncado (incompleto) -> re-raises."""
     ext = _make_extractor()
     raw = '{"entities": [{"name": "Alice"'  # truncado
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
-    assert entities == []
-    assert relations == []
+    with pytest.raises((json.JSONDecodeError, ValueError)):
+        ext._parse_extraction_json(raw, "doc1")
 
 
 # =============================================================================

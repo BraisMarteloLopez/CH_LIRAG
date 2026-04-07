@@ -55,4 +55,4 @@ def test_no_reranker():
         rerank_failures=executor.rerank_failures,
         strategy_mismatches=executor.strategy_mismatches,
     )
-    assert run.config_snapshot["rerank_failures"] is None
+    assert run.config_snapshot["_runtime"]["rerank_failures"] is None

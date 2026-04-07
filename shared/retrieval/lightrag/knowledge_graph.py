@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from shared.constants import KG_DEFAULT_MAX_ENTITIES
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -85,8 +87,7 @@ class KnowledgeGraph:
       - query_by_keywords(): busqueda por keywords en descripciones (high-level)
     """
 
-    # Cap por defecto de entidades. 0 = sin limite.
-    _DEFAULT_MAX_ENTITIES = 100_000  # DTm-63: subido de 50K a 100K
+    _DEFAULT_MAX_ENTITIES = KG_DEFAULT_MAX_ENTITIES
 
     def __init__(self, max_entities: int = 0) -> None:
         if not HAS_IGRAPH:

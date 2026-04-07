@@ -39,11 +39,7 @@ except ImportError:
 # Interfaces locales
 from shared.types import MetricType, LLMJudgeProtocol, EmbeddingModelProtocol
 
-# Limite de caracteres de la respuesta generada que se envia al LLM Judge.
-# Guarda defensiva contra respuestas degeneradas (repeticiones, text overflow).
-# Para HotpotQA las respuestas reales rara vez superan 200 chars, asi que
-# 2000 chars (~500 tokens) es holgado sin desperdiciar contexto del judge.
-_MAX_RESPONSE_CHARS_FOR_JUDGE = 2000
+from shared.constants import MAX_RESPONSE_CHARS_FOR_JUDGE as _MAX_RESPONSE_CHARS_FOR_JUDGE
 
 # Configuracion del logger
 logger = logging.getLogger(__name__)

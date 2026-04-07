@@ -88,10 +88,11 @@ def _make_gen_result():
 # EV1: _init_components con generacion
 # =============================================================================
 
+@patch("sandbox_mteb.evaluator.resolve_max_context_chars", return_value=4000)
 @patch("sandbox_mteb.evaluator.load_embedding_model")
 @patch("sandbox_mteb.evaluator.AsyncLLMService")
-def test_init_components_with_generation(mock_llm_cls, mock_embed):
-    """Con generation_enabled=True, crea embedding + LLM + metrics."""
+def test_init_components_with_generation(mock_llm_cls, mock_embed, mock_resolve):
+    """Con generation_enabled=True, crea embedding + LLM + metrics con config correcta."""
     mock_embed.return_value = MagicMock()
     mock_llm_cls.return_value = MagicMock()
 
@@ -99,12 +100,25 @@ def test_init_components_with_generation(mock_llm_cls, mock_embed):
     ev = MTEBEvaluator(config)
     ev._init_components()
 
-    mock_embed.assert_called_once()
-    mock_llm_cls.assert_called_once()
+    # Verifica que se pasan los parametros de config correctos
+    mock_embed.assert_called_once_with(
+        base_url="http://fake:8000/v1",
+        model_name="test-model",
+        model_type="symmetric",
+    )
+    mock_llm_cls.assert_called_once_with(
+        base_url="http://fake:8000/v1",
+        model_name="test-llm",
+        max_concurrent=config.infra.nim_max_concurrent,
+        timeout_seconds=config.infra.nim_timeout,
+        max_retries=config.infra.nim_max_retries,
+    )
     assert ev._embedding_model is not None
     assert ev._llm_service is not None
     assert ev._metrics_calculator is not None
     assert ev._generation_executor is not None
+    # Verify metrics calculator got the embedding model
+    assert ev._metrics_calculator.embedding_model is ev._embedding_model
 
 
 # =============================================================================
@@ -120,9 +134,18 @@ def test_init_components_without_generation(mock_embed):
     ev = MTEBEvaluator(config)
     ev._init_components()
 
+    # Embedding se crea siempre
+    mock_embed.assert_called_once_with(
+        base_url="http://fake:8000/v1",
+        model_name="test-model",
+        model_type="symmetric",
+    )
     assert ev._embedding_model is not None
+    # LLM no se crea sin generacion ni LIGHT_RAG
     assert ev._llm_service is None
     assert ev._generation_executor is None
+    # MetricsCalculator se crea sin LLM judge
+    assert ev._metrics_calculator is not None
 
 
 # =============================================================================
@@ -194,6 +217,12 @@ def test_index_documents():
     call_args = mock_retriever.index_documents.call_args
     docs = call_args[0][0]
     assert len(docs) == 2
+    # Verificar que el contenido se serializa correctamente
+    doc_ids = {d["doc_id"] for d in docs}
+    assert doc_ids == {"d1", "d2"}
+    for d in docs:
+        assert "content" in d
+        assert "title" in d
     assert ev._retriever is mock_retriever
 
 

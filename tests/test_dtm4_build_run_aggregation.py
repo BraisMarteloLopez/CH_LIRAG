@@ -247,7 +247,7 @@ def test_no_completed_queries_zeros():
 
 
 def test_config_snapshot_fields():
-    """config_snapshot contiene campos de configuracion esperados."""
+    """config_snapshot contiene campos de configuracion completos."""
     ev = _make_evaluator()
     dataset = _make_dataset()
 
@@ -257,14 +257,21 @@ def test_config_snapshot_fields():
     run = ev._build_run("test_run", dataset, [qr1], 10.0, 100)
 
     snapshot = run.config_snapshot
-    required_keys = [
-        "retrieval_strategy", "retrieval_k",
-        "corpus_shuffle_seed", "max_queries", "max_corpus",
-        "generation_enabled", "max_context_chars",
-        "reranker_enabled", "corpus_total_available", "corpus_indexed",
-    ]
-    for key in required_keys:
-        assert key in snapshot, f"Falta '{key}' en config_snapshot"
+    # Sub-configs completas serializadas
+    assert "infra" in snapshot
+    assert "storage" in snapshot
+    assert "retrieval" in snapshot
+    assert "reranker" in snapshot
+    # Campos directos de MTEBConfig
+    assert "generation_enabled" in snapshot
+    assert "max_queries" in snapshot
+    assert "max_corpus" in snapshot
+    assert "dataset_name" in snapshot
+    # Campos de runtime
+    assert "_runtime" in snapshot
+    runtime = snapshot["_runtime"]
+    for key in ["max_context_chars", "corpus_total_available", "corpus_indexed"]:
+        assert key in runtime, f"Falta '{key}' en config_snapshot._runtime"
 
 
 def test_corpus_indexed_size():
@@ -278,7 +285,7 @@ def test_corpus_indexed_size():
     run = ev._build_run("test_run", dataset, [qr1], 10.0, indexed_corpus_size=500)
 
     assert run.total_documents == 500
-    assert run.config_snapshot["corpus_indexed"] == 500
+    assert run.config_snapshot["_runtime"]["corpus_indexed"] == 500
 
 
 def test_run_metadata():
@@ -330,8 +337,8 @@ def test_gen_zero_count_in_snapshot():
 
     run = ev._build_run("test_run", dataset, [qr1, qr2], 10.0, 100)
 
-    assert run.config_snapshot["gen_zero_count"] == 1
-    assert run.config_snapshot["gen_nonzero_count"] == 1
+    assert run.config_snapshot["_runtime"]["gen_zero_count"] == 1
+    assert run.config_snapshot["_runtime"]["gen_nonzero_count"] == 1
 
 
 def test_generation_disabled_no_gen_score():

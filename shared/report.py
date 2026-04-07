@@ -117,15 +117,18 @@ class RunExporter:
             run.reranker_rescue_count if run.avg_generation_recall is not None else ""
         )
 
-        # Config snapshot fields
+        # Config snapshot fields — full config serialized, runtime in _runtime
         snapshot = run.config_snapshot or {}
-        row["retrieval_k"] = snapshot.get("retrieval_k", "")
-        row["reranker_top_n"] = snapshot.get("reranker_top_n", "")
+        runtime = snapshot.get("_runtime", {})
+        retrieval = snapshot.get("retrieval", {})
+        reranker = snapshot.get("reranker", {})
+        row["retrieval_k"] = retrieval.get("retrieval_k", "")
+        row["reranker_top_n"] = reranker.get("top_n", "")
         row["corpus_shuffle_seed"] = snapshot.get("corpus_shuffle_seed", "")
-        row["corpus_indexed"] = snapshot.get("corpus_indexed", "")
-        row["corpus_total_available"] = snapshot.get("corpus_total_available", "")
-        row["gen_zero_count"] = snapshot.get("gen_zero_count", "")
-        row["gen_nonzero_count"] = snapshot.get("gen_nonzero_count", "")
+        row["corpus_indexed"] = runtime.get("corpus_indexed", "")
+        row["corpus_total_available"] = runtime.get("corpus_total_available", "")
+        row["gen_zero_count"] = runtime.get("gen_zero_count", "")
+        row["gen_nonzero_count"] = runtime.get("gen_nonzero_count", "")
 
         row["execution_time_s"] = round(run.execution_time_seconds, 2)
         row["timestamp"] = run.timestamp

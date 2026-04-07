@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.types import EmbeddingModelProtocol
+from shared.constants import CHROMA_IN_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -190,8 +191,7 @@ class ChromaVectorStore:
             for doc, _ in self.similarity_search_with_score(query, k, filter)
         ]
 
-    # Limite de IDs por consulta $in para evitar queries SQLite excesivas.
-    _CHROMA_IN_BATCH_SIZE = 100
+    _CHROMA_IN_BATCH_SIZE = CHROMA_IN_BATCH_SIZE
 
     def get_documents_by_ids(
         self,

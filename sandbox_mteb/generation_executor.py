@@ -22,6 +22,7 @@ from shared.types import (
 from shared.llm import AsyncLLMService
 from shared.metrics import MetricsCalculator, MetricResult
 
+from shared.constants import GENERATION_QUERY_TIMEOUT_S
 from .config import GENERATION_PROMPTS
 from .retrieval_executor import format_context, format_structured_context
 
@@ -53,10 +54,12 @@ class GenerationExecutor:
         llm_service: AsyncLLMService,
         metrics_calculator: MetricsCalculator,
         max_context_chars: int,
+        query_timeout_s: float = GENERATION_QUERY_TIMEOUT_S,
     ):
         self._llm_service = llm_service
         self._metrics_calculator = metrics_calculator
         self._max_context_chars = max_context_chars
+        self._query_timeout_s = query_timeout_s
 
     async def batch_generate_and_evaluate(
         self,
@@ -67,7 +70,10 @@ class GenerationExecutor:
     ) -> list:
         """Lanza generacion+metricas en paralelo para todas las queries."""
         tasks = [
-            self._process_single_async(query, retrieval, ds_config, dataset_name)
+            asyncio.wait_for(
+                self._process_single_async(query, retrieval, ds_config, dataset_name),
+                timeout=self._query_timeout_s,
+            )
             for query, retrieval in zip(queries, retrievals)
         ]
         return await asyncio.gather(*tasks, return_exceptions=True)

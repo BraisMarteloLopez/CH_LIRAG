@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 # CONSTANTES DE VALIDACION (DTm-16)
 # =============================================================================
 
+from shared.constants import KG_MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS
+from shared.constants import KG_MIN_ENTITY_NAME_LEN as MIN_ENTITY_NAME_LEN
+
 VALID_ENTITY_TYPES = {"PERSON", "ORG", "PLACE", "CONCEPT", "EVENT", "OTHER"}
-MAX_DESCRIPTION_CHARS = 200
-MIN_ENTITY_NAME_LEN = 1
 
 
 # =============================================================================
@@ -214,12 +215,11 @@ class TripletExtractor:
             return self._build_entities_relations(data, doc_id)
 
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            logger.debug(
+            logger.warning(
                 f"Error parseando JSON de doc {doc_id}: {e} "
                 f"| raw (first 200 chars): {raw[:200]!r}"
             )
-
-        return [], []
+            raise
 
     def _build_entities_relations(
         self, data: Dict[str, Any], doc_id: str,
