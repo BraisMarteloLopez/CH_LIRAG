@@ -99,7 +99,7 @@ def _remove_accents(text: str) -> str:
 
 def _dashes_to_spaces(text: str) -> str:
     """Reemplaza variantes de dash/guion por espacios para evitar fusion de tokens."""
-    return re.sub(r'[\u002D\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]', ' ', text)
+    return re.sub(r'[\u002D\u2011\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]', ' ', text)
 
 
 def _remove_punctuation(text: str) -> str:

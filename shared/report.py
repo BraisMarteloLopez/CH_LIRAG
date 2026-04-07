@@ -261,9 +261,8 @@ class RunExporter:
                 )
                 # Secondary metrics
                 for sk in sorted_secondary_keys:
-                    row[f"sec_{sk}"] = round(
-                        qr.secondary_metrics.get(sk, 0.0), 4
-                    )
+                    value = qr.secondary_metrics.get(sk)
+                    row[f"sec_{sk}"] = round(value, 4) if value is not None else ""
                 if has_lightrag:
                     ret_meta = qr.retrieval.retrieval_metadata
                     row["graph_candidates"] = ret_meta.get("graph_candidates", "")

@@ -425,6 +425,8 @@ class MTEBEvaluator:
         chunk_size = CHECKPOINT_CHUNK_SIZE
         all_results = list(checkpoint_results)  # start with resumed results
 
+        n_resumed = len(evaluated_ids)
+
         for chunk_start in range(0, n_pending, chunk_size):
             chunk_end = min(chunk_start + chunk_size, n_pending)
             chunk_queries = pending_queries[chunk_start:chunk_end]
@@ -433,8 +435,8 @@ class MTEBEvaluator:
 
             logger.info(
                 f"  Chunk {chunk_start // chunk_size + 1}: "
-                f"queries {len(evaluated_ids) + chunk_start + 1}-"
-                f"{len(evaluated_ids) + chunk_end}/{n} "
+                f"queries {n_resumed + chunk_start + 1}-"
+                f"{n_resumed + chunk_end}/{n} "
                 f"({n_chunk} queries)"
             )
 
