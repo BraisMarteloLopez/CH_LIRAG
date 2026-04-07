@@ -89,7 +89,7 @@ Diferencias restantes entre esta implementacion y el [LightRAG original (EMNLP 2
 
 | # | Divergencia | Criticidad | Estado |
 |---|---|---|---|
-| 1 | Sin validacion empirica (F.5 pendiente) | **8/10** | Requiere infra NIM + MinIO. Prerequisito para validar todo lo demas. Sin un solo run real, todo el codigo es teoria sin confirmar. |
+| 1 | Validacion empirica parcial (F.5b-d pendientes) | **5/10** | F.5a completado (SIMPLE_VECTOR, 125q, MRR 0.992). Falta LIGHT_RAG y comparativo. Sin run LightRAG, no se puede validar la implementacion del paper. |
 | 2 | Sin LLM synthesis en fusion final de contexto | **7/10** | El paper sintetiza vector + graph antes de generar. Aqui se concatena. **Esta es la diferencia fundamental entre LightRAG y un vector search + graph lookup concatenado.** Sin esto y sin F.5, no se puede afirmar que esto implementa LightRAG. RRF no sustituye la synthesis. |
 | 3 | Entity cap 100K | **3/10** | Eviction mejorada con score compuesto, pero cap se mantiene. Para HotpotQA (66K docs) no se alcanza. |
 
@@ -108,8 +108,8 @@ Diferencias restantes entre esta implementacion y el [LightRAG original (EMNLP 2
 | 4 | LLM Judge puede devolver scores por defecto | **MEDIO-BAJO** | `metrics.py:_extract_score_fallback()` intenta 4 regex patterns; si todos fallan retorna 0.5 — sesga metricas silenciosamente. Se logea a WARNING | Post-run, buscar `"Score extraction fallback"` en logs y contar ocurrencias |
 | 5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). Puede truncar docs importantes. Se logea WARNING | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` |
 | 6 | Suite de tests no portable | **CRITICO** | `conftest.py` mockea boto3/langchain/chromadb pero no `python-dotenv` ni `igraph`. 17 archivos fallan en coleccion (dotenv), 65 tests fallan (igraph). Solo 14 de ~447 pasan en un entorno limpio. Ver seccion "Estado real de tests" abajo | Crear `requirements-test.txt` con todas las dependencias de test, o añadir dotenv+igraph a la lista de mocks en conftest.py |
-| 7 | Cero validacion empirica | **CRITICO** | 20+ commits, multiples auditorias y refactors, pero F.5 sigue pendiente. El pipeline nunca se ha ejecutado contra datos reales. Metricas, retrieval y generation son teoria sin confirmar — podria haber bugs fundamentales sin detectar | Ejecutar un run minimo (10 queries) antes de cualquier otro desarrollo |
-| 8 | Over-engineering para el scope | **MEDIO** | Para 1 dataset (HotpotQA) y 2 estrategias, el proyecto tiene: checkpoint/resume con atomic writes, preflight con validacion MinIO, logging JSONL, export JSON+CSV dual, subset selection, DEV_MODE. Infraestructura prematura para un benchmark que nunca se ha ejecutado | Congelar features de infraestructura hasta completar F.5 |
+| 7 | Validacion empirica parcial | **MEDIO** | F.5a completado: SIMPLE_VECTOR baseline con 125q, 4000 docs, DEV_MODE, seed=42 (MRR 0.992, Hit@5 1.0, Recall@5 0.968). Pipeline, metricas, export y reranker validados. LIGHT_RAG (F.5b-d) pendiente — la implementacion del paper sigue sin validacion real | Completar F.5b (LIGHT_RAG hybrid) para validar KG, tripletas y fusion |
+| 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, la infraestructura (checkpoint, preflight, JSONL, export dual, subset selection, DEV_MODE) es considerable. Sin embargo, el run F.5a demostro que esta infraestructura funciona y es util en practica | Aceptado — la infraestructura se justifica con uso real |
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 
 La divergencia #2 (fusion synthesis) es mas critica de lo documentado previamente — es lo que define a LightRAG como algo mas que vector+graph concatenado. Requiere decision de implementacion, no solo coste/latencia.
@@ -160,14 +160,20 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ### Run comparativo F.5 (requiere infra NIM + MinIO)
 
-| Tarea | Descripcion |
-|---|---|
-| F.5a | Run SIMPLE_VECTOR baseline: 50q, 3500 docs, DEV_MODE, seed=42 |
-| F.5b | Run LIGHT_RAG hybrid: misma config (con `KG_DESCRIPTION_SYNTHESIS=true`) |
-| F.5c | Run LIGHT_RAG graph_primary |
-| F.5d | Analisis comparativo: MRR, Hit@5, Recall |
+| Tarea | Descripcion | Estado |
+|---|---|---|
+| F.5a | Run SIMPLE_VECTOR baseline: 125q, 4000 docs, DEV_MODE, seed=42 | **COMPLETADO** — MRR 0.992, Hit@5 1.0, Recall@5 0.968. Resultados en `data/results/mteb_hotpotqa_20260407_100810*` |
+| F.5b | Run LIGHT_RAG hybrid: misma config (con `KG_DESCRIPTION_SYNTHESIS=true`) | **EN CURSO** |
+| F.5c | Run LIGHT_RAG graph_primary | Pendiente |
+| F.5d | Analisis comparativo: MRR, Hit@5, Recall | Pendiente (requiere F.5b+c) |
 
-**Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs 0.52 pre-VDBs). Si no, evaluar divergencia #2 (fusion synthesis).
+**Resultados F.5a (SIMPLE_VECTOR baseline):**
+- MRR: 0.992 | Hit@5: 1.0 | Recall@5: 0.968 | NDCG@5: 0.960
+- 125 queries, 0 fallos, reranker activo (nvidia/llama-3.2-nv-rerankqa-1b-v2)
+- Generation: avg_score 0.776, gen_recall 0.984, 17 zero-score / 108 non-zero
+- Tiempo: 194.7s
+
+**Criterio de exito:** LIGHT_RAG MRR > 0.80 (vs baseline 0.992). Si no, evaluar divergencia #2 (fusion synthesis).
 
 ### Limitaciones conocidas (no accionables)
 
