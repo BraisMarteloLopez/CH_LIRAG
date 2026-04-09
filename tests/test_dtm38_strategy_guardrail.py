@@ -35,10 +35,7 @@ def _make_lightrag(has_graph=True):
     """Crea LightRAGRetriever con dependencias mockeadas."""
     retriever = object.__new__(LightRAGRetriever)
     retriever.config = RetrievalConfig()
-    retriever._graph_weight = 0.3
-    retriever._vector_weight = 0.7
     retriever._kg_max_hops = 2
-    retriever._GRAPH_OVERFETCH_FACTOR = 2
     retriever._kg = MagicMock(spec=KnowledgeGraph) if has_graph else None
     retriever._extractor = MagicMock() if has_graph else None
     retriever._has_graph = has_graph
@@ -47,14 +44,9 @@ def _make_lightrag(has_graph=True):
     retriever._query_keywords_cache = OrderedDict()
     retriever._cache_lock = threading.Lock()
     retriever._QUERY_CACHE_MAX_SIZE = 10_000
-    retriever._kg_fusion_method = "rrf"
-    retriever._kg_rrf_k = 60
-    retriever._entities_vdb = None  # DAM-1: no VDB in unit tests by default
-    retriever._relationships_vdb = None  # DAM-2: no VDB in unit tests by default
-    retriever._lightrag_mode = "hybrid"  # F.4/DTm-79
-    # DTm-62: Conditional fusion
-    retriever._fusion_overlap_threshold = 0.3
-    retriever._fusion_graph_only_cap = 0.2
+    retriever._entities_vdb = None
+    retriever._relationships_vdb = None
+    retriever._lightrag_mode = "hybrid"
     retriever._vector_retriever = MagicMock()
     # Vector retriever returns 20 docs
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(
