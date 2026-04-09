@@ -16,7 +16,7 @@ shared/                        # Libreria core
   report.py                    # RunExporter: JSON + CSV summary + CSV detail
   structured_logging.py        # Logging JSONL estructurado
   retrieval/
-    core.py                    # RetrievalStrategy enum, RetrievalConfig, SimpleVectorRetriever, RRF
+    core.py                    # RetrievalStrategy enum, RetrievalConfig, SimpleVectorRetriever
     __init__.py                # Factory get_retriever() — punto de entrada para crear retrievers
     reranker.py                # CrossEncoderReranker (NVIDIARerank)
     lightrag/
@@ -75,9 +75,9 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 **Indexacion**: LLM extrae tripletas (entidad, relacion, entidad) de cada doc → KnowledgeGraph in-memory (igraph) + ChromaDB para vector search. Entity VDB y Relationship VDB para resolucion semantica. Stats se resetean automaticamente al inicio de cada batch (G.5). Gleaning opcional via `KG_GLEANING_ROUNDS`.
 
-**Retrieval**: vector search + query keywords via LLM (dedup automatico de queries identicas, cap 20 keywords/nivel) + graph traversal dual-level (entity VDB low-level + relationship VDB high-level) + fusion RRF.
+**Retrieval**: vector search produce el ranking de chunks. En modos `local`/`global`/`hybrid`, query keywords via LLM (dedup automatico, cap 20 keywords/nivel) resuelven entidades y relaciones del KG que se presentan como secciones separadas al LLM. Sin fusion RRF — cada canal es independiente.
 
-**Modos** (`LIGHTRAG_MODE`): `naive` (solo chunks), `local` (entidades + chunks), `global` (relaciones + chunks), `hybrid` (default, entidades + relaciones + chunks). Todos los modos (excepto naive) deben presentar secciones separadas al LLM. Nota: `graph_primary` existe en el codigo (DAM-3) pero no en el paper original — pendiente de eliminar.
+**Modos** (`LIGHTRAG_MODE`): `naive` (solo chunks), `local` (entidades + chunks), `global` (relaciones + chunks), `hybrid` (default, entidades + relaciones + chunks). Todos los modos (excepto naive) presentan secciones separadas al LLM.
 
 **Fallback**: sin igraph o sin LLM → degrada a SimpleVectorRetriever puro.
 
@@ -93,7 +93,7 @@ Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, E
 
 | # | Divergencia | Criticidad | Detalle |
 |---|---|---|---|
-| 4+5 | **Pipeline de consumo diverge del paper** — el original presenta entidades, relaciones y chunks como secciones separadas al LLM sin fusion; aqui se fusionan via RRF en un ranking unico de doc_ids | **9/10** | Cada modo (`local`, `global`, `hybrid`) debe recopilar entidades, relaciones y/o chunks de forma independiente y presentarlos como secciones separadas al LLM (`"Knowledge Graph Data:"` + `"Document Chunks:"`) con token budgets propios (`max_entity_tokens`, `max_relation_tokens`). CH_LIRAG convierte todo a scores de documentos y fusiona via RRF (`core.py:reciprocal_rank_fusion()`, `retriever.py:_full_fusion()`/`_vector_first_fusion()`), descartando la granularidad entity/relation. El codigo para generar contexto estructurado existe (`format_structured_context()` en `retrieval_executor.py:195-266`, invocado desde `generation_executor.py:89-103`), pero `_fuse_with_graph()` no propaga `kg_entities`/`kg_relations` al metadata — el contexto estructurado nunca se genera. Ademas, `graph_primary` (DAM-3) no existe en el paper y debe eliminarse. Fix: (1) eliminar RRF entre canales KG y vector — cada canal mantiene resultados independientes, (2) propagar `kg_entities`/`kg_relations` y presentar secciones separadas al LLM, (3) eliminar `graph_primary`. |
+| 4+5 | ~~**Pipeline de consumo diverge del paper**~~ | ~~9/10~~ | **Resuelto.** RRF eliminado (`reciprocal_rank_fusion()`, `_full_fusion()`, `_vector_first_fusion()`, `_fuse_with_graph()` eliminados). `_enrich_with_graph()` recopila entidades y relaciones relevantes a la query via VDB y las propaga en `retrieval_metadata` como `kg_entities`/`kg_relations`. `generation_executor.py:89-103` invoca `format_structured_context()` que presenta secciones separadas al LLM. `graph_primary` (DAM-3) eliminado. |
 | 6 | ~~**Reranker post-fusion anula senal del grafo**~~ | ~~8/10~~ | **Resuelto.** El `CrossEncoderReranker` ahora se desactiva automaticamente cuando `strategy=LIGHT_RAG` (`retrieval_executor.py:100-105`). Se mantiene activo para `SIMPLE_VECTOR`. |
 | 7 | **Sin token budgets separados por tipo** — el original asigna presupuesto independiente a entidades, relaciones y chunks | **5/10** | Un unico `max_context_chars` se aplica al contexto concatenado. Las descripciones de entidades/relaciones compiten con los chunks por el mismo espacio, en vez de tener presupuesto garantizado. Subsumida por #4+5: el fix de presentar secciones separadas requiere token budgets independientes (`max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens`). |
 
@@ -188,12 +188,11 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ### Alinear pipeline LIGHT_RAG con el paper original
 
-F.5 demostro que la indexacion KG funciona pero el pipeline de consumo no. Acciones ordenadas por impacto:
+F.5 demostro que la indexacion KG funciona pero el pipeline de consumo no. Divergencias #4+5 y #6 resueltas. Pendiente:
 
 | Prioridad | Tarea | Divergencia | Descripcion |
 |---|---|---|---|
-| **P0** | Contexto estructurado al LLM | #4+5 | Eliminar RRF entre canales KG y vector. Cada canal mantiene resultados independientes y se presenta como secciones separadas al LLM con token budgets propios (`max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens`). Eliminar `graph_primary` (DAM-3). Limpiar funciones huerfanas: `reciprocal_rank_fusion()`, `_full_fusion()`, `_vector_first_fusion()`, `_fuse_with_graph()`. Requiere refactor de `retriever.py`, `retrieval_executor.py:format_structured_context()` y `generation_executor.py` |
-| **P1** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado |
+| **P0** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado para validar que el KG aporta mejora medible |
 
 ### Limitaciones conocidas (no accionables)
 

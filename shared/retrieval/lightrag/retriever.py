@@ -40,7 +40,6 @@ from ..core import (
     RetrievalResult,
     RetrievalStrategy,
     SimpleVectorRetriever,
-    reciprocal_rank_fusion,
 )
 from .knowledge_graph import KnowledgeGraph, KGRelation, HAS_IGRAPH
 from .triplet_extractor import TripletExtractor
@@ -70,8 +69,6 @@ class LightRAGRetriever(BaseRetriever):
         kg_max_hops: int = 2,
         kg_max_text_chars: int = 3000,
         kg_max_entities: int = 0,
-        graph_weight: float = 0.3,
-        vector_weight: float = 0.7,
         kg_cache_dir: str = "",
     ):
         super().__init__(config)
@@ -79,20 +76,12 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_max_hops = kg_max_hops
         self._kg_max_text_chars = kg_max_text_chars
         self._kg_max_entities = kg_max_entities
-        self._graph_weight = graph_weight
-        self._vector_weight = vector_weight
         self._kg_cache_dir = Path(kg_cache_dir) if kg_cache_dir else None
-        self._kg_fusion_method = config.kg_fusion_method
-        self._kg_rrf_k = config.kg_rrf_k
         self._kg_keyword_max_tokens = config.kg_keyword_max_tokens
         self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
         self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
-        self._GRAPH_OVERFETCH_FACTOR = config.kg_graph_overfetch_factor
         self._kg_gleaning_rounds = config.kg_gleaning_rounds
         self._lightrag_mode = config.lightrag_mode
-        # DTm-62: Conditional fusion parameters
-        self._fusion_overlap_threshold = config.kg_fusion_overlap_threshold
-        self._fusion_graph_only_cap = config.kg_fusion_graph_only_cap
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -611,45 +600,6 @@ class LightRAGRetriever(BaseRetriever):
         ]
         return ranked
 
-    # -----------------------------------------------------------------
-    # F.1: Chunk selection desde grafo (DTm-76)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _select_chunks_from_graph(
-        entity_results: List[Tuple[str, float]],
-        relationship_results: List[Tuple[str, float]],
-        top_k: int,
-    ) -> Tuple[List[str], List[float]]:
-        """Selecciona y rankea doc_ids combinando entity + relationship results.
-
-        Combina scores de ambos canales (low-level entities y high-level
-        relationships). Docs que aparecen en ambos canales acumulan score.
-        Retorna los top_k doc_ids ordenados por score acumulado.
-
-        Args:
-            entity_results: (doc_id, score) de query_entities / entity VDB.
-            relationship_results: (doc_id, score) de relationship VDB / query_by_keywords.
-            top_k: Maximo de docs a retornar.
-
-        Returns:
-            (doc_ids, scores) ordenados por score descendente.
-        """
-        doc_scores: Dict[str, float] = {}
-        for doc_id, score in entity_results:
-            doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + score
-        for doc_id, score in relationship_results:
-            doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + score
-
-        if not doc_scores:
-            return [], []
-
-        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        ranked = ranked[:top_k]
-        doc_ids = [doc_id for doc_id, _ in ranked]
-        scores = [score for _, score in ranked]
-        return doc_ids, scores
-
     @staticmethod
     def _corpus_fingerprint(
         documents: List[Dict[str, Any]],
@@ -694,12 +644,15 @@ class LightRAGRetriever(BaseRetriever):
     ) -> RetrievalResult:
         """Retrieval con modo configurable (F.4/DTm-79).
 
-        Modos:
+        Modos (paper original):
           naive         — solo vector search (sin KG)
-          graph_primary — grafo como primary retriever, vector fallback (DAM-3)
-          local         — entity VDB + BFS + vector fusion
-          global        — relationship VDB + vector fusion
-          hybrid        — local + global + vector fusion (default)
+          local         — entidades relevantes + vector chunks
+          global        — relaciones relevantes + vector chunks
+          hybrid        — entidades + relaciones + vector chunks (default)
+
+        En local/global/hybrid, el vector search produce el ranking de chunks
+        y el KG aporta contexto complementario (entidades/relaciones) como
+        secciones separadas en metadata. No hay fusion RRF.
         """
         k = top_k or self.config.retrieval_k
         start_time = time.perf_counter()
@@ -709,12 +662,10 @@ class LightRAGRetriever(BaseRetriever):
 
         if mode == "naive" or not graph_available:
             result = self._vector_retriever.retrieve(query, top_k=k)
-        elif mode == "graph_primary":
-            result = self._retrieve_via_graph(query, k)
         else:
-            # local, global, hybrid: vector search + graph fusion
+            # local, global, hybrid: vector search + KG enrichment
             vector_result = self._vector_retriever.retrieve(query, top_k=k)
-            result = self._fuse_with_graph(query, vector_result, k)
+            result = self._enrich_with_graph(query, vector_result, k)
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
         result.strategy_used = (
@@ -731,7 +682,7 @@ class LightRAGRetriever(BaseRetriever):
         query_vector: List[float],
         top_k: Optional[int] = None,
     ) -> RetrievalResult:
-        """Retrieval con vector pre-computado + graph traversal."""
+        """Retrieval con vector pre-computado + KG enrichment."""
         k = top_k or self.config.retrieval_k
         start_time = time.perf_counter()
 
@@ -742,14 +693,11 @@ class LightRAGRetriever(BaseRetriever):
             result = self._vector_retriever.retrieve_by_vector(
                 query_text, query_vector, top_k=k
             )
-        elif mode == "graph_primary":
-            # graph_primary usa query text, no vector pre-computado
-            result = self._retrieve_via_graph(query_text, k)
         else:
             vector_result = self._vector_retriever.retrieve_by_vector(
                 query_text, query_vector, top_k=k
             )
-            result = self._fuse_with_graph(query_text, vector_result, k)
+            result = self._enrich_with_graph(query_text, vector_result, k)
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
         result.strategy_used = (
@@ -761,388 +709,124 @@ class LightRAGRetriever(BaseRetriever):
         return result
 
     # -----------------------------------------------------------------
-    # F.2: Graph as primary retriever (DAM-3)
+    # KG Enrichment: entidades/relaciones como contexto complementario
     # -----------------------------------------------------------------
 
-    def _retrieve_via_graph(
-        self,
-        query: str,
-        top_k: int,
-    ) -> RetrievalResult:
-        """Retrieval con grafo como mecanismo primario (DAM-3).
+    _MAX_CONTEXT_ENTITIES = 30
+    _MAX_CONTEXT_RELATIONS = 30
 
-        Flujo:
-        1. Extraer keywords (low-level + high-level)
-        2. Entity VDB → query_entities() → doc_ids (low-level)
-        3. Relationship VDB → doc_ids (high-level)
-        4. _select_chunks_from_graph() → top_k doc_ids
-        5. Recuperar contenido de ChromaDB
-        6. Si insuficientes resultados, complementar con vector search
-        """
-        if self._kg is None or self._extractor is None:
-            return self._vector_retriever.retrieve(query, top_k=top_k)
-
-        low_level, high_level = self._get_query_keywords(query)
-
-        if not low_level and not high_level:
-            logger.debug("graph_primary: sin keywords, fallback a vector")
-            return self._vector_retriever.retrieve(query, top_k=top_k)
-
-        # Low-level: entidades
-        entity_results: List[Tuple[str, float]] = []
-        if low_level:
-            pre_resolved = None
-            if self._entities_vdb is not None:
-                pre_resolved = self._resolve_entities_via_vdb(low_level)
-            entity_results = self._kg.query_entities(
-                low_level,
-                max_hops=self._kg_max_hops,
-                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
-                pre_resolved=pre_resolved,
-            )
-
-        # High-level: relaciones
-        relationship_results: List[Tuple[str, float]] = []
-        if high_level:
-            if self._relationships_vdb is not None:
-                relationship_results = self._resolve_relationships_via_vdb(
-                    high_level
-                )
-            else:
-                relationship_results = self._kg.query_by_keywords(
-                    high_level,
-                    max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
-                )
-
-        # F.1: Seleccionar chunks desde el grafo
-        graph_doc_ids, graph_scores = self._select_chunks_from_graph(
-            entity_results, relationship_results, top_k,
-        )
-
-        # Recuperar contenido desde ChromaDB
-        final_ids: List[str] = []
-        final_contents: List[str] = []
-        final_scores: List[float] = []
-
-        if graph_doc_ids:
-            contents_map = self._vector_retriever.get_documents_by_ids(
-                graph_doc_ids
-            )
-            for doc_id, score in zip(graph_doc_ids, graph_scores):
-                if doc_id in contents_map:
-                    final_ids.append(doc_id)
-                    final_contents.append(contents_map[doc_id])
-                    final_scores.append(score)
-
-        graph_resolved = len(final_ids)
-        graph_unresolved = len(graph_doc_ids) - graph_resolved
-
-        if graph_unresolved > 0:
-            logger.warning(
-                f"graph_primary: {graph_unresolved}/{len(graph_doc_ids)} "
-                f"docs del grafo sin contenido en ChromaDB"
-            )
-
-        # Fallback: si el grafo produjo menos de top_k/2, complementar con vector
-        vector_fallback_used = False
-        if len(final_ids) < max(top_k // 2, 1):
-            vector_fallback_used = True
-            logger.debug(
-                f"graph_primary: {len(final_ids)} docs insuficientes "
-                f"(< {top_k // 2}), complementando con vector search"
-            )
-            vector_result = self._vector_retriever.retrieve(
-                query, top_k=top_k,
-            )
-            seen = set(final_ids)
-            for doc_id, content, score in zip(
-                vector_result.doc_ids,
-                vector_result.contents,
-                vector_result.scores,
-            ):
-                if doc_id not in seen:
-                    final_ids.append(doc_id)
-                    final_contents.append(content)
-                    # Penalizar docs de fallback para que el grafo domine
-                    final_scores.append(score * 0.5)
-                    seen.add(doc_id)
-                if len(final_ids) >= top_k:
-                    break
-
-        # F.3/DAM-8: Recopilar entidades y relaciones para contexto estructurado
-        _MAX_CONTEXT_ENTITIES = 30
-        _MAX_CONTEXT_RELATIONS = 30
-        kg_entities = self._kg.get_entities_for_docs(
-            final_ids[:top_k]
-        )[:_MAX_CONTEXT_ENTITIES]
-        kg_relations = self._kg.get_relations_for_docs(
-            final_ids[:top_k]
-        )[:_MAX_CONTEXT_RELATIONS]
-
-        return RetrievalResult(
-            doc_ids=final_ids[:top_k],
-            contents=final_contents[:top_k],
-            scores=final_scores[:top_k],
-            vector_scores=[0.0] * min(len(final_ids), top_k),
-            metadata={
-                "graph_primary": True,
-                "graph_docs_requested": len(graph_doc_ids),
-                "graph_resolved": graph_resolved,
-                "graph_unresolved": graph_unresolved,
-                "vector_fallback_used": vector_fallback_used,
-                "query_keywords": {
-                    "low": low_level,
-                    "high": high_level,
-                },
-                "kg_entities": kg_entities,
-                "kg_relations": kg_relations,
-            },
-        )
-
-    def _fuse_with_graph(
+    def _enrich_with_graph(
         self,
         query: str,
         vector_result: RetrievalResult,
         top_k: int,
     ) -> RetrievalResult:
-        """Fusiona resultados de vector search con graph traversal (DTm-62).
+        """Enriquece resultados vectoriales con datos del KG (paper-aligned).
 
-        Conditional fusion: mide overlap entre canales para decidir estrategia.
-        - Señal fuerte (overlap >= threshold): RRF/linear completo
-        - Señal debil (overlap < threshold): vector-first, graph-only al final
-        Previene que graph ruidoso destruya el ranking vectorial.
+        No fusiona rankings. El vector search produce el ranking de chunks
+        (para metricas de retrieval). El KG aporta entidades y relaciones
+        relevantes a la query como contexto complementario en metadata.
+
+        Cada modo determina que canales KG se consultan:
+          local  — entidades (low-level keywords)
+          global — relaciones (high-level keywords)
+          hybrid — entidades + relaciones
         """
         if self._kg is None:
-            raise RuntimeError("_fuse_with_graph llamado sin KnowledgeGraph")
+            raise RuntimeError("_enrich_with_graph llamado sin KnowledgeGraph")
         if self._extractor is None:
-            raise RuntimeError("_fuse_with_graph llamado sin TripletExtractor")
+            raise RuntimeError("_enrich_with_graph llamado sin TripletExtractor")
 
         # Paso 1: Query analysis
         low_level, high_level = self._get_query_keywords(query)
 
         if not low_level and not high_level:
-            vector_result.metadata["graph_docs_added"] = 0
             vector_result.metadata["query_keywords"] = {"low": [], "high": []}
-            vector_result.metadata["fusion_mode"] = "none"
-            vector_result.metadata["overlap_ratio"] = 0.0
+            vector_result.metadata["kg_entities"] = []
+            vector_result.metadata["kg_relations"] = []
             return vector_result
 
-        # Paso 2: Graph traversal (respeta lightrag_mode: local/global/hybrid)
         use_local = self._lightrag_mode in ("local", "hybrid")
         use_global = self._lightrag_mode in ("global", "hybrid")
-        graph_docs: Dict[str, float] = {}
 
-        # Low-level: entidades especificas
+        # Paso 2: Recopilar entidades relevantes a la query (low-level)
+        kg_entities: List[Dict[str, Any]] = []
         if use_local and low_level:
-            pre_resolved = None
-            if self._entities_vdb is not None:
-                pre_resolved = self._resolve_entities_via_vdb(low_level)
-            entity_results = self._kg.query_entities(
-                low_level,
-                max_hops=self._kg_max_hops,
-                max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
-                pre_resolved=pre_resolved,
-            )
-            for doc_id, score in entity_results:
-                graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
+            resolved_names = self._resolve_entities_via_vdb(low_level)
+            if resolved_names:
+                entities = self._kg.get_all_entities()
+                for name in resolved_names:
+                    entity = entities.get(name)
+                    if entity:
+                        kg_entities.append({
+                            "entity": entity.name,
+                            "type": entity.entity_type,
+                            "description": entity.description,
+                        })
+                    if len(kg_entities) >= self._MAX_CONTEXT_ENTITIES:
+                        break
 
-        # High-level: temas abstractos
+        # Paso 3: Recopilar relaciones relevantes a la query (high-level)
+        kg_relations: List[Dict[str, Any]] = []
         if use_global and high_level:
-            if self._relationships_vdb is not None:
-                theme_results = self._resolve_relationships_via_vdb(high_level)
-            else:
-                theme_results = self._kg.query_by_keywords(
-                    high_level,
-                    max_docs=top_k * self._GRAPH_OVERFETCH_FACTOR,
-                )
-            for doc_id, score in theme_results:
-                graph_docs[doc_id] = max(graph_docs.get(doc_id, 0.0), score)
-
-        if not graph_docs:
-            vector_result.metadata["graph_docs_added"] = 0
-            vector_result.metadata["query_keywords"] = {
-                "low": low_level, "high": high_level,
-            }
-            vector_result.metadata["fusion_mode"] = "none"
-            vector_result.metadata["overlap_ratio"] = 0.0
-            return vector_result
-
-        # Paso 3: Build vector ranking and contents map
-        vector_docs: Dict[str, float] = {}
-        vector_contents: Dict[str, str] = {}
-        for doc_id, content, score in zip(
-            vector_result.doc_ids, vector_result.contents, vector_result.scores
-        ):
-            vector_docs[doc_id] = score
-            vector_contents[doc_id] = content
-
-        # Paso 4: Recuperar contenido de graph-only docs desde ChromaDB
-        graph_only_ids = [
-            did for did in graph_docs if did not in vector_contents
-        ]
-        graph_resolved = 0
-        if graph_only_ids:
-            looked_up = self._vector_retriever.get_documents_by_ids(
-                graph_only_ids
-            )
-            for did, content in looked_up.items():
-                vector_contents[did] = content
-                graph_resolved += 1
-        graph_unresolved = len(graph_only_ids) - graph_resolved
-
-        # Paso 5 (DTm-62): Conditional fusion — medir overlap entre canales
-        overlap = set(vector_docs.keys()) & set(graph_docs.keys())
-        # max() para ser conservador: evita falsa señal fuerte cuando un
-        # canal devuelve pocos resultados (ej. 1 vector + 100 graph → min=1
-        # daria overlap_ratio=1.0, pero max=100 da ratio mas realista).
-        denominator = max(len(vector_docs), len(graph_docs)) if (vector_docs and graph_docs) else 1
-        overlap_ratio = len(overlap) / denominator if denominator > 0 else 0.0
-        strong_signal = overlap_ratio >= self._fusion_overlap_threshold
-
-        if strong_signal:
-            fusion_mode = "full_rrf"
-            fused_scores = self._full_fusion(
-                vector_docs, graph_docs, top_k,
-            )
-        else:
-            fusion_mode = "vector_first"
-            graph_only_cap = max(1, int(top_k * self._fusion_graph_only_cap + 0.5))
-            fused_scores = self._vector_first_fusion(
-                vector_result, graph_docs, vector_contents,
-                top_k, graph_only_cap,
-            )
+            kg_relations = self._resolve_relations_for_context(high_level)
 
         logger.debug(
-            f"DTm-62 conditional fusion: overlap={len(overlap)}/{denominator} "
-            f"({overlap_ratio:.2f}), mode={fusion_mode}"
+            f"KG enrichment: {len(kg_entities)} entities, "
+            f"{len(kg_relations)} relations for query '{query[:60]}...'"
         )
 
-        # Paso 6: Construir resultado (solo docs con contenido)
-        final_ids = []
-        final_contents = []
-        final_scores = []
+        # Paso 4: Retornar resultado vectorial con KG data en metadata
+        vector_result.metadata["query_keywords"] = {
+            "low": low_level, "high": high_level,
+        }
+        vector_result.metadata["kg_entities"] = kg_entities
+        vector_result.metadata["kg_relations"] = kg_relations
+        return vector_result
 
-        for doc_id, score in fused_scores:
-            if doc_id in vector_contents:
-                final_ids.append(doc_id)
-                final_contents.append(vector_contents[doc_id])
-                final_scores.append(score)
-            if len(final_ids) >= top_k:
-                break
-
-        result = RetrievalResult(
-            doc_ids=final_ids,
-            contents=final_contents,
-            scores=final_scores,
-            vector_scores=[vector_docs.get(d, 0.0) for d in final_ids],
-            retrieval_time_ms=0.0,
-            strategy_used=RetrievalStrategy.LIGHT_RAG,
-            metadata={
-                "graph_only_candidates": len(graph_only_ids),
-                "graph_resolved": graph_resolved,
-                "graph_unresolved": graph_unresolved,
-                "query_keywords": {
-                    "low": low_level,
-                    "high": high_level,
-                },
-                "graph_candidates": len(graph_docs),
-                "vector_candidates": len(vector_docs),
-                "fusion_mode": fusion_mode,
-                "overlap_ratio": round(overlap_ratio, 4),
-                "overlap_count": len(overlap),
-            },
-        )
-
-        if graph_unresolved > 0:
-            logger.warning(
-                f"LightRAG fusion: {graph_unresolved}/{len(graph_only_ids)} "
-                f"graph-only docs sin contenido en ChromaDB (excluidos)"
-            )
-
-        return result
-
-    def _full_fusion(
+    def _resolve_relations_for_context(
         self,
-        vector_docs: Dict[str, float],
-        graph_docs: Dict[str, float],
-        top_k: int,
-    ) -> List[Tuple[str, float]]:
-        """RRF o linear fusion completo (señal graph fuerte)."""
-        use_rrf = (self._kg_fusion_method != "linear")
+        keywords: List[str],
+        top_k: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Resuelve high-level keywords a relaciones con sus descripciones.
 
-        if not use_rrf:
-            max_graph_score = max(graph_docs.values()) if graph_docs else 1.0
-            if max_graph_score > 0:
-                graph_docs = {k: v / max_graph_score for k, v in graph_docs.items()}
-            max_vector_score = max(vector_docs.values()) if vector_docs else 1.0
-            if max_vector_score > 0:
-                vector_docs = {k: v / max_vector_score for k, v in vector_docs.items()}
-
-            if max_graph_score == 0 and max_vector_score == 0:
-                logger.warning(
-                    "Linear fusion: scores all-zero, fallback a RRF"
-                )
-                use_rrf = True
-
-        if not use_rrf:
-            all_doc_ids = set(vector_docs.keys()) | set(graph_docs.keys())
-            fused: List[Tuple[str, float]] = []
-            for doc_id in all_doc_ids:
-                v_score = vector_docs.get(doc_id, 0.0)
-                g_score = graph_docs.get(doc_id, 0.0)
-                combined = self._vector_weight * v_score + self._graph_weight * g_score
-                fused.append((doc_id, combined))
-            fused.sort(key=lambda x: x[1], reverse=True)
-            return fused
-
-        vector_ranking = sorted(
-            vector_docs.items(), key=lambda x: x[1], reverse=True
-        )
-        graph_ranking = sorted(
-            graph_docs.items(), key=lambda x: x[1], reverse=True
-        )
-        return reciprocal_rank_fusion(
-            rankings=[vector_ranking, graph_ranking],
-            weights=[self._vector_weight, self._graph_weight],
-            k=self._kg_rrf_k,
-            top_n=top_k,
-        )
-
-    def _vector_first_fusion(
-        self,
-        vector_result: RetrievalResult,
-        graph_docs: Dict[str, float],
-        contents_map: Dict[str, str],
-        top_k: int,
-        graph_only_cap: int,
-    ) -> List[Tuple[str, float]]:
-        """Vector-first fusion (señal graph debil, DTm-62).
-
-        Mantiene ranking vectorial intacto. Solo append graph-only docs
-        al final, limitados por graph_only_cap.
+        En lugar de retornar doc_ids (como hacia _resolve_relationships_via_vdb),
+        retorna las descripciones de las relaciones encontradas para presentar
+        como seccion separada al LLM.
         """
-        result: List[Tuple[str, float]] = []
+        if not self._relationships_vdb or not keywords:
+            return []
+
         seen: set = set()
+        relations: List[Dict[str, Any]] = []
 
-        # Primero: todos los docs vectoriales en su orden original
-        for doc_id, score in zip(vector_result.doc_ids, vector_result.scores):
-            result.append((doc_id, score))
-            seen.add(doc_id)
+        for keyword in keywords:
+            if not keyword.strip():
+                continue
+            results = self._relationships_vdb.similarity_search_with_score(
+                keyword, k=top_k,
+            )
+            for doc, distance in results:
+                if distance > self._RELATIONSHIP_VDB_MAX_DISTANCE:
+                    continue
+                source = doc.metadata.get("source_entity", "")
+                target = doc.metadata.get("target_entity", "")
+                relation = doc.metadata.get("relation", "")
+                key = (source, target, relation)
+                if key in seen:
+                    continue
+                seen.add(key)
+                relations.append({
+                    "source": source,
+                    "target": target,
+                    "relation": relation,
+                    "description": doc.page_content,
+                })
+                if len(relations) >= self._MAX_CONTEXT_RELATIONS:
+                    return relations
 
-        # Segundo: graph-only docs, ordenados por graph score, limitados por cap
-        graph_only = [
-            (did, score) for did, score in graph_docs.items()
-            if did not in seen and did in contents_map
-        ]
-        graph_only.sort(key=lambda x: x[1], reverse=True)
-
-        for doc_id, g_score in graph_only[:graph_only_cap]:
-            # Score bajo para que no compitan con vector docs en downstream ranking
-            min_vector_score = result[-1][1] if result else 0.0
-            penalized_score = min_vector_score * 0.5
-            result.append((doc_id, penalized_score))
-
-        return result
+        return relations
 
     def _get_query_keywords(
         self, query: str,

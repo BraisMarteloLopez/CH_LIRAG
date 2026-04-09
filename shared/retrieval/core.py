@@ -49,35 +49,20 @@ class RetrievalConfig:
     # total: ChromaDB no soporta hnsw:random_seed. Ver DTm-13.
     hnsw_num_threads: int = 1
 
-    # Graph expansion cap (LIGHT_RAG). 0 = sin limite.
-    max_graph_expansion: int = 30
-
     # Knowledge graph (LIGHT_RAG)
     kg_max_hops: int = 1  # DAM-7: 1-hop como el original, configurable via KG_MAX_HOPS
     kg_max_text_chars: int = 3000
     kg_max_entities: int = 0
-    kg_graph_weight: float = 0.3
-    kg_vector_weight: float = 0.7
     kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
-    kg_fusion_method: str = "rrf"  # "rrf" (default) o "linear"
-    kg_rrf_k: int = 60  # Constante k para RRF
     kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
     kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
     kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction (DTm-67)
-    kg_graph_overfetch_factor: int = 2  # graph traversal pide N * top_k candidatos
     kg_gleaning_rounds: int = 0  # DAM-6: rounds de re-extraccion (0 = desactivado)
-    lightrag_mode: str = "hybrid"  # F.4/DTm-79: "hybrid" (default), "graph_primary", "local", "global", "naive"
+    lightrag_mode: str = "hybrid"  # Modos del paper: "hybrid" (default), "local", "global", "naive"
 
     # DAM-4: LLM synthesis para merge de descripciones de entidades multi-doc.
-    # Cuando activado, entidades con descripciones concatenadas que excedan
-    # kg_synthesis_char_threshold se sintetizan via LLM map-reduce.
-    # Sin esto, se concatenan con " | " (rapido pero ruidoso).
     kg_description_synthesis: bool = False  # A5.1: activar LLM synthesis
     kg_synthesis_char_threshold: int = 200  # chars minimos para trigger LLM synthesis
-
-    # DTm-62: Conditional fusion — previene que graph ruidoso destruya ranking vectorial
-    kg_fusion_overlap_threshold: float = 0.3  # overlap ratio minimo para RRF completo
-    kg_fusion_graph_only_cap: float = 0.2  # max fraccion de top_k que pueden ser graph-only docs
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
@@ -86,25 +71,17 @@ class RetrievalConfig:
             strategy=RetrievalStrategy[_env("RETRIEVAL_STRATEGY", "SIMPLE_VECTOR")],
             retrieval_k=_env_int("RETRIEVAL_K", 20),
             hnsw_num_threads=_env_int("HNSW_NUM_THREADS", 1),
-            max_graph_expansion=_env_int("MAX_GRAPH_EXPANSION", 30),
             kg_max_hops=_env_int("KG_MAX_HOPS", 1),
             kg_max_text_chars=_env_int("KG_MAX_TEXT_CHARS", 3000),
             kg_max_entities=_env_int("KG_MAX_ENTITIES", 0),
-            kg_graph_weight=_env_float("KG_GRAPH_WEIGHT", 0.3),
-            kg_vector_weight=_env_float("KG_VECTOR_WEIGHT", 0.7),
             kg_cache_dir=_env("KG_CACHE_DIR", ""),
-            kg_fusion_method=_env("KG_FUSION_METHOD", "rrf"),
-            kg_rrf_k=_env_int("KG_RRF_K", 60),
             kg_keyword_max_tokens=_env_int("KG_KEYWORD_MAX_TOKENS", 1024),
             kg_extraction_max_tokens=_env_int("KG_EXTRACTION_MAX_TOKENS", 4096),
             kg_batch_docs_per_call=_env_int("KG_BATCH_DOCS_PER_CALL", 5),
-            kg_graph_overfetch_factor=_env_int("KG_GRAPH_OVERFETCH_FACTOR", 2),
             kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
             lightrag_mode=_env("LIGHTRAG_MODE", "hybrid"),
             kg_description_synthesis=_env("KG_DESCRIPTION_SYNTHESIS", "false").lower() == "true",
             kg_synthesis_char_threshold=_env_int("KG_SYNTHESIS_CHAR_THRESHOLD", 200),
-            kg_fusion_overlap_threshold=_env_float("KG_FUSION_OVERLAP_THRESHOLD", 0.3),
-            kg_fusion_graph_only_cap=_env_float("KG_FUSION_GRAPH_ONLY_CAP", 0.2),
         )
 
 
@@ -356,54 +333,10 @@ class SimpleVectorRetriever(BaseRetriever):
         logger.debug("Indice limpiado")
 
 
-# =============================================================================
-# RECIPROCAL RANK FUSION (RRF)
-# =============================================================================
-
-def reciprocal_rank_fusion(
-    rankings: List[List[Tuple[str, float]]],
-    weights: Optional[List[float]] = None,
-    k: int = 60,
-    top_n: int = 10,
-) -> List[Tuple[str, float]]:
-    """
-    Fusiona multiples rankings usando RRF.
-    RRF_score(d) = SUM weight_i / (k + rank_i(d))
-    """
-    if not rankings:
-        return []
-
-    num_rankings = len(rankings)
-
-    if weights is None or len(weights) != num_rankings:
-        if weights is not None and len(weights) != num_rankings:
-            logger.warning(
-                f"weights ({len(weights)}) != rankings ({num_rankings}). "
-                "Pesos iguales."
-            )
-        weights = [1.0 / num_rankings] * num_rankings
-
-    rrf_scores: Dict[str, float] = {}
-
-    for ranking_idx, ranking in enumerate(rankings):
-        weight = weights[ranking_idx]
-        for rank, (doc_id, _score) in enumerate(ranking, start=1):
-            rrf_contribution = weight / (k + rank)
-            rrf_scores[doc_id] = (
-                rrf_scores.get(doc_id, 0.0) + rrf_contribution
-            )
-
-    sorted_results = sorted(
-        rrf_scores.items(), key=lambda x: x[1], reverse=True
-    )
-    return sorted_results[:top_n]
-
-
 __all__ = [
     "RetrievalStrategy",
     "RetrievalConfig",
     "RetrievalResult",
     "BaseRetriever",
     "SimpleVectorRetriever",
-    "reciprocal_rank_fusion",
 ]
