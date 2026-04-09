@@ -179,7 +179,6 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 ## Que NO tocar sin contexto
 
 - `DatasetType.HYBRID` en `shared/types.py` — es un tipo de dataset (tiene respuesta textual), NO una estrategia de retrieval
-- `reciprocal_rank_fusion()` en `core.py` — la usa LIGHT_RAG, no es legacy
 - `shared/config_base.py` — la importan todos los modulos, cambios rompen todo
 - Tests de integracion (`tests/integration/`) — dependen de NIM + MinIO reales
 - `requirements.lock` — es un pin de produccion, no tocar sin razon
@@ -194,7 +193,7 @@ F.5 demostro que la indexacion KG funciona pero el pipeline de consumo no. Accio
 | Prioridad | Tarea | Divergencia | Descripcion |
 |---|---|---|---|
 | **P0** | Desactivar reranker para LIGHT_RAG | #6 | Cambio trivial, desbloquea senal KG. Mantener para `SIMPLE_VECTOR` |
-| **P0** | Contexto estructurado al LLM | #4+5 | Eliminar RRF entre canales KG y vector. Cada canal mantiene resultados independientes y se presenta como secciones separadas al LLM con token budgets propios (`max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens`). Eliminar `graph_primary` (DAM-3). Requiere refactor de `_fuse_with_graph()`, `retrieval_executor.py:format_structured_context()` y `generation_executor.py` |
+| **P0** | Contexto estructurado al LLM | #4+5 | Eliminar RRF entre canales KG y vector. Cada canal mantiene resultados independientes y se presenta como secciones separadas al LLM con token budgets propios (`max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens`). Eliminar `graph_primary` (DAM-3). Limpiar funciones huerfanas: `reciprocal_rank_fusion()`, `_full_fusion()`, `_vector_first_fusion()`, `_fuse_with_graph()`. Requiere refactor de `retriever.py`, `retrieval_executor.py:format_structured_context()` y `generation_executor.py` |
 | **P1** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado |
 
 ### Limitaciones conocidas (no accionables)
