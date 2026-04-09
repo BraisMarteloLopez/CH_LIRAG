@@ -30,7 +30,11 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 # Modulos de infraestructura que pueden no estar disponibles.
+# Si no estan instalados, se inyecta MagicMock para que los imports
+# no fallen. dotenv se incluye porque config_base.py lo importa
+# en top-level (load_dotenv() como MagicMock es no-op, aceptable en tests).
 _INFRA_MODULES = [
+    "dotenv",
     "boto3",
     "botocore",
     "botocore.exceptions",

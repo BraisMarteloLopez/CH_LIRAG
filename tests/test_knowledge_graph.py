@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+igraph = pytest.importorskip("igraph", reason="igraph required for KnowledgeGraph tests")
+
 from shared.retrieval.lightrag.knowledge_graph import KGEntity, KGRelation, KnowledgeGraph
 
 

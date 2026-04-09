@@ -136,7 +136,7 @@ Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, se
 | 3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
 | 4 | LLM Judge puede devolver scores por defecto | **MEDIO-BAJO** | `metrics.py:_extract_score_fallback()` intenta 3 regex patterns (fraccion, decimal, entero con prefijo); si todos fallan retorna 0.5 — sesga metricas silenciosamente. Se logea a WARNING. Deuda a largo plazo: la mitigacion real requiere mas contexto de ventana y/o un modelo judge mas capaz que produzca respuestas estructuradas consistentemente | Post-run, buscar `"Score extraction fallback"` en logs y contar ocurrencias |
 | 5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). Puede truncar docs importantes. Se logea WARNING | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` |
-| 6 | Suite de tests no portable | **CRITICO** | `conftest.py` mockea boto3/langchain/chromadb pero no `python-dotenv` ni `igraph`. 17 archivos fallan en coleccion (dotenv), 65 tests fallan (igraph). Solo 14 de ~447 pasan en un entorno limpio. Ver seccion "Estado real de tests" abajo | Crear `requirements-test.txt` con todas las dependencias de test, o añadir dotenv+igraph a la lista de mocks en conftest.py |
+| 6 | ~~Suite de tests no portable~~ | ~~CRITICO~~ | **Resuelto.** `conftest.py` ahora mockea `dotenv` (ademas de boto3/langchain/chromadb). `test_knowledge_graph.py` usa `pytest.importorskip("igraph")` para skip limpio sin igraph. Con `python-igraph` + `snowballstemmer` instalados: 409 pasan, 6 skipped. Sin igraph: 344 pasan, 65 skipped |
 | 7 | Validacion empirica pendiente post-refactor | **MEDIO** | F.5 completado para ambas estrategias (125q, 4000 docs, seed=42). Resultados confirman que LIGHT_RAG no aporta valor con la arquitectura actual (metricas identicas a SIMPLE_VECTOR). Pendiente: re-ejecutar tras alinear pipeline con el paper (ver divergencias #4+5 y #6) para validar que el KG aporta mejora medible | Implementar fixes de divergencias #4+5 y #6 primero, luego re-run F.5 |
 | 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, la infraestructura (checkpoint, preflight, JSONL, export dual, subset selection, DEV_MODE) es considerable. Sin embargo, el run F.5 demostro que esta infraestructura funciona y es util en practica | Aceptado — la infraestructura se justifica con uso real |
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
@@ -154,25 +154,15 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ## Test coverage
 
-| Metrica | Valor declarado | Valor real (entorno limpio, abril 2026) |
-|---|---|---|
-| Tests unitarios | 447 en 38 archivos | **14 pasan**, 65 fallan, 17 archivos con error de coleccion |
-| Tests integracion | 19 en 3 archivos | No verificados (requieren NIM + MinIO) |
-| mypy | 0 errores (27 source files) | No verificado |
+| Metrica | Valor (abril 2026) |
+|---|---|
+| Tests unitarios | **409 pasan**, 6 skipped (integracion marker) en entorno con igraph+snowballstemmer. Sin igraph: 344 pasan, 65 skipped |
+| Tests integracion | 19 en 3 archivos, requieren NIM + MinIO reales |
+| mypy | 0 errores (27 source files) — no verificado en entorno limpio |
 
-### Estado real de tests
+### Portabilidad de tests
 
-**La suite de tests no es portable.** Ejecutar `pytest tests/ -m "not integration"` en un entorno limpio produce:
-
-- **17 archivos con ERROR de coleccion**: `ModuleNotFoundError: No module named 'dotenv'`. `conftest.py` mockea boto3, langchain y chromadb, pero omite `python-dotenv` (importado por `shared/config_base.py`).
-- **65 tests FALLAN** (tras instalar dotenv): todos los tests de `test_knowledge_graph.py` requieren `igraph` real — no hay mock ni skip condicional.
-- **14 tests pasan**: solo los que no dependen de config_base ni igraph.
-
-**Causa raiz**: `conftest.py` lineas 33-44 lista los modulos a mockear, pero falta `dotenv` e `igraph`. Los tests de KG asumen igraph instalado sin fallback.
-
-**Implicacion**: la cifra "447 tests passing" solo es valida en el entorno de desarrollo del autor. Nadie mas puede verificarla.
-
-**Fix necesario**: añadir `python-dotenv` e `python-igraph` a un `requirements-test.txt`, o incluirlos en la lista de mocks de `conftest.py`.
+`conftest.py` mockea modulos de infra (dotenv, boto3, langchain, chromadb) si no estan instalados. `test_knowledge_graph.py` usa `pytest.importorskip("igraph")` para skip limpio sin igraph. Dependencias opcionales para suite completa: `python-igraph`, `snowballstemmer`.
 
 **Referencia completa**: ver `TESTS.md` — mapa test→produccion, atributos `object.__new__()`, trampas de mock, gaps de cobertura, reglas de modificacion.
 
