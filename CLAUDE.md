@@ -125,7 +125,7 @@ Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, se
 
 **Todas las metricas de retrieval son identicas query por query.** El KG aporto ~49 docs exclusivos por query, pero el reranker colapso el ranking final al mismo top-20 que SIMPLE_VECTOR. Las 10 diferencias en generacion son no-determinismo del LLM (mismo contexto, distinta respuesta).
 
-**Conclusion**: la indexacion KG funciona correctamente (23K entidades, 55K relaciones, 32K co-occurrence edges), pero las divergencias #4/#5/#6 impiden que su senal llegue al LLM.
+**Conclusion**: la indexacion KG funciona correctamente (23K entidades, 55K relaciones, 32K co-occurrence edges), pero las divergencias #4+5 y #6 impiden que su senal llegue al LLM.
 
 ## Deuda tecnica vigente
 
@@ -193,11 +193,9 @@ F.5 demostro que la indexacion KG funciona pero el pipeline de consumo no. Accio
 
 | Prioridad | Tarea | Divergencia | Descripcion |
 |---|---|---|---|
-| **P0** | Contexto estructurado al LLM | #4 | Pasar entidades + relaciones + chunks como secciones separadas en el prompt, con token budgets independientes. Requiere refactor de `retrieval_executor.py:format_structured_context()` y `generation_executor.py` |
-| **P0** | Eliminar RRF entre KG y vector | #5 | No fusionar en un ranking unico. Cada canal (entidades, relaciones, vector chunks) mantiene su propio conjunto de resultados. El LLM decide que es relevante |
-| **P1** | Desactivar reranker para LIGHT_RAG | #6 | Flag `RERANKER_SKIP_FOR_LIGHT_RAG` o desactivar incondicionalmente cuando strategy=LIGHT_RAG. El cross-encoder single-hop es incompatible con retrieval multi-hop |
-| **P2** | Token budgets por tipo | #7 | `max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens` en config, en vez de un unico `max_context_chars` |
-| **P3** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado |
+| **P0** | Desactivar reranker para LIGHT_RAG | #6 | Cambio trivial, desbloquea senal KG. Mantener para `SIMPLE_VECTOR` |
+| **P0** | Contexto estructurado al LLM | #4+5 | Eliminar RRF entre canales KG y vector. Cada canal mantiene resultados independientes y se presenta como secciones separadas al LLM con token budgets propios (`max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens`). Eliminar `graph_primary` (DAM-3). Requiere refactor de `_fuse_with_graph()`, `retrieval_executor.py:format_structured_context()` y `generation_executor.py` |
+| **P1** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado |
 
 ### Limitaciones conocidas (no accionables)
 
