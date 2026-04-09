@@ -150,7 +150,7 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 | Ubicacion | Contexto |
 |---|---|
 | `reranker.py:147` | Reranking error — retorna fallback sin rerank |
-| `vector_store.py:125, 141, 178` | Operaciones ChromaDB — retorna lista vacia |
+| `vector_store.py:126, 142, 179, 232, 247` | Operaciones ChromaDB — retorna fallback (lista vacia, dict vacio, o continua cleanup) |
 
 ## Test coverage
 
