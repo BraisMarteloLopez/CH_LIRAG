@@ -67,8 +67,6 @@ def get_retriever(
             kg_max_hops=config.kg_max_hops,
             kg_max_text_chars=config.kg_max_text_chars,
             kg_max_entities=config.kg_max_entities,
-            graph_weight=config.kg_graph_weight,
-            vector_weight=config.kg_vector_weight,
             kg_cache_dir=config.kg_cache_dir,
         )
 

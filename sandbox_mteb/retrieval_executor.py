@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.types import QueryRetrievalDetail
-from shared.retrieval.core import BaseRetriever
+from shared.retrieval.core import BaseRetriever, RetrievalStrategy
 from shared.retrieval.reranker import CrossEncoderReranker
 
 from .config import MTEBConfig
@@ -97,7 +97,13 @@ class RetrievalExecutor:
                             f"la estrategia configurada."
                         )
 
-            if self._reranker:
+            # Paper LightRAG no usa reranker — cross-encoder single-hop
+            # penaliza docs multi-hop del KG (divergencia #6).
+            use_reranker = (
+                self._reranker
+                and configured_strategy != RetrievalStrategy.LIGHT_RAG
+            )
+            if use_reranker:
                 fetch_k = self._config.reranker.fetch_k or (self._config.reranker.top_n * 3)
                 # Garantizar que fetch_k >= retrieval_k para que las metricas
                 # pre-rerank tengan suficientes candidatos (DTm-35).

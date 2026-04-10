@@ -43,10 +43,7 @@ Archivos: `test_lightrag_fusion.py:_make_lightrag()`, `test_dtm38_strategy_guard
 
 ```python
 retriever.config = RetrievalConfig()
-retriever._graph_weight = 0.3
-retriever._vector_weight = 0.7
 retriever._kg_max_hops = 2
-retriever._GRAPH_OVERFETCH_FACTOR = 2
 retriever._kg = MagicMock(spec=KnowledgeGraph)  # o None
 retriever._extractor = MagicMock()               # o None
 retriever._has_graph = True
@@ -55,12 +52,8 @@ retriever._query_keywords_cache = OrderedDict()
 retriever._cache_lock = threading.Lock()
 retriever._QUERY_CACHE_MAX_SIZE = 10_000
 retriever._vector_retriever = MagicMock()
-retriever._kg_fusion_method = "rrf"
-retriever._kg_rrf_k = 60
 retriever._entities_vdb = None
 retriever._relationships_vdb = None
-retriever._fusion_overlap_threshold = 0.3   # DTm-62
-retriever._fusion_graph_only_cap = 0.2      # DTm-62
 ```
 
 ### TripletExtractor
@@ -136,9 +129,8 @@ loader._manifest = None
 | test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
 | test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
 | test_gleaning.py | shared/retrieval/lightrag/triplet_extractor.py | 6 | glean_from_doc_async |
-| test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 45 | _fuse_with_graph, fingerprint, VDBs, modes, DTm-62 conditional fusion |
+| test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 20 | _enrich_with_graph, fingerprint, VDBs, modes |
 | test_simple_vector_retriever.py | shared/retrieval/core.py | 10 | retrieve, retrieve_by_vector, index_documents, clear_index, get_documents_by_ids |
-| test_dtm4_rrf.py | shared/retrieval/core.py | 11 | reciprocal_rank_fusion |
 | test_dt8_09_10_11_reranker_sort.py | shared/retrieval/reranker.py | 3 | rerank sorting |
 | test_reranker.py | shared/retrieval/reranker.py | 8 | empty passthrough, ordering, top_n, vector_scores, error fallback, metadata |
 | test_report.py | shared/report.py | 13 | to_json, to_summary_csv, to_detail_csv, export, LIGHT_RAG columns |
