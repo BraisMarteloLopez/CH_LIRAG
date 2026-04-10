@@ -7,9 +7,9 @@ Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de 
 | Estrategia | Indexacion | Busqueda | Reranker |
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
-| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + Graph traversal + Fusion RRF | Opcional |
+| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + KG enrichment (secciones separadas) | Opcional |
 
-**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM. Entity VDB + Relationship VDB para resolucion semantica. 5 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `graph_primary`, `local`, `global`, `naive`. Sin `igraph` o sin LLM → degrada a vector search puro.
+**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM. Entity VDB + Relationship VDB para resolucion semantica. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Sin `igraph` o sin LLM → degrada a vector search puro.
 
 ## Arquitectura
 
@@ -108,7 +108,7 @@ RETRIEVAL_STRATEGY=SIMPLE_VECTOR      # SIMPLE_VECTOR | LIGHT_RAG
 RETRIEVAL_K=20
 
 # Knowledge Graph (solo LIGHT_RAG)
-LIGHTRAG_MODE=hybrid                  # hybrid | graph_primary | local | global | naive
+LIGHTRAG_MODE=hybrid                  # hybrid | local | global | naive
 KG_MAX_HOPS=1                         # Profundidad BFS (1-hop como el original)
 KG_GRAPH_WEIGHT=0.3                   # Peso graph en fusion (vector = 0.7)
 KG_FUSION_METHOD=rrf                  # rrf (default) o linear
@@ -167,7 +167,7 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 
 **Ronda 2 (robustez):** LRU cache keywords, thread safety, fallbacks, stats.
 
-**Fases A-F (alineacion con original):** Entity VDB, Relationship VDB, description merging, gleaning, graph_primary mode, contexto estructurado. Pendiente: F.5 (run comparativo).
+**Fases A-F (alineacion con original):** Entity VDB, Relationship VDB, description merging, gleaning, contexto estructurado. RRF eliminado, pipeline alineado con el paper. Pendiente: F.5 (run comparativo post-refactor).
 
 **Fase H (hardening):** Bare excepts con logging, dead code eliminado, validacion sub-configs.
 
