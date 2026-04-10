@@ -110,8 +110,6 @@ RETRIEVAL_K=20
 # Knowledge Graph (solo LIGHT_RAG)
 LIGHTRAG_MODE=hybrid                  # hybrid | local | global | naive
 KG_MAX_HOPS=1                         # Profundidad BFS (1-hop como el original)
-KG_GRAPH_WEIGHT=0.3                   # Peso graph en fusion (vector = 0.7)
-KG_FUSION_METHOD=rrf                  # rrf (default) o linear
 KG_EXTRACTION_MAX_TOKENS=4096         # Max tokens para triplet extraction
 KG_BATCH_DOCS_PER_CALL=5             # Docs por LLM call en batch
 KG_MAX_ENTITIES=0                     # Cap entidades (0 = default interno 100K)
