@@ -198,53 +198,121 @@ def format_context(contents: List[str], max_length: int) -> str:
     return separator.join(parts)
 
 
+# Divergencia #7: presupuestos proporcionales por seccion segun modo LightRAG.
+# Cada seccion tiene espacio garantizado; el budget no usado se redistribuye a chunks.
+# Ratios alineados con la separacion conceptual del paper HKUDS/LightRAG:
+# entidades (low-level) y relaciones (high-level) como canales independientes.
+_LIGHTRAG_MODE_BUDGETS: Dict[str, Tuple[float, float]] = {
+    # (entity_ratio, relation_ratio) — chunks = 1 - ambos
+    "hybrid": (0.20, 0.20),
+    "local":  (0.30, 0.00),
+    "global": (0.00, 0.30),
+    "naive":  (0.00, 0.00),
+}
+
+# Overhead fijo del header de una seccion KG: "<label>:\n\n```json\n" + "\n```"
+_KG_SECTION_OVERHEAD = 60
+
+
+def _build_kg_section(
+    label: str,
+    items: List[Dict[str, Any]],
+    budget: int,
+) -> str:
+    """Construye una seccion KG respetando el budget. Retorna '' si no cabe nada."""
+    import json
+
+    content_budget = budget - _KG_SECTION_OVERHEAD
+    if content_budget <= 0 or not items:
+        return ""
+
+    lines: List[str] = []
+    used = 0
+    for item in items:
+        line = json.dumps(item, ensure_ascii=False)
+        sep = 1 if lines else 0  # newline separator entre lineas
+        if used + sep + len(line) > content_budget:
+            break
+        lines.append(line)
+        used += sep + len(line)
+
+    if not lines:
+        return ""
+
+    body = "\n".join(lines)
+    return f"{label}:\n\n```json\n{body}\n```"
+
+
 def format_structured_context(
     contents: List[str],
     kg_entities: List[Dict[str, Any]],
     kg_relations: List[Dict[str, Any]],
     max_length: int,
+    mode: str = "hybrid",
 ) -> str:
-    """Formatea contexto con secciones KG estructuradas (F.3/DAM-8).
+    """Formatea contexto con secciones KG estructuradas (F.3/DAM-8, divergencia #7).
 
     Formato alineado con el original HKUDS/LightRAG:
     - Knowledge Graph Data (Entity): JSON lines de entidades
     - Knowledge Graph Data (Relationship): JSON lines de relaciones
     - Document Chunks: contenido de documentos con reference_id
 
-    Las secciones KG tienen prioridad en el budget de caracteres.
-    El espacio restante se asigna a document chunks.
+    Cada seccion recibe un presupuesto de caracteres independiente segun el
+    modo LightRAG. El budget no usado por KG se redistribuye a chunks, de
+    modo que ninguna seccion aplasta a las otras:
+      - hybrid: 20% entidades, 20% relaciones, 60% chunks
+      - local:  30% entidades, 0% relaciones, 70% chunks
+      - global: 0% entidades, 30% relaciones, 70% chunks
+      - naive:  100% chunks (no deberia invocarse aqui; safeguard)
+
+    Args:
+        contents: Chunks de documentos recuperados.
+        kg_entities: Entidades resueltas desde el KG (vacio = seccion omitida).
+        kg_relations: Relaciones resueltas desde el KG (vacio = seccion omitida).
+        max_length: Presupuesto total de caracteres.
+        mode: Modo LightRAG ('hybrid', 'local', 'global', 'naive').
+              Mode desconocido usa defaults de 'hybrid'.
     """
     import json
 
+    entity_ratio, relation_ratio = _LIGHTRAG_MODE_BUDGETS.get(
+        mode, _LIGHTRAG_MODE_BUDGETS["hybrid"]
+    )
+    entity_budget = int(max_length * entity_ratio)
+    relation_budget = int(max_length * relation_ratio)
+    base_chunk_budget = max_length - entity_budget - relation_budget - 100  # buffer separadores
+
     parts: List[str] = []
-    used = 0
+    unused_budget = 0
 
-    # Seccion 1: Entidades
-    if kg_entities:
-        entities_lines = "\n".join(
-            json.dumps(e, ensure_ascii=False) for e in kg_entities
+    # Seccion 1: Entidades (budget propio)
+    if kg_entities and entity_budget > 0:
+        section = _build_kg_section(
+            "Knowledge Graph Data (Entity)", kg_entities, entity_budget,
         )
-        section = (
-            "Knowledge Graph Data (Entity):\n\n"
-            f"```json\n{entities_lines}\n```"
-        )
-        parts.append(section)
-        used += len(section)
+        if section:
+            parts.append(section)
+            unused_budget += max(0, entity_budget - len(section))
+        else:
+            unused_budget += entity_budget
+    else:
+        unused_budget += entity_budget
 
-    # Seccion 2: Relaciones
-    if kg_relations:
-        relations_lines = "\n".join(
-            json.dumps(r, ensure_ascii=False) for r in kg_relations
+    # Seccion 2: Relaciones (budget propio)
+    if kg_relations and relation_budget > 0:
+        section = _build_kg_section(
+            "Knowledge Graph Data (Relationship)", kg_relations, relation_budget,
         )
-        section = (
-            "Knowledge Graph Data (Relationship):\n\n"
-            f"```json\n{relations_lines}\n```"
-        )
-        parts.append(section)
-        used += len(section)
+        if section:
+            parts.append(section)
+            unused_budget += max(0, relation_budget - len(section))
+        else:
+            unused_budget += relation_budget
+    else:
+        unused_budget += relation_budget
 
-    # Seccion 3: Document Chunks (budget restante)
-    chunk_budget = max_length - used - 100  # buffer para separadores
+    # Seccion 3: Chunks (budget base + redistribuido)
+    chunk_budget = base_chunk_budget + unused_budget
     if chunk_budget > 0 and contents:
         chunk_parts: List[str] = []
         chunk_used = 0

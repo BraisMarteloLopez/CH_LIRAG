@@ -95,13 +95,13 @@ Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, E
 |---|---|---|---|
 | 4+5 | ~~**Pipeline de consumo diverge del paper**~~ | ~~9/10~~ | **Resuelto.** RRF eliminado (`reciprocal_rank_fusion()`, `_full_fusion()`, `_vector_first_fusion()`, `_fuse_with_graph()` eliminados). `_enrich_with_graph()` recopila entidades y relaciones relevantes a la query via VDB y las propaga en `retrieval_metadata` como `kg_entities`/`kg_relations`. `generation_executor.py:89-103` invoca `format_structured_context()` que presenta secciones separadas al LLM. `graph_primary` (DAM-3) eliminado. |
 | 6 | ~~**Reranker post-fusion anula senal del grafo**~~ | ~~8/10~~ | **Resuelto.** El `CrossEncoderReranker` ahora se desactiva automaticamente cuando `strategy=LIGHT_RAG` (`retrieval_executor.py:100-105`). Se mantiene activo para `SIMPLE_VECTOR`. |
-| 7 | **Sin token budgets separados por tipo** — el original asigna presupuesto independiente a entidades, relaciones y chunks | **5/10** | Un unico `max_context_chars` se aplica al contexto concatenado. Las descripciones de entidades/relaciones compiten con los chunks por el mismo espacio, en vez de tener presupuesto garantizado. Subsumida por #4+5: el fix de presentar secciones separadas requiere token budgets independientes (`max_entity_tokens`, `max_relation_tokens`, `max_chunk_tokens`). |
+| 7 | ~~**Sin token budgets separados por tipo**~~ | ~~5/10~~ | **Resuelto.** `format_structured_context()` en `retrieval_executor.py` ahora divide `max_context_chars` en presupuestos proporcionales segun el modo LightRAG: `hybrid` (20%/20%/60%), `local` (30%/0%/70%), `global` (0%/30%/70%). Budget no usado por KG se redistribuye a chunks, evitando que ninguna seccion aplaste a las otras. `generation_executor.py:89-107` propaga `lightrag_mode` desde `retrieval_metadata`. **Pendiente validacion empirica** (ver deuda tecnica #7). |
 
 ### Divergencias menores (preexistentes)
 
 | # | Divergencia | Criticidad | Estado |
 |---|---|---|---|
-| 2 | Sin LLM synthesis en fusion final de contexto | **5/10** | Subsumida por #4/#5: la fusion synthesis del paper opera sobre el contexto estructurado (secciones separadas). Sin ese contexto, synthesis no resolveria el problema de fondo. |
+| 2 | Sin LLM synthesis en fusion final de contexto | **5/10** | Prerequisitos ya resueltos (#4+5, #7): contexto estructurado con secciones separadas y budgets independientes esta implementado. Synthesis es una mejora incremental: reescribir el contexto multi-seccion via LLM en una narrativa coherente antes de pasar al LLM generador. No bloqueante para validacion empirica; evaluar prioridad post re-run F.5. |
 | 3 | Entity cap 100K | **3/10** | Eviction mejorada con score compuesto. Para HotpotQA (66K docs, ~24K entidades) no se alcanza. |
 
 ### Resueltas (indexacion)
@@ -137,7 +137,7 @@ Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, se
 | 4 | LLM Judge puede devolver scores por defecto | **MEDIO-BAJO** | `metrics.py:_extract_score_fallback()` intenta 3 regex patterns (fraccion, decimal, entero con prefijo); si todos fallan retorna 0.5 — sesga metricas silenciosamente. Se logea a WARNING. Deuda a largo plazo: la mitigacion real requiere mas contexto de ventana y/o un modelo judge mas capaz que produzca respuestas estructuradas consistentemente | Post-run, buscar `"Score extraction fallback"` en logs y contar ocurrencias |
 | 5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). Puede truncar docs importantes. Se logea WARNING | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` |
 | 6 | ~~Suite de tests no portable~~ | ~~CRITICO~~ | **Resuelto.** `conftest.py` ahora mockea `dotenv` (ademas de boto3/langchain/chromadb). `test_knowledge_graph.py` usa `pytest.importorskip("igraph")` para skip limpio sin igraph. Con `python-igraph` + `snowballstemmer` instalados: 409 pasan, 6 skipped. Sin igraph: 344 pasan, 65 skipped |
-| 7 | Validacion empirica pendiente post-refactor | **MEDIO** | F.5 completado para ambas estrategias (125q, 4000 docs, seed=42). Resultados confirman que LIGHT_RAG no aporta valor con la arquitectura actual (metricas identicas a SIMPLE_VECTOR). Pendiente: re-ejecutar tras alinear pipeline con el paper (ver divergencias #4+5 y #6) para validar que el KG aporta mejora medible | Implementar fixes de divergencias #4+5 y #6 primero, luego re-run F.5 |
+| 7 | Validacion empirica pendiente post-refactor | **ALTO** | F.5 original (pre-fixes) confirmo que LIGHT_RAG no aportaba valor. Divergencias #4+5, #6 y #7 ya resueltas en codigo. **No se ha re-ejecutado F.5** para validar si los fixes producen mejora medible. Hasta validarlo empiricamente, no se sabe si LIGHT_RAG ahora supera a SIMPLE_VECTOR, si quedan divergencias menores bloqueando (#2), o si el problema es mas profundo (p.ej. HotpotQA no se beneficia de KG multi-hop). **Esta es la tarea P0 del proyecto.** | Re-run F.5 (125q, 4000 docs, DEV_MODE, seed=42) comparando SIMPLE_VECTOR vs LIGHT_RAG hybrid con el codigo actual. Requiere NIM + MinIO |
 | 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, la infraestructura (checkpoint, preflight, JSONL, export dual, subset selection, DEV_MODE) es considerable. Sin embargo, el run F.5 demostro que esta infraestructura funciona y es util en practica | Aceptado — la infraestructura se justifica con uso real |
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 
@@ -178,13 +178,17 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ### Alinear pipeline LIGHT_RAG con el paper original
 
-F.5 demostro que la indexacion KG funciona pero el pipeline de consumo no. Divergencias #4+5 y #6 resueltas. Pendiente:
+F.5 original demostro que la indexacion KG funciona pero el pipeline de consumo no. Divergencias arquitectonicas #4+5, #6 y #7 ya resueltas en codigo. Pendiente:
 
 | Prioridad | Tarea | Divergencia | Descripcion |
 |---|---|---|---|
-| **P0** | Re-run F.5 post-refactor | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG con pipeline alineado para validar que el KG aporta mejora medible |
+| **P0** | **Re-run F.5 post-refactor** | — | Repetir comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid con los tres fixes aplicados (125q, 4000 docs, DEV_MODE, seed=42). Validar si el KG finalmente aporta mejora medible. Requiere infraestructura NIM + MinIO. **Esta es la unica forma de saber si el refactor logro su objetivo.** |
+| P1 | Interpretar resultados de F.5 | — | 3 escenarios esperados: (a) LIGHT_RAG > SIMPLE_VECTOR → fixes funcionaron, documentar y cerrar iteracion; (b) mejora marginal (<2pp en F1) → investigar divergencia #2 (LLM synthesis); (c) sin mejora → investigar si HotpotQA genuinamente no se beneficia de KG (problema de dominio, no de implementacion) |
+| P2 | Divergencia #2 (LLM synthesis) | 2 | Solo si F.5 muestra mejora marginal. Implementar sintesis LLM del contexto multi-seccion antes del generador final (map-reduce del paper) |
+| P3 | Hacer ratios de budget configurables | 7 | Actualmente hardcodeados en `_LIGHTRAG_MODE_BUDGETS`. Exponer `KG_ENTITY_BUDGET_RATIO` / `KG_RELATION_BUDGET_RATIO` en `.env` **solo** si F.5 muestra que los defaults no son optimos |
 
 ### Limitaciones conocidas (no accionables)
 
 - Sesgo LLM-judge en faithfulness para respuestas cortas (inherente)
 - No-determinismo HNSW ±0.02 (ChromaDB no expone `hnsw:random_seed`)
+- Lock-in a NVIDIA NIM (deuda #9) — solo reproducible con acceso a NIM
