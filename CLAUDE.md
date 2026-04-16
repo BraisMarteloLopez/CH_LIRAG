@@ -6,11 +6,9 @@ Sistema de evaluacion RAG para benchmarking de pipelines de retrieval y generaci
 
 ## Contexto del producto
 
-Este proyecto es un **motor de evaluacion RAG**, no un producto final. Se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos (corpus documentales) y grafos de conocimiento.
+Este proyecto es un subsistema de evaluacion RAG, no un producto final. Se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos (corpus documentales) y grafos de conocimiento, orquestando el ciclo de vida de las colecciones, versionado de KGs, consultas multi-tenant y APIs de uso. Los detalles especificos del sistema receptor se definiran mas adelante.
 
-**Analogia**: lo que hay en este repo es el **motor**. El **coche** sera un sistema de administracion que lo envolvera para orquestar el ciclo de vida de las colecciones, versionado de KGs, consultas multi-tenant, y APIs de uso. Los detalles especificos del sistema receptor se definiran mas adelante.
-
-**Implicacion de diseno**: cualquier decision estructural debe favorecer la **embedibilidad** del motor — configuracion declarativa, interfaces claras entre componentes, ausencia de side-effects globales, capacidad de operar sobre corpus arbitrarios (no solo HotpotQA). El valor del motor no es resolver HotpotQA, es producir metricas fiables sobre **cualquier** corpus que el sistema administrador le pase.
+**Implicacion de diseno**: cualquier decision estructural debe favorecer la embedibilidad — configuracion declarativa, interfaces claras entre componentes, ausencia de side-effects globales, capacidad de operar sobre corpus arbitrarios (no solo HotpotQA). El valor de este subsistema no es resolver HotpotQA, es producir metricas fiables sobre cualquier corpus que el sistema administrador le entregue.
 
 **Escenario real de uso esperado**: colecciones pequenas (10-50 PDFs) de dominio especializado, no publico, con idiosincrasia propia (terminologia tecnica, entidades internas, relaciones que no estan en el pre-entrenamiento de los embeddings). En ese regimen se espera que LIGHT_RAG demuestre robustez superior a SIMPLE_VECTOR — hipotesis aun por validar empiricamente (ver "Proximos pasos").
 
@@ -202,33 +200,33 @@ Delta pre-refactor era +0.0113. Delta post-refactor es +0.0119. **Los tres fixes
 
 **Los fixes estan correctamente implementados**. El KG se construye, las secciones estructuradas llegan al LLM con budgets proporcionales, el reranker no colapsa el ranking. Pero todo eso es invisible en un benchmark donde el embedding ya resuelve el problema por si solo.
 
-### P0 — Experimento 3: evaluar motor sobre dataset especializado
+### P0 — Experimento 3: evaluar subsistema sobre catalogo de PDFs especializados
 
-La hipotesis del proyecto, alineada con su escenario real de uso (ver "Contexto del producto"), es que **LIGHT_RAG mantiene su rendimiento cuando el embedding se degrada por domain shift**, mientras que SIMPLE_VECTOR colapsa. HotpotQA no puede validar esto. Se necesita un dataset de dominio cerrado donde los embeddings tengan menos ventaja de su pre-entrenamiento.
+La hipotesis del proyecto, alineada con su escenario real de uso (ver "Contexto del producto"), es que **LIGHT_RAG mantiene su rendimiento cuando el embedding se degrada por domain shift**, mientras que SIMPLE_VECTOR colapsa. HotpotQA no puede validar esto. El dataset especializado no sera un MTEB/BeIR publico — sera un **catalogo de PDFs de dominio especializado** gestionado por el futuro sistema administrador.
 
-**Candidatos MTEB/BeIR** de dominio especializado:
-- **`scifact`** (5K claims cientificos, 5K docs) — jerga tecnica, claim verification
-- **`trec-covid`** (50 queries, 171K papers COVID-19) — terminologia medica densa
-- **`fiqa`** (648 queries, 57K posts) — finanzas, Q&A con jerga de dominio
-- **`nfcorpus`** (323 queries, 3633 docs medicos) — dominio medico cerrado
+**Separacion de responsabilidades**:
+- **Sistema administrador (futuro)**: ingesta de PDFs, chunking, extraccion de queries y qrels, almacenamiento en MinIO como Parquet. Define el catalogo.
+- **Este subsistema (repo actual)**: consume el catalogo desde MinIO con el loader actual (`sandbox_mteb/loader.py`), ejecuta SIMPLE_VECTOR y LIGHT_RAG, produce metricas comparativas.
 
-Recomendado: empezar con **`scifact`** — tamano manejable, dominio claramente out-of-distribution para embeddings generalistas, estructura clara de claim→evidence que se mapea bien a multi-hop.
+La interfaz entre ambos es el formato Parquet de queries/corpus/qrels que ya consume el loader para HotpotQA. **No hace falta cambiar la forma de consumir datos** — solo apuntar a un prefijo MinIO distinto con el nuevo catalogo.
 
-**Trabajo tecnico necesario**:
-1. Validar disponibilidad del dataset en el bucket MinIO (formato Parquet de queries/corpus/qrels).
-2. Adaptar `shared/types.py:DATASET_CONFIG` anadiendo entrada para `scifact` con `primary_metric` y `dataset_type` apropiados.
-3. Adaptar `loader.py` si el schema del dataset difiere del de HotpotQA.
-4. Ejecutar F.6 comparativo (SIMPLE_VECTOR vs LIGHT_RAG hybrid) con misma metodologia: seed fijo, subset reproducible, DEV_MODE para iteracion rapida + run completo para validacion final.
+**Trabajo tecnico necesario** (cuando el administrador este listo):
+1. Confirmar que el administrador produce Parquet con el mismo schema que HotpotQA (columnas, tipos, ids). Si diverge, adaptar `_populate_from_dataframes()` en `loader.py` o pedir que el administrador se alinee con el schema existente.
+2. Anadir entrada en `shared/types.py:DATASET_CONFIG` para el catalogo nuevo, con `primary_metric` y `dataset_type` apropiados segun como el administrador estructure el ground truth.
+3. Parametrizar `S3_DATASETS_PREFIX` en `.env` para apuntar al catalogo nuevo.
+4. Ejecutar F.6 comparativo (SIMPLE_VECTOR vs LIGHT_RAG hybrid) con metodologia estandar: seed fijo, subset reproducible, DEV_MODE para iteracion rapida + run completo para validacion final.
 
-**Hipotesis a validar**: el delta LIGHT_RAG > SIMPLE_VECTOR crece significativamente (>3-5pp en gen score, >5-10pp en Recall@K) cuando el embedding no tiene el dominio aprendido. Si se valida, el motor esta listo para integracion en el sistema administrador y LIGHT_RAG se justifica como estrategia default. Si no se valida, hay que cuestionar si LIGHT_RAG pertenece al motor o si SIMPLE_VECTOR + reranker es suficiente para el producto final.
+**Hipotesis a validar**: sobre un catalogo de 10-50 PDFs especializados (no publicos, terminologia propia, entidades internas), el delta LIGHT_RAG > SIMPLE_VECTOR crece significativamente (>3-5pp en gen score, >5-10pp en Recall@K) porque el embedding no tiene el dominio aprendido mientras que el KG se construye a partir del corpus mismo. Si se valida, este subsistema queda justificado como pieza del producto final y LIGHT_RAG pasa a ser estrategia default. Si no se valida, hay que reconsiderar el rol de LIGHT_RAG en el producto.
+
+**Bloqueado por**: disponibilidad del catalogo en el administrador. Mientras tanto, el experimento 1 (P1) puede dar senal intermedia sobre robustez del KG en condiciones de retrieval dificil, sobre el mismo dataset HotpotQA.
 
 ### P1 — Experimento 1 (control intermedio, no bloqueante)
 
 Control experimental gratis antes de invertir en adaptacion de dataset nuevo: desactivar DEV_MODE sobre HotpotQA y usar corpus completo (66K docs). No reemplaza el experimento 3, pero da senal rapida sobre si el KG aporta valor cuando el retrieval se vuelve dificil (sin gold docs garantizados en el corpus). Coste: 0 codigo, ~2-3h de infraestructura.
 
-### P2 — Embedibilidad del motor (preparacion para integracion)
+### P2 — Embedibilidad del subsistema (preparacion para integracion)
 
-Auditar interfaces pensando en el sistema administrador que envolvera este motor:
+Auditar interfaces pensando en el sistema administrador que integrara este subsistema:
 - Configuracion via diccionario inyectado, no solo via `.env` global
 - Operacion sobre corpus pasados en memoria (no solo MinIO/Parquet)
 - Sin asunciones sobre el sistema de ficheros excepto `EVALUATION_RESULTS_DIR` explicito
