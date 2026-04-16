@@ -124,7 +124,8 @@ loader._manifest = None
 | test_metrics_reference_based.py | shared/metrics.py | 15 | normalize_text, f1_score, exact_match, accuracy |
 | test_semantic_similarity.py | shared/metrics.py | 9 | semantic_similarity coseno, vector cero, empty input, numpy guard |
 | test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context |
-| test_dt9_extract_score_fallback.py | shared/metrics.py | 6 | _extract_score_fallback regex |
+| test_dt9_extract_score_fallback.py | shared/metrics.py | 21 | _extract_score_fallback regex |
+| test_judge_fallback_tracker.py | shared/metrics.py, sandbox_mteb/evaluator.py | 19 | _JudgeFallbackTracker, get_judge_fallback_stats, max_judge_default_return_rate, _validate_judge_fallback_threshold |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
 | test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
 | test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
@@ -156,6 +157,7 @@ loader._manifest = None
 | test_dtm38_strategy_guardrail.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 8 | strategy mismatch, config_snapshot |
 | test_dtm5_12_13_secondary_metric_errors.py | sandbox_mteb/generation_executor.py | 3 | secondary metric errors |
 | test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
+| test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 13 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
 | test_run_cli.py | sandbox_mteb/run.py | 11 | parse_args, setup_logging, main (dry-run, full, errors) |
 | test_preflight.py | sandbox_mteb/preflight.py | 8 | _check wrapper, dependencies, lock_file, config, main |
 | test_checkpoint.py | sandbox_mteb/checkpoint.py | 11 | save/load/delete checkpoint |
@@ -187,7 +189,7 @@ loader._manifest = None
 
 1. **Atributo nuevo en clase con `object.__new__()`**: actualizar TODOS los helpers listados arriba. Buscar con `grep -r "object.__new__(ClassName)" tests/`
 2. **Nuevo campo en RetrievalConfig**: propagado automaticamente via `RetrievalConfig()` default. Sin accion en tests salvo que el field necesite valor no-default
-3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required
+3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos de campos recientes: `judge_fallback_threshold` (deuda #4), `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s` (divergencia LightRAG #2) — todos tienen defaults, no requieren tocar helpers
 4. **Nuevo campo en QueryRetrievalDetail o QueryEvaluationResult**: actualizar `_make_qr()` en test_checkpoint.py si el field es required
 5. **Import de botocore.exceptions**: nunca directo en tests. Usar `_FakeClientError` + `@patch`
 6. **Cada assertion debe usar `assert`**: nunca dejar expresiones booleanas sueltas (`x is None` sin assert)

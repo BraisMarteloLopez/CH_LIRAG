@@ -91,29 +91,29 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 **Modos** (`LIGHTRAG_MODE`): `naive` (solo chunks), `local` (entidades + chunks), `global` (relaciones + chunks), `hybrid` (default, entidades + relaciones + chunks). Todos los modos (excepto naive) presentan secciones separadas al LLM.
 
-**Fallback**: sin igraph o sin LLM → degrada a SimpleVectorRetriever puro.
+**Synthesis del contexto (divergencia #2, resuelta)**: para queries con datos KG, `GenerationExecutor._synthesize_kg_context_async()` llama al LLM con `KG_SYNTHESIS_SYSTEM_PROMPT` (query-aware, anti-fabricacion) para reescribir las 3 secciones como narrativa coherente *antes* de pasarla al LLM generador. Faithfulness se sigue evaluando contra el contexto estructurado original (no contra la narrativa) para penalizar cualquier alucinacion introducida por la propia synthesis. Stats por evento (invocations / successes / errors / empty / truncations / timeouts / fallback_rate) en `config_snapshot._runtime.kg_synthesis_stats`. Toggle `KG_SYNTHESIS_ENABLED` (default `true` para LIGHT_RAG) permite A/B sin synthesis.
 
-**Alineacion con original (DAM-1 a DAM-8)**: Entity VDB, Relationship VDB, edge weights (log1p), gleaning, BFS 1-hop weighted, co-occurrence bridging, LLM description synthesis — todo implementado.
+**Fallback**: sin igraph o sin LLM → degrada a SimpleVectorRetriever puro. Fallos en la capa de synthesis → degrada al contexto estructurado (run nunca se rompe).
 
-**Divergencia arquitectonica critica**: pese a lo anterior, el pipeline de retrieval+generacion **no replica la arquitectura del paper**. La indexacion es fiel, pero la forma en que se consumen los resultados del KG difiere fundamentalmente (ver seccion siguiente).
+**Alineacion con original (DAM-1 a DAM-8 + divergencias #4+5/#6/#7/#2)**: Entity VDB, Relationship VDB, edge weights (log1p), gleaning, BFS 1-hop weighted, co-occurrence bridging, LLM description synthesis, secciones separadas al LLM con budgets proporcionales, reranker off para LIGHT_RAG, synthesis final del contexto — todo implementado. Pendiente: ejecutar runs comparativos post-synthesis.
 
 ## Divergencias con el paper original — evaluacion de criticidad
 
-Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, EMNLP 2025)](https://arxiv.org/abs/2410.05779). Validadas empiricamente en F.5 (125q, 4000 docs, seed=42): LIGHT_RAG produjo metricas de retrieval **identicas** a SIMPLE_VECTOR, confirmando que las divergencias arquitectonicas anulan la contribucion del KG.
+Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, EMNLP 2025)](https://arxiv.org/abs/2410.05779). Validadas empiricamente en F.5 (125q, 4000 docs, seed=42). Todas las divergencias arquitectonicas (4+5, 6, 7, 2) estan resueltas. Pendiente ejecutar runs comparativos post-synthesis sobre ambas estrategias para validar el delta acumulado.
 
 ### Divergencias arquitectonicas (descubiertas en F.5)
 
 | # | Divergencia | Criticidad | Detalle |
 |---|---|---|---|
-| 4+5 | ~~**Pipeline de consumo diverge del paper**~~ | ~~9/10~~ | **Resuelto.** RRF eliminado (`reciprocal_rank_fusion()`, `_full_fusion()`, `_vector_first_fusion()`, `_fuse_with_graph()` eliminados). `_enrich_with_graph()` recopila entidades y relaciones relevantes a la query via VDB y las propaga en `retrieval_metadata` como `kg_entities`/`kg_relations`. `generation_executor.py:89-103` invoca `format_structured_context()` que presenta secciones separadas al LLM. `graph_primary` (DAM-3) eliminado. |
+| 4+5 | ~~**Pipeline de consumo diverge del paper**~~ | ~~9/10~~ | **Resuelto.** RRF eliminado (`reciprocal_rank_fusion()`, `_full_fusion()`, `_vector_first_fusion()`, `_fuse_with_graph()` eliminados). `_enrich_with_graph()` recopila entidades y relaciones relevantes a la query via VDB y las propaga en `retrieval_metadata` como `kg_entities`/`kg_relations`. `generation_executor.py` invoca `format_structured_context()` que presenta secciones separadas al LLM. `graph_primary` (DAM-3) eliminado. |
 | 6 | ~~**Reranker post-fusion anula senal del grafo**~~ | ~~8/10~~ | **Resuelto.** El `CrossEncoderReranker` ahora se desactiva automaticamente cuando `strategy=LIGHT_RAG` (`retrieval_executor.py:100-105`). Se mantiene activo para `SIMPLE_VECTOR`. |
-| 7 | ~~**Sin token budgets separados por tipo**~~ | ~~5/10~~ | **Resuelto.** `format_structured_context()` en `retrieval_executor.py` ahora divide `max_context_chars` en presupuestos proporcionales segun el modo LightRAG: `hybrid` (20%/20%/60%), `local` (30%/0%/70%), `global` (0%/30%/70%). Budget no usado por KG se redistribuye a chunks, evitando que ninguna seccion aplaste a las otras. `generation_executor.py:89-107` propaga `lightrag_mode` desde `retrieval_metadata`. **Pendiente validacion empirica** (ver deuda tecnica #7). |
+| 7 | ~~**Sin token budgets separados por tipo**~~ | ~~5/10~~ | **Resuelto.** `format_structured_context()` en `retrieval_executor.py` ahora divide `max_context_chars` en presupuestos proporcionales segun el modo LightRAG: `hybrid` (20%/20%/60%), `local` (30%/0%/70%), `global` (0%/30%/70%). Budget no usado por KG se redistribuye a chunks, evitando que ninguna seccion aplaste a las otras. `generation_executor.py` propaga `lightrag_mode` desde `retrieval_metadata`. |
+| 2 | ~~**Sin LLM synthesis en fusion final**~~ | ~~7/10~~ | **Resuelto.** `GenerationExecutor._synthesize_kg_context_async()` reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente via LLM antes de la generacion final. Prompt query-aware en `sandbox_mteb/config.py:KG_SYNTHESIS_SYSTEM_PROMPT` con reglas anti-fabricacion y citas `[ref:N]` inline. Se activa automaticamente para LIGHT_RAG (`KG_SYNTHESIS_ENABLED=true` default). **Faithfulness se evalua contra el contexto estructurado original**, no contra la narrativa, para penalizar cualquier alucinacion introducida por la propia capa de synthesis. Degradacion graceful: error LLM / vacio / timeout → fallback al contexto estructurado; stats por evento en `config_snapshot._runtime.kg_synthesis_stats`. |
 
 ### Divergencias menores (preexistentes)
 
 | # | Divergencia | Criticidad | Estado |
 |---|---|---|---|
-| 2 | Sin LLM synthesis en fusion final de contexto | **7/10** (subida desde 5/10) | Prerequisitos ya resueltos (#4+5, #7): contexto estructurado con secciones separadas y budgets independientes esta implementado. Falta la capa de synthesis: reescribir el contexto multi-seccion (entidades + relaciones + chunks) via LLM en una narrativa coherente antes de pasar al LLM generador. **Por que subio la prioridad**: F.5 post-refactor mostro que presentar secciones separadas + budgets proporcionales no es suficiente sobre HotpotQA, y el experimento 3 evaluara LIGHT_RAG en dominios donde el LLM generador no conoce las entidades del corpus — precisamente el caso donde synthesis aporta: el modelo judge/generador recibe una narrativa que ya conecta entidades, relaciones y evidencia textual, en lugar de tres bloques sueltos que debe recombinar por su cuenta. Esto es tambien linea de defensa contra alucinacion (eje 2 del experimento 3): una narrativa sintetizada del propio corpus reduce el espacio para que el LLM invente conexiones. **Hay que abordarla antes del experimento 3** para que el experimento compare la arquitectura LIGHT_RAG completa, no una version intermedia. Implementacion: paso adicional en `generation_executor.py` que toma el contexto estructurado y llama al LLM para producir una sintesis previa a la generacion final. |
 | 3 | Entity cap 100K | **3/10** | Eviction mejorada con score compuesto. Para HotpotQA (66K docs, ~24K entidades) no se alcanza. |
 
 ### Resueltas (indexacion)
@@ -146,14 +146,32 @@ Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, se
 | 1 | ChromaDB: colecciones huerfanas si el proceso se interrumpe | **BAJO** | `evaluator.py:_cleanup()` ahora elimina la coleccion correctamente via `delete_all_documents()` (que llama `delete_collection()` + recrea). Sin embargo, cada run crea `eval_{run_id}` — si el proceso se interrumpe antes de cleanup, la coleccion queda huerfana. Con `PersistentClient`, se acumulan en disco | Aceptable; borrar manualmente `VECTOR_DB_DIR` si se acumulan |
 | 2 | Preflight no valida datos reales | **MEDIO** | `preflight.py` solo verifica bucket MinIO (`head_bucket` + `list_objects MaxKeys=1`). No descarga ni parsea Parquet, no valida schema contra `DATASET_CONFIG`, no verifica espacio en disco. El riesgo principal no es infra (MinIO ya es compartido con el administrador) sino **schema drift del contrato upstream**: cuando el administrador produzca un catalogo nuevo con columnas/tipos/ids diferentes, el fallo ocurre horas despues del start en `_populate_from_dataframes()`, quemando compute | `--dry-run` primero y verificar que el dataset carga |
 | 3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
-| 4 | LLM Judge puede devolver scores por defecto | **MEDIO** (subida desde MEDIO-BAJO) | `metrics.py:_extract_score_fallback()` intenta 3 regex patterns (fraccion, decimal, entero con prefijo); si todos fallan retorna 0.5 — sesga metricas silenciosamente. Se logea a WARNING. **Por que subio la severidad**: el experimento 3 (P0) evalua LIGHT_RAG en dos ejes, y el eje 2 es **resistencia a alucinacion / contexto inventado** — medido principalmente via `faithfulness` (LLM-judge). Si el judge falla a extraer el score y devuelve 0.5 por defecto, esta regresion al centro (a) comprime los deltas entre estrategias, y (b) enmascara la senal mas importante del experimento: LIGHT_RAG deberia *reducir* la alucinacion, no empatar con SIMPLE_VECTOR por artefacto del extractor. Ademas, faithfulness suele ser la metrica donde el judge mas divaga (respuestas largas, mas dificiles de scorear en formato estricto), asi que el fallback se dispara mas aqui que en precision/recall. La mitigacion real requiere constrained decoding / JSON schema y/o un modelo judge mas capaz | Post-run, buscar `"Score extraction fallback"` en logs y contar ocurrencias. **Antes del experimento 3**: (a) instrumentar el judge para fallar el run si la tasa de fallback supera un umbral (p.ej. >2%), (b) reportar tasa de fallback por metrica en el CSV summary |
+| 4 | ~~LLM Judge puede devolver scores por defecto~~ | **RESUELTO** (instrumentacion) | `shared/metrics.py` implementa `_JudgeFallbackTracker` thread-safe con contadores por `MetricType`: `invocations`, `parse_failures` (JSON no parseable), `default_returns` (regex fallo → 0.5). APIs publicas: `get_judge_fallback_stats()`, `reset_judge_fallback_stats()`, `max_judge_default_return_rate()`. `_extract_score_fallback` refactorizado a variante con status `(score, was_default)` preservando la API publica existente. `_parse_judge_result` loguea WARNING con raw response (trunc 200) cuando se devuelve el default. El evaluator resetea stats al inicio del run, las propaga a `config_snapshot._runtime.judge_fallback_stats`, y aplica threshold check post-run via `JUDGE_FALLBACK_THRESHOLD` (default `0.02`): si alguna metrica supera el umbral, el run lanza `RuntimeError` y emite evento estructurado `run_judge_threshold_exceeded`. El sesgo silencioso de las metricas del judge (especialmente faithfulness para el eje 2 del experimento 3) queda protegido. La mitigacion de la causa raiz (constrained decoding / JSON schema / judge mas capaz) sigue pendiente pero ya no silenciosa | N/A — la instrumentacion expone el problema. Ver `config_snapshot._runtime.judge_fallback_stats` en output JSON |
 | 5 | Context window fallback silencioso | **BAJO** (casi aceptable) | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). **Aclaracion importante**: este valor es el **presupuesto total de contexto** pasado al LLM, que `format_context()`/`format_structured_context()` usan para seleccionar cuantos fragmentos (chunks) caben. No es "el LLM recibe un documento truncado a 4000 chars". Con chunks tipicos de 500-1000 chars, 4000 = ~4-8 chunks relevantes, suficiente para casos tipo HotpotQA (2 docs gold) y para catalogos pequenos de PDFs especializados donde las respuestas suelen estar en 2-5 chunks. Se logea WARNING. El unico riesgo real es dejar senal en la mesa cuando el modelo soporta mucho mas (p.ej. 192K chars): no se "rompe" nada, simplemente no se aprovecha toda la ventana | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` si se quiere mayor cobertura |
 | 6 | ~~Suite de tests no portable~~ | ~~CRITICO~~ | **Resuelto.** `conftest.py` ahora mockea `dotenv` (ademas de boto3/langchain/chromadb). `test_knowledge_graph.py` usa `pytest.importorskip("igraph")` para skip limpio sin igraph. Con `python-igraph` + `snowballstemmer` instalados: 409 pasan, 6 skipped. Sin igraph: 344 pasan, 65 skipped |
 | 7 | ~~Validacion empirica pendiente post-refactor~~ | **RESUELTO** | F.5 re-ejecutado post-refactor (abril 2026) con las tres divergencias corregidas. Resultado: delta LIGHT_RAG vs SIMPLE_VECTOR se mantuvo en +1.19pp (vs +1.13pp pre-fix) — dentro del ruido del LLM judge. Los fixes estan bien implementados pero HotpotQA no los discrimina por ser home turf del embedding + DEV_MODE saturado + ventana de contexto amplia. Ver "Proximos pasos" para la siguiente direccion (experimento 3, dataset especializado). | N/A — la siguiente validacion requiere cambiar de dataset, no mas fixes |
 | 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, la infraestructura (checkpoint, preflight, JSONL, export dual, subset selection, DEV_MODE) es considerable. Sin embargo, el run F.5 demostro que esta infraestructura funciona y es util en practica | Aceptado — la infraestructura se justifica con uso real |
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 
-Las divergencias arquitectonicas #4/#5/#6 son la causa raiz de que LIGHT_RAG no aporte valor. Ver seccion "Divergencias con el paper original".
+Las divergencias arquitectonicas #4/#5/#6/#7/#2 estan todas resueltas (ver seccion "Divergencias con el paper original"). La proxima validacion empirica requiere runs comparativos SIMPLE_VECTOR vs LIGHT_RAG con synthesis activo/inactivo.
+
+## Observabilidad de runs
+
+Los `EvaluationRun` exportados a JSON incluyen en `config_snapshot._runtime` dos bloques de stats para auditoria post-run:
+
+**`judge_fallback_stats`** (deuda #4): por cada `MetricType` del judge (`faithfulness`, `answer_relevance`) reporta `invocations`, `parse_failures` (JSON no parseable), `default_returns` (0.5 por defecto), `parse_failure_rate`, `default_return_rate`. Si `default_return_rate > JUDGE_FALLBACK_THRESHOLD` (default 2%) en cualquier metrica, el run falla con `RuntimeError`.
+
+```bash
+jq '.config_snapshot._runtime.judge_fallback_stats' data/results/<run_id>.json
+```
+
+**`kg_synthesis_stats`** (divergencia LightRAG #2): cuando `KG_SYNTHESIS_ENABLED=true` y la estrategia es `LIGHT_RAG`, reporta `invocations`, `successes`, `errors`, `empty_returns`, `truncations`, `timeouts`, `fallback_rate`. `fallback_rate > 10%` indica degradacion frecuente — el run no refleja la arquitectura completa.
+
+```bash
+jq '.config_snapshot._runtime.kg_synthesis_stats' data/results/<run_id>.json
+```
+
+Ambos tambien se emiten en el evento estructurado `run_complete` del JSONL y en logs INFO al final de cada run.
 
 ## Bare excepts aceptados (no criticos)
 
@@ -163,14 +181,15 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 |---|---|
 | `reranker.py:147` | Reranking error — retorna fallback sin rerank |
 | `vector_store.py:126, 142, 179, 232, 247` | Operaciones ChromaDB — retorna fallback (lista vacia, dict vacio, o continua cleanup) |
+| `generation_executor.py` (`_synthesize_kg_context_async`) | `asyncio.TimeoutError` + `Exception` genericos durante synthesis KG — fallback al contexto estructurado. Todos los eventos contabilizados en `kg_synthesis_stats` (errors/timeouts) |
 
 ## Test coverage
 
 | Metrica | Valor (abril 2026) |
 |---|---|
-| Tests unitarios | **409 pasan**, 6 skipped (integracion marker) en entorno con igraph+snowballstemmer. Sin igraph: 344 pasan, 65 skipped |
+| Tests unitarios | **~441 pasan**, 6 skipped en entorno con igraph+snowballstemmer. Sin igraph: **382 pasan**, 7 skipped (verificado). Ultimas adiciones: +19 `test_judge_fallback_tracker.py` (deuda #4) +13 `test_kg_synthesis.py` (divergencia #2) |
 | Tests integracion | 19 en 3 archivos, requieren NIM + MinIO reales |
-| mypy | 0 errores (27 source files) — no verificado en entorno limpio |
+| mypy | 0 errores nuevos en ficheros modificados; 3 errores preexistentes no relacionados (dotenv/numpy sin stubs, `retrieval_executor.py:124` union-attr) |
 
 ### Portabilidad de tests
 
@@ -240,11 +259,11 @@ Este segundo eje es **especialmente relevante** porque el escenario real de uso 
 
 Antes de ejecutar el experimento 3, hay trabajo de arquitectura que debe completarse para que la comparacion evalue la arquitectura LIGHT_RAG **completa**, no una version intermedia:
 
-1. **Divergencia LightRAG #2 (LLM synthesis en fusion final)** — ver "Divergencias con el paper original". La indexacion y la presentacion estructurada ya estan; falta la capa de synthesis que convierta entidades + relaciones + chunks en narrativa coherente antes de la generacion. Es especialmente relevante para el eje 2 del experimento 3 (resistencia a alucinacion).
-2. **Deuda #4 (LLM judge fallback)** — instrumentar tasa de fallback y fallar el run si supera umbral; sin esto, el eje 2 (faithfulness) puede reportar deltas artefacto.
-3. **Deuda #2 (preflight real)** — validar schema del Parquet contra `DATASET_CONFIG` para detectar schema drift del contrato upstream en segundos, no en horas.
+1. ~~**Divergencia LightRAG #2 (LLM synthesis en fusion final)**~~ — **Resuelto.** `GenerationExecutor._synthesize_kg_context_async()` reescribe el contexto multi-seccion como narrativa coherente via LLM query-aware. Activado por defecto para LIGHT_RAG via `KG_SYNTHESIS_ENABLED=true`. Ver "Divergencias con el paper original".
+2. ~~**Deuda #4 (LLM judge fallback)**~~ — **Resuelto.** Tracker instrumentado + threshold check via `JUDGE_FALLBACK_THRESHOLD` (default 2%). Tasas por metrica en `config_snapshot._runtime.judge_fallback_stats`. Ver deuda tecnica #4.
+3. **Deuda #2 (preflight real)** — **Pendiente.** Validar schema del Parquet contra `DATASET_CONFIG` para detectar schema drift del contrato upstream en segundos, no en horas. Es el unico prerequisito P0.5 vivo.
 
-Los tres son baratos individualmente y evitan que el experimento 3 produzca senal no interpretable.
+Post-synthesis conviene ejecutar runs comparativos en HotpotQA (SIMPLE_VECTOR vs LIGHT_RAG con synthesis on/off) para (a) validar que la implementacion no introduce regresion y (b) medir el delta aislado que aporta la capa de synthesis. Si `kg_synthesis_stats.fallback_rate > 10%`, la synthesis esta degradando frecuentemente y los resultados no reflejan la arquitectura completa.
 
 ### P1 — Experimento 1 (control intermedio, no bloqueante)
 
