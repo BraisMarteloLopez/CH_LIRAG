@@ -82,7 +82,7 @@ def test_add_triplets_dedup_entities():
 
     assert kg.num_entities == 3  # alice, bob, charlie
     # Alice aparece en doc1 y doc2
-    alice = kg._entities["alice"]
+    alice = kg.get_all_entities()["alice"]
     assert alice.source_doc_ids == {"doc1", "doc2"}
 
 
@@ -116,6 +116,12 @@ def test_add_triplets_self_loop():
 
 # =============================================================================
 # KG5: relacion duplicada en arista
+#
+# White-box intencional: _get_edge_data es un helper privado que inspecciona
+# la metadata interna de una arista (dict con "relations" list). No tiene
+# equivalente publico porque get_all_relations() devuelve un formato plano.
+# Los tests lo usan para asertar acumulacion de relaciones duplicadas sobre
+# la misma arista, que es comportamiento interno de add_triplets.
 # =============================================================================
 
 def test_add_triplets_duplicate_relation_accumulates():
@@ -320,7 +326,7 @@ def test_add_entity_metadata():
     kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
 
     kg.add_entity_metadata("Alice", "PERSON", "A researcher")
-    alice = kg._entities["alice"]
+    alice = kg.get_all_entities()["alice"]
     assert alice.entity_type == "PERSON"
     assert alice.description == "A researcher"
 
@@ -348,10 +354,11 @@ def test_max_entities_cap_with_eviction():
     added = kg.add_triplets("doc2", [_rel("C", "D", "r")])
     assert kg.num_entities == 3  # cap respetado
     assert added == 1  # tripleta anadida gracias a eviction
-    assert kg._entities_evicted >= 1
+    assert kg.get_stats()["entities_evicted"] >= 1
     # C y D deben estar en el grafo
-    assert "c" in kg._entities  # normalized
-    assert "d" in kg._entities
+    entities = kg.get_all_entities()
+    assert "c" in entities  # normalized
+    assert "d" in entities
 
 
 def test_max_entities_cap_no_eviction_possible():
@@ -367,7 +374,7 @@ def test_max_entities_cap_no_eviction_possible():
     added = kg.add_triplets("doc3", [_rel("C", "D", "r")])
     assert kg.num_entities == 2
     assert added == 0
-    assert kg._entities_dropped > 0
+    assert kg.get_stats()["entities_dropped"] > 0
 
 
 def test_max_entities_existing_entities_still_updated():
@@ -397,28 +404,35 @@ def test_eviction_prefers_low_doc_count():
     added = kg.add_triplets("doc4", [_rel("A", "E", "r4")])
     assert added == 1
     assert kg.num_entities == 4  # cap respetado
-    assert "a" in kg._entities  # A sobrevive (2 docs)
-    assert "b" in kg._entities  # B sobrevive (2 docs)
-    assert "e" in kg._entities  # E entro
+    entities = kg.get_all_entities()
+    assert "a" in entities  # A sobrevive (2 docs)
+    assert "b" in entities  # B sobrevive (2 docs)
+    assert "e" in entities  # E entro
     # C o D fue evicta (la que el algoritmo eligio)
-    evicted = {"c", "d"} - set(kg._entities.keys())
+    evicted = {"c", "d"} - set(entities.keys())
     assert len(evicted) == 1
 
 
 def test_eviction_cleans_indices():
-    """Eviction limpia _entity_to_docs y _doc_to_entities (DTm-63)."""
+    """Eviction limpia indices invertidos internos (DTm-63): tras eviction,
+    la entidad evicta deja de aparecer en get_entities_for_docs para
+    cualquier doc en el que estaba."""
     kg = KnowledgeGraph(max_entities=2)
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
-    assert "a" in kg._entity_to_docs
-    assert "a" in kg._doc_to_entities.get("doc1", set())
+    entities_doc1 = {e["entity"] for e in kg.get_entities_for_docs(["doc1"])}
+    assert "a" in entities_doc1
 
     # C, D necesitan evictar A o B
     kg.add_triplets("doc2", [_rel("C", "D", "r")])
-    # La entidad evicta no debe estar en los indices
-    evicted = {"a", "b"} - set(kg._entities.keys())
+    # La entidad evicta no debe estar en ningun doc ni en el catalogo
+    entities_all = kg.get_all_entities()
+    evicted = {"a", "b"} - set(entities_all.keys())
     assert len(evicted) >= 1
     evicted_name = evicted.pop()
-    assert evicted_name not in kg._entity_to_docs
+    entities_all_docs = {
+        e["entity"] for e in kg.get_entities_for_docs(["doc1", "doc2"])
+    }
+    assert evicted_name not in entities_all_docs
 
 
 def test_eviction_serialization_roundtrip():
@@ -432,7 +446,7 @@ def test_eviction_serialization_roundtrip():
     assert data["entities_evicted"] >= 1
 
     kg2 = KnowledgeGraph.from_dict(data)
-    assert kg2._entities_evicted == kg._entities_evicted
+    assert kg2.get_stats()["entities_evicted"] == kg.get_stats()["entities_evicted"]
 
 
 # =============================================================================
@@ -593,6 +607,14 @@ def test_roundtrip_preserves_edge_relations():
 
 # =============================================================================
 # KG24-KG28: Indice invertido para query_by_keywords (DTm-30)
+#
+# White-box intencional: estos tests verifican la estructura de los indices
+# invertidos (_kw_entity_index, _kw_relation_index) que construye
+# build_keyword_indices(). La unica API publica que los consume es
+# query_by_keywords(), que ya se testea aparte. Si se quiere ejercitar todo
+# via caja negra, habria que duplicar esos tests con query_by_keywords() y
+# asumir la transformacion intermedia; preferimos aqui asertar la estructura
+# directa del indice para detectar regresiones de indexacion especificas.
 # =============================================================================
 
 
@@ -690,6 +712,12 @@ def test_keyword_query_uses_index():
 
 # =============================================================================
 # DTm-70: Fuzzy entity matching in query_entities
+#
+# White-box intencional: _resolve_entity_names y _normalize_name son helpers
+# privados invocados por query_entities(). Los tests los ejercitan directamente
+# en lugar de via query_entities() para aislar la logica de matching/scoring
+# sin el resto del pipeline BFS. query_entities() se testea por separado en
+# las secciones KG6+ como caja negra.
 # =============================================================================
 
 def test_resolve_entity_names_exact_match():
@@ -999,14 +1027,14 @@ def test_co_occurrence_bridges_disconnected_components():
     kg.add_triplets("doc1", [_rel("A", "B", "r1")])
     kg.add_triplets("doc1", [_rel("C", "D", "r2")])
     # A-B y C-D son 2 componentes (A,B no conectan con C,D via triplet)
-    components_before = len(kg._graph.connected_components())
+    components_before = kg.get_stats()["graph_connected_components"]
     assert components_before == 2
 
     edges_added = kg.build_co_occurrence_edges()
 
     # doc1 tiene A, B, C, D -> co-occurrence los conecta
     assert edges_added > 0
-    components_after = len(kg._graph.connected_components())
+    components_after = kg.get_stats()["graph_connected_components"]
     assert components_after < components_before
 
 
@@ -1014,13 +1042,13 @@ def test_co_occurrence_no_duplicate_edges():
     """No crea aristas donde ya existe una relacion LLM."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("A", "B", "knows")])
-    edges_before = kg._graph.ecount()
+    edges_before = kg.num_relations
 
     edges_added = kg.build_co_occurrence_edges()
 
     # A y B ya estan conectados -> no se crea arista nueva
     assert edges_added == 0
-    assert kg._graph.ecount() == edges_before
+    assert kg.num_relations == edges_before
 
 
 def test_co_occurrence_single_entity_doc_no_edges():
