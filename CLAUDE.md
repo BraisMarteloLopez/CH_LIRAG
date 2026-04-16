@@ -6,15 +6,11 @@ Sistema de evaluacion RAG para benchmarking de pipelines de retrieval y generaci
 
 ## Contexto del producto
 
-Este proyecto es un subsistema de evaluacion RAG, no un producto final. Se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos (corpus documentales) y grafos de conocimiento, orquestando el ciclo de vida de las colecciones, versionado de KGs, consultas multi-tenant y APIs de uso.
+Este proyecto es un subsistema de evaluacion RAG, no un producto final. Su proposito **inmediato** es validar empiricamente que nuestra implementacion de LIGHT_RAG replica las mejoras reportadas en el paper original ([HKUDS/LightRAG, EMNLP 2025](https://arxiv.org/abs/2410.05779)). Las cuatro divergencias arquitectonicas con el paper estan resueltas en codigo, pero aun no demostradas empiricamente (HotpotQA no discrimina; ver "Proximos pasos · P0"). Sin esa demostracion no se puede promover LIGHT_RAG a produccion ni proponerlo al sistema administrador.
 
-**Infra compartida con el sistema administrador**: el administrador usa la **misma infraestructura** que este subsistema (MinIO + Parquet como contrato de datos). No hay frontera tecnologica entre ambos: el administrador ingesta PDFs → produce Parquet en MinIO → este subsistema lo consume con el loader actual (`sandbox_mteb/loader.py`). **Este contrato no cambia** con el experimento 3; solo cambia el prefijo MinIO al que apuntamos.
+**Vision a largo plazo — sistema administrador**: eventualmente este subsistema se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos, orquestar el ciclo de vida de corpus, versionado de KGs, consultas multi-tenant y APIs de uso. El administrador compartira infraestructura con este subsistema (MinIO + Parquet como contrato), asi que la integracion no implica cambiar como consumimos datos, solo apuntar a un prefijo MinIO distinto. **La integracion esta condicionada a que P0 (replicacion del paper) cierre con exito**; si no replicamos, lo unico integrable es SIMPLE_VECTOR y el trabajo sobre KG se vuelve inutil. Trabajo concreto en "Proximos pasos · P3".
 
-**Implicacion de diseno**: cualquier decision estructural debe favorecer la embedibilidad — configuracion declarativa, interfaces claras entre componentes, ausencia de side-effects globales, capacidad de operar sobre corpus arbitrarios (no solo HotpotQA). El valor de este subsistema no es resolver HotpotQA, es producir metricas fiables sobre cualquier corpus que el sistema administrador le entregue.
-
-**Nueva funcionalidad pendiente — export de grafos KG**: cuando LIGHT_RAG se promueva a estrategia de produccion, los KGs construidos por este subsistema deberan **exportarse de vuelta al administrador** (para versionado, reuso entre runs, consultas multi-tenant). Hoy el KG vive solo en memoria (`shared/retrieval/lightrag/knowledge_graph.py`, backend igraph) + ChromaDB para VDBs, y se descarta tras `_cleanup()`. Se necesita un serializador KG → formato persistente (Parquet/JSON con schema compartido con el administrador) y el endpoint/convencion de escritura a MinIO. No implementado.
-
-**Escenario real de uso esperado**: colecciones pequenas (10-50 PDFs) de dominio especializado, no publico, con idiosincrasia propia (terminologia tecnica, entidades internas, relaciones que no estan en el pre-entrenamiento de los embeddings). En ese regimen se espera que LIGHT_RAG demuestre robustez superior a SIMPLE_VECTOR en **dos dimensiones**: (a) precision/recall de retrieval y calidad de respuesta, y (b) resistencia a alucinacion / contexto inventado cuando el embedding no cubre el dominio. Hipotesis aun por validar empiricamente (ver "Proximos pasos").
+**Implicacion de diseno**: las decisiones estructurales favorecen la embedibilidad futura — configuracion declarativa, interfaces claras, sin side-effects globales, capacidad de operar sobre corpus arbitrarios. Pero mientras P0 no este verde, la embedibilidad es solo un objetivo de diseno, no trabajo activo.
 
 ## Estructura clave
 
@@ -91,17 +87,15 @@ Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
 
 **Modos** (`LIGHTRAG_MODE`): `naive` (solo chunks), `local` (entidades + chunks), `global` (relaciones + chunks), `hybrid` (default, entidades + relaciones + chunks). Todos los modos (excepto naive) presentan secciones separadas al LLM.
 
-**Synthesis del contexto (divergencia #2, resuelta)**: para queries con datos KG, `GenerationExecutor._synthesize_kg_context_async()` llama al LLM con `KG_SYNTHESIS_SYSTEM_PROMPT` (query-aware, anti-fabricacion) para reescribir las 3 secciones como narrativa coherente *antes* de pasarla al LLM generador. Faithfulness se sigue evaluando contra el contexto estructurado original (no contra la narrativa) para penalizar cualquier alucinacion introducida por la propia synthesis. Stats por evento (invocations / successes / errors / empty / truncations / timeouts / fallback_rate) en `config_snapshot._runtime.kg_synthesis_stats`. Toggle `KG_SYNTHESIS_ENABLED` (default `true` para LIGHT_RAG) permite A/B sin synthesis.
+**Synthesis del contexto**: para queries con datos KG, `GenerationExecutor._synthesize_kg_context_async()` reescribe las 3 secciones como narrativa coherente via LLM *antes* de la generacion final. Detalle y estado en la tabla "Divergencias con el paper original · #2". Stats en `config_snapshot._runtime.kg_synthesis_stats` (ver "Observabilidad de runs"). Toggle `KG_SYNTHESIS_ENABLED` (default `true` para LIGHT_RAG).
 
-**Fallback**: sin igraph o sin LLM → degrada a SimpleVectorRetriever puro. Fallos en la capa de synthesis → degrada al contexto estructurado (run nunca se rompe).
-
-**Alineacion con original (DAM-1 a DAM-8 + divergencias #4+5/#6/#7/#2)**: Entity VDB, Relationship VDB, edge weights (log1p), gleaning, BFS 1-hop weighted, co-occurrence bridging, LLM description synthesis, secciones separadas al LLM con budgets proporcionales, reranker off para LIGHT_RAG, synthesis final del contexto — todo implementado. Pendiente: ejecutar runs comparativos post-synthesis.
+**Fallback**: sin igraph o sin LLM → degrada a SimpleVectorRetriever puro. Fallos en la capa de synthesis → degrada al contexto estructurado (el run nunca se rompe).
 
 ## Divergencias con el paper original — evaluacion de criticidad
 
-Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, EMNLP 2025)](https://arxiv.org/abs/2410.05779). Validadas empiricamente en F.5 (125q, 4000 docs, seed=42). Todas las divergencias arquitectonicas (4+5, 6, 7, 2) estan resueltas. Pendiente ejecutar runs comparativos post-synthesis sobre ambas estrategias para validar el delta acumulado.
+Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, EMNLP 2025)](https://arxiv.org/abs/2410.05779). Todas las divergencias arquitectonicas (4+5, 6, 7, 2) estan resueltas en codigo. La validacion empirica sobre un benchmark donde el paper muestra ventaja esta pendiente ("Proximos pasos · P0").
 
-### Divergencias arquitectonicas (descubiertas en F.5)
+### Divergencias arquitectonicas
 
 | # | Divergencia | Criticidad | Detalle |
 |---|---|---|---|
@@ -122,22 +116,7 @@ Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, E
 - ~~Grafo fragmentado (3/10)~~: Co-occurrence bridging (DTm-73)
 - ~~BFS scoring uniforme (3/10)~~: Edge weights via `log(1 + n_docs)` (DTm-72)
 
-### Resultado F.5 (validacion empirica)
-
-Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, seed=42, reranker ON).
-
-| Metrica | SIMPLE_VECTOR | LIGHT_RAG | Delta |
-|---|---|---|---|
-| Hit@5 | 1.000 | 1.000 | 0 |
-| MRR | 0.992 | 0.992 | 0 |
-| Recall@5 | 0.968 | 0.968 | 0 |
-| Recall@20 | 0.988 | 0.988 | 0 |
-| Avg gen score | 0.7764 | 0.7877 | +0.011 (ruido LLM) |
-| Tiempo total | 194.7s | 9002.1s | ×46 |
-
-**Todas las metricas de retrieval son identicas query por query.** El KG aporto ~49 docs exclusivos por query, pero el reranker colapso el ranking final al mismo top-20 que SIMPLE_VECTOR. Las 10 diferencias en generacion son no-determinismo del LLM (mismo contexto, distinta respuesta).
-
-**Conclusion**: la indexacion KG funciona correctamente (23K entidades, 55K relaciones, 32K co-occurrence edges), pero las divergencias #4+5 y #6 impiden que su senal llegue al LLM.
+Runs F.5 (resultados empiricos pre-refactor y post-refactor) en "Proximos pasos · Resultado F.5".
 
 ## Deuda tecnica vigente
 
@@ -146,14 +125,12 @@ Runs ejecutadas: SIMPLE_VECTOR y LIGHT_RAG hybrid (125q, 4000 docs, DEV_MODE, se
 | 1 | ChromaDB: colecciones huerfanas si el proceso se interrumpe | **BAJO** | `evaluator.py:_cleanup()` ahora elimina la coleccion correctamente via `delete_all_documents()` (que llama `delete_collection()` + recrea). Sin embargo, cada run crea `eval_{run_id}` — si el proceso se interrumpe antes de cleanup, la coleccion queda huerfana. Con `PersistentClient`, se acumulan en disco | Aceptable; borrar manualmente `VECTOR_DB_DIR` si se acumulan |
 | 2 | Preflight no valida datos reales | **MEDIO** | `preflight.py` solo verifica bucket MinIO (`head_bucket` + `list_objects MaxKeys=1`). No descarga ni parsea Parquet, no valida schema contra `DATASET_CONFIG`, no verifica espacio en disco. El riesgo principal no es infra (MinIO ya es compartido con el administrador) sino **schema drift del contrato upstream**: cuando el administrador produzca un catalogo nuevo con columnas/tipos/ids diferentes, el fallo ocurre horas despues del start en `_populate_from_dataframes()`, quemando compute | `--dry-run` primero y verificar que el dataset carga |
 | 3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
-| 4 | ~~LLM Judge puede devolver scores por defecto~~ | **RESUELTO** (instrumentacion) | `shared/metrics.py` implementa `_JudgeFallbackTracker` thread-safe con contadores por `MetricType`: `invocations`, `parse_failures` (JSON no parseable), `default_returns` (regex fallo → 0.5). APIs publicas: `get_judge_fallback_stats()`, `reset_judge_fallback_stats()`, `max_judge_default_return_rate()`. `_extract_score_fallback` refactorizado a variante con status `(score, was_default)` preservando la API publica existente. `_parse_judge_result` loguea WARNING con raw response (trunc 200) cuando se devuelve el default. El evaluator resetea stats al inicio del run, las propaga a `config_snapshot._runtime.judge_fallback_stats`, y aplica threshold check post-run via `JUDGE_FALLBACK_THRESHOLD` (default `0.02`): si alguna metrica supera el umbral, el run lanza `RuntimeError` y emite evento estructurado `run_judge_threshold_exceeded`. El sesgo silencioso de las metricas del judge (especialmente faithfulness para el eje 2 del experimento 3) queda protegido. La mitigacion de la causa raiz (constrained decoding / JSON schema / judge mas capaz) sigue pendiente pero ya no silenciosa | N/A — la instrumentacion expone el problema. Ver `config_snapshot._runtime.judge_fallback_stats` en output JSON |
+| 4 | ~~LLM Judge puede devolver scores por defecto~~ | **RESUELTO** (instrumentacion) | `_extract_score_fallback` devuelve 0.5 silenciosamente si ni JSON ni regex extraen score, sesgando metricas hacia el centro (especialmente faithfulness). Instrumentado con `_JudgeFallbackTracker` thread-safe en `shared/metrics.py` + threshold check `JUDGE_FALLBACK_THRESHOLD` que falla el run si la tasa supera el umbral. Detalles de API, campos y comandos jq en "Observabilidad de runs". La mitigacion de la causa raiz (constrained decoding / judge mas capaz) sigue pendiente pero ya no silenciosa | N/A |
 | 5 | Context window fallback silencioso | **BAJO** (casi aceptable) | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). **Aclaracion importante**: este valor es el **presupuesto total de contexto** pasado al LLM, que `format_context()`/`format_structured_context()` usan para seleccionar cuantos fragmentos (chunks) caben. No es "el LLM recibe un documento truncado a 4000 chars". Con chunks tipicos de 500-1000 chars, 4000 = ~4-8 chunks relevantes, suficiente para casos tipo HotpotQA (2 docs gold) y para catalogos pequenos de PDFs especializados donde las respuestas suelen estar en 2-5 chunks. Se logea WARNING. El unico riesgo real es dejar senal en la mesa cuando el modelo soporta mucho mas (p.ej. 192K chars): no se "rompe" nada, simplemente no se aprovecha toda la ventana | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` si se quiere mayor cobertura |
 | 6 | ~~Suite de tests no portable~~ | ~~CRITICO~~ | **Resuelto.** `conftest.py` ahora mockea `dotenv` (ademas de boto3/langchain/chromadb). `test_knowledge_graph.py` usa `pytest.importorskip("igraph")` para skip limpio sin igraph. Con `python-igraph` + `snowballstemmer` instalados: 409 pasan, 6 skipped. Sin igraph: 344 pasan, 65 skipped |
-| 7 | ~~Validacion empirica pendiente post-refactor~~ | **RESUELTO** | F.5 re-ejecutado post-refactor (abril 2026) con las tres divergencias corregidas. Resultado: delta LIGHT_RAG vs SIMPLE_VECTOR se mantuvo en +1.19pp (vs +1.13pp pre-fix) — dentro del ruido del LLM judge. Los fixes estan bien implementados pero HotpotQA no los discrimina por ser home turf del embedding + DEV_MODE saturado + ventana de contexto amplia. Ver "Proximos pasos" para la siguiente direccion (experimento 3, dataset especializado). | N/A — la siguiente validacion requiere cambiar de dataset, no mas fixes |
+| 7 | ~~Validacion empirica pendiente post-refactor~~ | **RESUELTO** | F.5 re-ejecutado post-refactor (abril 2026) con los fixes aplicados. Ver tabla "Resultado F.5" en "Proximos pasos" para cifras. La siguiente validacion requiere cambiar de dataset, no mas fixes — ese es P0 | N/A |
 | 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, la infraestructura (checkpoint, preflight, JSONL, export dual, subset selection, DEV_MODE) es considerable. Sin embargo, el run F.5 demostro que esta infraestructura funciona y es util en practica | Aceptado — la infraestructura se justifica con uso real |
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
-
-Las divergencias arquitectonicas #4/#5/#6/#7/#2 estan todas resueltas (ver seccion "Divergencias con el paper original"). La proxima validacion empirica requiere runs comparativos SIMPLE_VECTOR vs LIGHT_RAG con synthesis activo/inactivo.
 
 ## Observabilidad de runs
 
@@ -207,81 +184,80 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 ## Proximos pasos
 
-### Resultado F.5 post-refactor (abril 2026)
+### Orden de prioridades
 
-Tras resolver las divergencias arquitectonicas #4+5, #6 y #7, se re-ejecuto F.5 con config identica para ambas estrategias (125q, 2500 docs, DEV_MODE, seed=42, nemotron-3-nano).
+```
+P0 (replicacion del paper)                            <-- GATE activo, varias sesiones
+  |
+  +-- P1 (sanity on/off synthesis sobre HotpotQA)     <-- barato, en paralelo
+  |
+  +-- P2 (experimento 3: catalogo especializado)      <-- SOLO si P0 pasa
+  |
+  +-- P3 (embedibilidad + export KG + integracion)    <-- SOLO si P2 pasa
+```
 
-| Metrica | SIMPLE_VECTOR | LIGHT_RAG hybrid | Delta |
-|---|---|---|---|
-| Hit@5 / MRR | 1.000 / 1.000 | 1.000 / 1.000 | 0 (saturado) |
-| Avg gen score | 0.8038 | 0.8157 | **+0.0119** |
-| Tiempo | 144s | 4589s | ×31.8 |
+### Resultado F.5 (referencia historica)
 
-Delta pre-refactor era +0.0113. Delta post-refactor es +0.0119. **Los tres fixes arquitectonicos movieron la aguja 0.6 decimas de porcentaje** — dentro del ruido del LLM judge.
+F.5 se ejecuto dos veces sobre HotpotQA (125q, DEV_MODE, seed=42, reranker ON):
 
-**Interpretacion**: HotpotQA es el *home turf* del embedding. Wikipedia esta en el pre-entrenamiento de `llama-embed-nemotron-8b`, DEV_MODE garantiza gold docs en el corpus (satura retrieval a 1.0), y la ventana de 192K chars permite al LLM leer los gold docs completos sin necesitar ayuda estructural del KG. Este dataset **no discrimina** entre estrategias.
+| Run | Corpus | Delta gen score (LIGHT_RAG − SIMPLE_VECTOR) |
+|---|---|---|
+| Pre-refactor (divergencias abiertas) | 4000 docs | +0.0113 |
+| Post-refactor (#4+5/#6/#7 resueltos) | 2500 docs | +0.0119 |
 
-**Los fixes estan correctamente implementados**. El KG se construye, las secciones estructuradas llegan al LLM con budgets proporcionales, el reranker no colapsa el ranking. Pero todo eso es invisible en un benchmark donde el embedding ya resuelve el problema por si solo.
+Retrieval saturado a 1.000 en ambos runs; gen score dentro del ruido del LLM judge. **HotpotQA no discrimina**: Wikipedia en el pre-entrenamiento del embedding + DEV_MODE saturando gold docs + ventana 192K chars → el embedding resuelve por si solo sin necesitar el KG. Esto no invalida los fixes (el KG se construye bien, las secciones llegan al LLM, el reranker no colapsa); solo dice que este dataset no es util para validar la arquitectura.
 
-### P0 — Experimento 3: evaluar subsistema sobre catalogo de PDFs especializados
+### P0 — Replicacion empirica del paper · **activo, bloqueante**
 
-La hipotesis del proyecto, alineada con su escenario real de uso (ver "Contexto del producto"), es que **LIGHT_RAG mantiene su rendimiento cuando el embedding se degrada por domain shift**, mientras que SIMPLE_VECTOR colapsa. HotpotQA no puede validar esto. El dataset especializado no sera un MTEB/BeIR publico — sera un **catalogo de PDFs de dominio especializado** gestionado por el futuro sistema administrador.
+**Objetivo**: demostrar que sobre al menos un benchmark donde el paper reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
 
-**Separacion de responsabilidades**:
-- **Sistema administrador**: ingesta de PDFs, chunking, extraccion de queries y qrels, almacenamiento en MinIO como Parquet. Define el catalogo. **La generacion del catalogo y su storage NO dependen de este subsistema** — son upstream.
-- **Este subsistema (repo actual)**: consume el catalogo desde MinIO con el loader actual (`sandbox_mteb/loader.py`), ejecuta SIMPLE_VECTOR y LIGHT_RAG, produce metricas comparativas.
+**Candidatos de dataset**:
+- UltraDomain subsets (Legal-QA, Agriculture, CS, Mix) — los del paper original
+- Cualquier QA especializado con domain shift real al embedding
 
-La interfaz entre ambos es el formato Parquet de queries/corpus/qrels que ya consume el loader para HotpotQA. **No hace falta cambiar la forma de consumir datos** — solo apuntar a un prefijo MinIO distinto con el nuevo catalogo. El riesgo tecnico aqui es **schema drift del contrato upstream**, no disponibilidad del dato.
+Ninguno esta en formato MTEB/BeIR nativo; todos requieren ETL propio al contrato MinIO/Parquet de `loader.py`.
 
-**Trabajo tecnico necesario** (cuando el administrador este listo):
-1. Confirmar que el administrador produce Parquet con el mismo schema que HotpotQA (columnas, tipos, ids). Si diverge, adaptar `_populate_from_dataframes()` en `loader.py` o pedir que el administrador se alinee con el schema existente.
-2. Anadir entrada en `shared/types.py:DATASET_CONFIG` para el catalogo nuevo, con `primary_metric` y `dataset_type` apropiados segun como el administrador estructure el ground truth.
-3. Parametrizar `S3_DATASETS_PREFIX` en `.env` para apuntar al catalogo nuevo.
-4. Ejecutar F.6 comparativo (SIMPLE_VECTOR vs LIGHT_RAG hybrid) con metodologia estandar: seed fijo, subset reproducible, DEV_MODE para iteracion rapida + run completo para validacion final.
+**Trabajo necesario (varias sesiones adicionales de claude_code)**:
+1. **Seleccion de benchmark** publico donde exista contra-referencia publicada (paper u otra fuente revisada) a favor de LightRAG/GraphRAG. Sin contra-referencia no hay "replicacion" que validar.
+2. **ETL al contrato Parquet**: mapear queries, corpus, qrels; extender `DATASET_CONFIG` en `shared/types.py`.
+3. **Protocolo experimental**: seed fijo, N>=3 runs por estrategia (mitiga deuda #3), reranker segun config del paper, metricas alineadas con lo que reporta el paper.
+4. **Comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid** con synthesis on. Opcionalmente ablacion off para aislar la aportacion de la synthesis.
+5. **Analisis**: validar `judge_fallback_stats` y `kg_synthesis_stats` antes de interpretar deltas (ver "Observabilidad de runs"). Si alguno degrada, los resultados no son interpretables.
 
-**Hipotesis a validar — dos dimensiones**:
+**Criterio de exito**: delta `LIGHT_RAG > SIMPLE_VECTOR` en la metrica principal del benchmark, distinguible del ruido (seed×LLM), con signo consistente con el paper.
 
-El experimento 3 evalua LIGHT_RAG vs SIMPLE_VECTOR en **dos ejes complementarios**, no solo uno:
+**Criterio de fallo**: deltas dentro del ruido o invertidos → debug (¿synthesis llega al generador? ¿KG se construye? ¿indexacion falla silenciosamente?), no avance a P2/P3.
 
-*Eje 1 — Precision/calidad de respuesta*: sobre un catalogo de 10-50 PDFs especializados (no publicos, terminologia propia, entidades internas), se espera que el delta LIGHT_RAG > SIMPLE_VECTOR crezca significativamente (>3-5pp en gen score, >5-10pp en Recall@K) porque el embedding no tiene el dominio aprendido mientras que el KG se construye a partir del corpus mismo.
+### P1 — Sanity de synthesis sobre HotpotQA · barato, paralelo a P0
 
-*Eje 2 — Resistencia a alucinacion / contexto inventado*: cuando el retrieval del embedding falla o devuelve chunks poco relevantes por domain shift, el LLM tiende a rellenar con contenido plausible pero no respaldado por el corpus. El KG, al operar sobre entidades y relaciones extraidas explicitamente del propio corpus, deberia (a) aportar grounding adicional que reduzca la tasa de alucinacion, y (b) evitar que el LLM fabrique entidades o relaciones inexistentes. Metricamente esto se evalua con `faithfulness` (LLM-judge en `shared/metrics.py`) como senal principal, complementada con analisis de respuestas donde LIGHT_RAG acierta y SIMPLE_VECTOR inventa (y viceversa).
+Dos controles gratuitos que no sustituyen P0 (por la razon de arriba):
 
-Este segundo eje es **especialmente relevante** porque el escenario real de uso (corpus especializado, no publico) es exactamente donde el LLM tiene mayor incentivo a alucinar: las entidades del corpus no estan en su pre-entrenamiento, asi que al no encontrarlas en el contexto recuperado, puede fabricarlas con confianza.
+1. **Ablacion synthesis on/off** (F.7): repetir F.5 con `KG_SYNTHESIS_ENABLED=true` y `false`. Objetivo: detectar regresion introducida por la capa de synthesis antes de invertir en P0.
+2. **Full corpus sin DEV_MODE** (66K docs): senal intermedia sobre robustez del KG cuando el retrieval deja de saturar.
 
-**Criterio de decision**: si se valida cualquiera de los dos ejes (idealmente ambos), este subsistema queda justificado como pieza del producto final y LIGHT_RAG pasa a ser estrategia default. Si no se valida ninguno, hay que reconsiderar el rol de LIGHT_RAG en el producto.
+Coste: F.7 ~2-3h, full corpus ~4-6h.
 
-**Prerequisito metodologico**: la fiabilidad del eje 2 depende de la calidad del LLM-judge de faithfulness. Ver deuda tecnica #4 — el fallback silencioso del score extractor puede sesgar precisamente la metrica que mide alucinacion.
+### P2 — Experimento 3: catalogo especializado · **futuro, contingente a P0**
 
-**Bloqueado por**: disponibilidad del catalogo en el administrador. Mientras tanto, el experimento 1 (P1) puede dar senal intermedia sobre robustez del KG en condiciones de retrieval dificil, sobre el mismo dataset HotpotQA.
+**No empezar sin P0 verde.** Sobre un catalogo privado de 10-50 PDFs especializados (upstream del sistema administrador), LIGHT_RAG vs SIMPLE_VECTOR se evalua en dos ejes:
 
-### P0.5 — Prerequisitos arquitectonicos del experimento 3
+- **Eje 1 — Precision/calidad**: se espera delta LIGHT_RAG > SIMPLE_VECTOR >3-5pp en gen score, >5-10pp en Recall@K, porque el embedding no ha visto el dominio y el KG se construye del propio corpus.
+- **Eje 2 — Resistencia a alucinacion**: el KG aporta grounding explicito que deberia reducir la tasa de fabricacion cuando el retrieval devuelve chunks poco relevantes. Se mide via `faithfulness` (LLM-judge); la fiabilidad depende de que la instrumentacion de deuda #4 reporte tasas sanas.
 
-Antes de ejecutar el experimento 3, hay trabajo de arquitectura que debe completarse para que la comparacion evalue la arquitectura LIGHT_RAG **completa**, no una version intermedia:
+**Criterio de decision**: validar cualquiera de los dos ejes (idealmente ambos) → LIGHT_RAG pasa a estrategia default. Ninguno → reconsiderar el rol de LIGHT_RAG en el producto.
 
-1. ~~**Divergencia LightRAG #2 (LLM synthesis en fusion final)**~~ — **Resuelto.** `GenerationExecutor._synthesize_kg_context_async()` reescribe el contexto multi-seccion como narrativa coherente via LLM query-aware. Activado por defecto para LIGHT_RAG via `KG_SYNTHESIS_ENABLED=true`. Ver "Divergencias con el paper original".
-2. ~~**Deuda #4 (LLM judge fallback)**~~ — **Resuelto.** Tracker instrumentado + threshold check via `JUDGE_FALLBACK_THRESHOLD` (default 2%). Tasas por metrica en `config_snapshot._runtime.judge_fallback_stats`. Ver deuda tecnica #4.
-3. **Deuda #2 (preflight real)** — **Pendiente.** Validar schema del Parquet contra `DATASET_CONFIG` para detectar schema drift del contrato upstream en segundos, no en horas. Es el unico prerequisito P0.5 vivo.
+**Bloqueado por**: P0 verde + disponibilidad del catalogo upstream.
 
-Post-synthesis conviene ejecutar runs comparativos en HotpotQA (SIMPLE_VECTOR vs LIGHT_RAG con synthesis on/off) para (a) validar que la implementacion no introduce regresion y (b) medir el delta aislado que aporta la capa de synthesis. Si `kg_synthesis_stats.fallback_rate > 10%`, la synthesis esta degradando frecuentemente y los resultados no reflejan la arquitectura completa.
+### P3 — Embedibilidad + export de KG + integracion · **futuro lejano, contingente a P2**
 
-### P1 — Experimento 1 (control intermedio, no bloqueante)
+**No empezar sin P0 y P2 verdes.** Trabajo de producto, no de investigacion:
 
-Control experimental gratis antes de invertir en adaptacion de dataset nuevo: desactivar DEV_MODE sobre HotpotQA y usar corpus completo (66K docs). No reemplaza el experimento 3, pero da senal rapida sobre si el KG aporta valor cuando el retrieval se vuelve dificil (sin gold docs garantizados en el corpus). Coste: 0 codigo, ~2-3h de infraestructura.
-
-### P2 — Embedibilidad del subsistema + export de KG (preparacion para integracion)
-
-Auditar interfaces pensando en el sistema administrador que integrara este subsistema:
-- Configuracion via diccionario inyectado, no solo via `.env` global
-- Operacion sobre corpus pasados en memoria (no solo MinIO/Parquet)
-- Sin asunciones sobre el sistema de ficheros excepto `EVALUATION_RESULTS_DIR` explicito
-- Separacion limpia entre "cargar/indexar" y "evaluar" para permitir reuso de indices entre runs
-- **Export de KG a MinIO/Parquet**: cuando LIGHT_RAG sea estrategia de produccion, el administrador necesitara persistir los KGs construidos (para versionado, reuso multi-run y consultas multi-tenant). Implementar serializador `KnowledgeGraph` → Parquet (nodos + aristas + pesos + metadatos de co-ocurrencia) + VDBs de entidades/relaciones. Schema a acordar con el administrador; se recomienda espejar la estructura que el administrador usa para consumir KGs. Hoy el KG vive solo en memoria (igraph) + ChromaDB efimeros y se descarta en `_cleanup()`.
-
-No bloqueante para el experimento 3, pero necesario antes de la integracion real.
+- **Embedibilidad**: configuracion via dict inyectado (no solo `.env` global), corpus en memoria, separar "cargar/indexar" de "evaluar" para reusar indices entre runs.
+- **Export de KG a MinIO/Parquet**: serializador `KnowledgeGraph` → Parquet (nodos + aristas + pesos + metadatos de co-ocurrencia) + VDBs. Schema a acordar con el administrador. Hoy el KG es efimero (igraph + ChromaDB en memoria, descartado en `_cleanup()`). Sin export, multi-tenant y versionado son imposibles.
+- **Contract testing con el administrador**: validar el schema Parquet upstream contra `DATASET_CONFIG` desde preflight (cierra deuda #2).
 
 ### Limitaciones conocidas (no accionables)
 
 - Sesgo LLM-judge en faithfulness para respuestas cortas (inherente)
-- No-determinismo HNSW ±0.02 (ChromaDB no expone `hnsw:random_seed`)
+- No-determinismo HNSW ±0.02 (ChromaDB no expone `hnsw:random_seed`; deuda #3)
 - Lock-in a NVIDIA NIM (deuda #9) — solo reproducible con acceso a NIM

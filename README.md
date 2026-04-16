@@ -24,7 +24,7 @@ shared/                          # Libreria compartida
   structured_logging.py          # Logging JSONL estructurado
   retrieval/
     __init__.py                  # Factory get_retriever()
-    core.py                      # BaseRetriever, SimpleVectorRetriever, RetrievalConfig, RRF
+    core.py                      # BaseRetriever, SimpleVectorRetriever, RetrievalConfig
     reranker.py                  # CrossEncoderReranker (NVIDIARerank)
     lightrag/
       retriever.py               # LightRAGRetriever: vector + KG dual-level
@@ -175,7 +175,7 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 
 **Ronda 2 (robustez):** LRU cache keywords, thread safety, fallbacks, stats.
 
-**Fases A-F (alineacion con original):** Entity VDB, Relationship VDB, description merging, gleaning, contexto estructurado. RRF eliminado, pipeline alineado con el paper. Pendiente: F.5 (run comparativo post-refactor).
+**Fases A-F (alineacion con original):** Entity VDB, Relationship VDB, description merging, gleaning, contexto estructurado. RRF eliminado, pipeline alineado con el paper. F.5 ejecutado (HotpotQA no discrimina; ver CLAUDE.md).
 
 **Fase H (hardening):** Bare excepts con logging, dead code eliminado, validacion sub-configs.
 
