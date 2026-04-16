@@ -29,7 +29,12 @@ from shared.types import (
     get_dataset_config,
 )
 from shared.llm import AsyncLLMService, load_embedding_model, run_sync
-from shared.metrics import MetricsCalculator
+from shared.metrics import (
+    MetricsCalculator,
+    get_judge_fallback_stats,
+    max_judge_default_return_rate,
+    reset_judge_fallback_stats,
+)
 from shared.retrieval import get_retriever, RetrievalStrategy
 from shared.retrieval.core import BaseRetriever
 from shared.retrieval.reranker import CrossEncoderReranker, HAS_NVIDIA_RERANK
@@ -92,6 +97,11 @@ class MTEBEvaluator:
 
         self._log_run_start(run_id)
 
+        # Deuda tecnica #4: resetear tracker del judge al inicio de cada run
+        # para que las tasas reflejen solo este run y no estado acumulado
+        # de runs previos en el mismo proceso.
+        reset_judge_fallback_stats()
+
         try:
             # 1. Inicializar componentes
             self._init_components()
@@ -126,6 +136,12 @@ class MTEBEvaluator:
             )
 
             self._log_run_complete(run_id, elapsed, evaluation_run)
+
+            # 6. Validar tasa de fallback del judge (deuda tecnica #4).
+            # Se hace DESPUES de construir el run para que las stats queden
+            # persistidas en `config_snapshot._runtime` incluso si fallamos.
+            self._validate_judge_fallback_threshold(run_id)
+
             return evaluation_run
 
         except Exception as e:
@@ -190,6 +206,20 @@ class MTEBEvaluator:
             f"Hit@5={evaluation_run.avg_hit_rate_at_5:.4f} | "
             f"MRR={evaluation_run.avg_mrr:.4f}"
         )
+
+        # Deuda tecnica #4: reporte visible de tasa de fallback del judge.
+        judge_stats = get_judge_fallback_stats()
+        if judge_stats:
+            for metric_name, s in judge_stats.items():
+                logger.info(
+                    "  Judge fallback (%s): invocations=%d, "
+                    "parse_failure_rate=%.2f%%, default_return_rate=%.2f%%",
+                    metric_name,
+                    s["invocations"],
+                    s["parse_failure_rate"] * 100,
+                    s["default_return_rate"] * 100,
+                )
+
         structured_log(
             "run_complete",
             run_id=run_id,
@@ -203,7 +233,45 @@ class MTEBEvaluator:
                 if evaluation_run.avg_generation_score is not None
                 else None
             ),
+            judge_fallback_stats=judge_stats,
         )
+
+    def _validate_judge_fallback_threshold(self, run_id: str) -> None:
+        """Falla el run si algun judge metric supera el threshold configurado.
+
+        Deuda tecnica #4: protege el experimento 3 (y cualquier run futuro
+        sobre corpus especializados) de reportar deltas artefacto causados
+        por el judge devolviendo 0.5 por defecto. Las stats ya estan
+        persistidas en `evaluation_run.config_snapshot._runtime` antes de
+        llegar aqui, asi que el usuario siempre puede inspeccionarlas.
+        """
+        threshold = self.config.judge_fallback_threshold
+        if threshold <= 0.0:
+            return  # Validacion desactivada explicitamente
+
+        stats = get_judge_fallback_stats()
+        worst_metric, worst_rate = max_judge_default_return_rate(stats)
+
+        if worst_metric is not None and worst_rate > threshold:
+            msg = (
+                f"Tasa de fallback del judge excedida: metrica "
+                f"'{worst_metric}' devolvio 0.5 por defecto en "
+                f"{worst_rate * 100:.2f}% de invocaciones "
+                f"(umbral={threshold * 100:.2f}%). Las metricas del judge "
+                f"estan sesgadas hacia el centro y los deltas entre "
+                f"estrategias no son interpretables. "
+                f"Sube JUDGE_FALLBACK_THRESHOLD (no recomendado) o "
+                f"investiga por que el judge no produce JSON parseable."
+            )
+            logger.error(msg)
+            structured_log(
+                "run_judge_threshold_exceeded",
+                run_id=run_id,
+                metric=worst_metric,
+                default_return_rate=round(worst_rate, 4),
+                threshold=threshold,
+            )
+            raise RuntimeError(msg)
 
     # -----------------------------------------------------------------
     # INICIALIZACION

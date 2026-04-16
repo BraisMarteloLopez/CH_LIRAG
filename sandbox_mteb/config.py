@@ -102,6 +102,16 @@ class MTEBConfig:
     dev_queries: int = 200
     dev_corpus_size: int = 4000
 
+    # Umbral de tasa de fallback del LLM judge (deuda tecnica #4).
+    # Si en el run la proporcion de scores devueltos como default 0.5
+    # (el judge no pudo producir JSON parseable ni score via regex) supera
+    # este umbral para CUALQUIER metrica del judge, el run se marca como
+    # fallido al final. Protege metricas como faithfulness del sesgo
+    # silencioso hacia el centro. 0.0 desactiva la validacion (no fallar).
+    # Default 0.02 (2%) — razonable para judge modernos bien prompteados;
+    # subir durante iteracion, bajar antes del experimento 3.
+    judge_fallback_threshold: float = 0.02
+
     @classmethod
     def from_env(cls, env_path: str = ".env") -> "MTEBConfig":
         """Construye config completa desde .env.
@@ -125,6 +135,7 @@ class MTEBConfig:
             dev_mode=_env_bool("DEV_MODE", False),
             dev_queries=_env_int("DEV_QUERIES", 200),
             dev_corpus_size=_env_int("DEV_CORPUS_SIZE", 4000),
+            judge_fallback_threshold=_env_float("JUDGE_FALLBACK_THRESHOLD", 0.02),
         )
 
         errors = config.validate()
@@ -181,6 +192,12 @@ class MTEBConfig:
                 errors.append(f"DEV_QUERIES={self.dev_queries} debe ser > 0 cuando DEV_MODE=true")
             if self.dev_corpus_size <= 0:
                 errors.append(f"DEV_CORPUS_SIZE={self.dev_corpus_size} debe ser > 0 cuando DEV_MODE=true")
+
+        if not 0.0 <= self.judge_fallback_threshold <= 1.0:
+            errors.append(
+                f"JUDGE_FALLBACK_THRESHOLD={self.judge_fallback_threshold} "
+                "debe estar en [0.0, 1.0] (0.0 desactiva la validacion)"
+            )
 
         return errors
 

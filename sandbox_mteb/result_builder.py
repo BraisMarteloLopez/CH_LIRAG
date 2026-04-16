@@ -18,6 +18,7 @@ from shared.types import (
     QueryEvaluationResult,
     LoadedDataset,
 )
+from shared.metrics import get_judge_fallback_stats
 from shared.retrieval import RetrievalStrategy
 
 from .config import MTEBConfig
@@ -137,6 +138,7 @@ def build_run(
     # Config snapshot: serializacion completa para reproducibilidad post-hoc
     config_snapshot = _serialize_config(config)
     # Campos derivados del run (no en config)
+    judge_fallback_stats = get_judge_fallback_stats()
     config_snapshot["_runtime"] = {
         "max_context_chars": max_context_chars,
         "rerank_failures": rerank_failures if config.reranker.enabled else None,
@@ -150,6 +152,9 @@ def build_run(
             if strategy_mismatches == 0
             else "FALLBACK_SIMPLE_VECTOR"
         ),
+        # Deuda tecnica #4: tasa de fallback del LLM judge por metrica.
+        # default_return_rate elevado => metricas del judge sesgadas a 0.5.
+        "judge_fallback_stats": judge_fallback_stats,
     }
 
     return EvaluationRun(
