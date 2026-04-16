@@ -49,7 +49,7 @@ sandbox_mteb/                  # Pipeline de evaluacion
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (447 tests declarados, ver estado real abajo)
+tests/                         # pytest (contador exacto: ver seccion "Test coverage")
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
   test_*.py                    # Unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
@@ -189,8 +189,8 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor (abril 2026) |
 |---|---|
-| Tests unitarios | **~441 pasan**, 6 skipped en entorno con igraph+snowballstemmer. Sin igraph: **382 pasan**, 7 skipped (verificado). Ultimas adiciones: +19 `test_judge_fallback_tracker.py` +13 `test_kg_synthesis.py` |
-| Tests integracion | 19 en 3 archivos, requieren NIM + MinIO reales |
+| Tests unitarios | Todos pasan con `python-igraph` + `snowballstemmer` instalados; sin igraph, los tests que lo requieren se saltan limpiamente (resto pasa). Contadores exactos drift con cada PR — verificar con `pytest --collect-only -q tests/ \| tail -1` y `pytest -m "not integration" tests/`. Ultimas adiciones reseñables: `test_judge_fallback_tracker.py` (deuda #4), `test_kg_synthesis.py` (divergencia #2) |
+| Tests integracion | 3 archivos en `tests/integration/`, requieren NIM + MinIO reales. Contador via `pytest --collect-only -q tests/integration/` (solo si `.env` esta configurado) |
 | mypy | 0 errores nuevos en ficheros modificados; 3 errores preexistentes no relacionados (dotenv/numpy sin stubs, `retrieval_executor.py:124` union-attr) |
 
 ### Portabilidad de tests
