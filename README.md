@@ -11,6 +11,8 @@ Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de 
 
 **LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM. Entity VDB + Relationship VDB para resolucion semantica. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
 
+> **Caveat arquitectonico (divergencia #8, abierta)**: el ranking de chunks se produce por similitud vectorial query↔chunk (heredado de `SimpleVectorRetriever`), **no** a traves de `source_doc_ids` del KG como en el paper original. El KG aporta entidades y relaciones como contexto complementario al generador via secciones separadas y synthesis, pero no participa en la decision de que chunks entran al contexto. Consecuencia: las metricas de retrieval (Hit@K, MRR, Recall@K) son estructuralmente identicas a SIMPLE_VECTOR. Hay infraestructura paper-aligned ya construida en `shared/retrieval/lightrag/knowledge_graph.py` (`query_by_entities`, `query_by_keywords`, `get_entities_for_docs`, `get_relations_for_docs`) **no conectada** al retriever actual — no borrar sin resolver la divergencia. Detalle completo en [CLAUDE.md — Divergencias con el paper original · #8](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad).
+
 ## Arquitectura
 
 ```
