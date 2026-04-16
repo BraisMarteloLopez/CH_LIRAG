@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import string
+import threading
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
@@ -354,6 +355,122 @@ def semantic_similarity(
 # SECCION 4: METRICAS SIN REFERENCIA (LLM-Judge)
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Tracker de tasa de fallback del LLM judge (deuda tecnica #4)
+#
+# Contabiliza, por tipo de metrica, la proporcion de invocaciones donde el
+# judge no pudo producir un score estructurado y tuvimos que recurrir a
+# parsing regex o, peor, al default 0.5.
+#
+# Tres eventos rastreados:
+#   - invocations: llamadas totales al judge (denominador).
+#   - parse_failures: respuesta no parseable como JSON, se delega a regex.
+#   - default_returns: regex tambien fallo, devolvimos 0.5 por defecto.
+#     Este es el evento critico — sesga metricas silenciosamente hacia el
+#     centro y puede comprimir deltas entre estrategias (especialmente en
+#     faithfulness, que evalua alucinacion en el experimento 3).
+#
+# Thread-safe: el judge se invoca concurrentemente via asyncio / threads.
+# -----------------------------------------------------------------------------
+
+
+class _JudgeFallbackTracker:
+    """Contador thread-safe de eventos de fallback del judge por metrica."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._invocations: Counter = Counter()
+        self._parse_failures: Counter = Counter()
+        self._default_returns: Counter = Counter()
+
+    def record_invocation(self, metric_type: MetricType) -> None:
+        with self._lock:
+            self._invocations[metric_type.value] += 1
+
+    def record_parse_failure(self, metric_type: MetricType) -> None:
+        with self._lock:
+            self._parse_failures[metric_type.value] += 1
+
+    def record_default_return(self, metric_type: MetricType) -> None:
+        with self._lock:
+            self._default_returns[metric_type.value] += 1
+
+    def snapshot(self) -> Dict[str, Dict[str, Any]]:
+        """Snapshot por metrica con contadores absolutos y tasas."""
+        with self._lock:
+            metric_names = (
+                set(self._invocations)
+                | set(self._parse_failures)
+                | set(self._default_returns)
+            )
+            result: Dict[str, Dict[str, Any]] = {}
+            for name in metric_names:
+                n = self._invocations[name]
+                result[name] = {
+                    "invocations": n,
+                    "parse_failures": self._parse_failures[name],
+                    "default_returns": self._default_returns[name],
+                    "parse_failure_rate": (
+                        self._parse_failures[name] / n if n else 0.0
+                    ),
+                    "default_return_rate": (
+                        self._default_returns[name] / n if n else 0.0
+                    ),
+                }
+            return result
+
+    def reset(self) -> None:
+        with self._lock:
+            self._invocations.clear()
+            self._parse_failures.clear()
+            self._default_returns.clear()
+
+
+_judge_fallback_tracker = _JudgeFallbackTracker()
+
+
+def get_judge_fallback_stats() -> Dict[str, Dict[str, Any]]:
+    """Retorna snapshot del tracker de fallback del judge.
+
+    Cada clave es el nombre de una metrica (MetricType.value). Valores:
+      - invocations: llamadas totales al judge
+      - parse_failures: respuestas no parseables como JSON
+      - default_returns: casos donde se devolvio 0.5 por defecto
+      - parse_failure_rate, default_return_rate: ratios contra invocations
+
+    Uso tipico: inspeccionar tras un run para detectar degradacion del judge.
+    `default_return_rate` es la senal clave — valores altos indican que el
+    judge esta fallando a producir scores interpretables y las metricas
+    (especialmente faithfulness) estan sesgadas hacia 0.5.
+    """
+    return _judge_fallback_tracker.snapshot()
+
+
+def reset_judge_fallback_stats() -> None:
+    """Resetea contadores. Llamar al inicio de cada run de evaluacion."""
+    _judge_fallback_tracker.reset()
+
+
+def max_judge_default_return_rate(
+    stats: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], float]:
+    """Devuelve (nombre_metrica, tasa) con el mayor default_return_rate.
+
+    Util para validar un run contra un umbral. Si no hay invocaciones,
+    retorna (None, 0.0).
+    """
+    if not stats:
+        return (None, 0.0)
+    worst_metric: Optional[str] = None
+    worst_rate = 0.0
+    for name, s in stats.items():
+        rate = s.get("default_return_rate", 0.0)
+        if rate > worst_rate:
+            worst_rate = rate
+            worst_metric = name
+    return (worst_metric, worst_rate)
+
+
 # Prompts del sistema
 _FAITHFULNESS_SYSTEM_PROMPT = """You are an expert RAG system evaluator.
 Your task is to assess whether an ANSWER is derived EXCLUSIVELY from the
@@ -452,6 +569,7 @@ def _invoke_judge(
     metric_type: MetricType
 ) -> MetricResult:
     """Invoca LLM Judge sync y parsea respuesta JSON."""
+    _judge_fallback_tracker.record_invocation(metric_type)
     try:
         response = llm_judge.invoke(user_prompt, system_prompt=system_prompt)
         response_text = str(response).strip()
@@ -474,6 +592,7 @@ async def _invoke_judge_async(
     metric_type: MetricType
 ) -> MetricResult:
     """Version async de _invoke_judge. Usa invoke_async del LLM."""
+    _judge_fallback_tracker.record_invocation(metric_type)
     try:
         response = await llm_judge.invoke_async(
             user_prompt, system_prompt=system_prompt
@@ -512,16 +631,32 @@ def _parse_judge_result(response_text: str, metric_type: MetricType) -> MetricRe
             confidence=confidence
         )
     else:
-        score = _extract_score_fallback(response_text)
+        # Deuda tecnica #4: el JSON no parseo, caemos a regex. Esto ya
+        # es una senal de degradacion del judge.
+        _judge_fallback_tracker.record_parse_failure(metric_type)
+
+        score, was_default = _extract_score_fallback_with_status(response_text)
+        if was_default:
+            # Caso critico: ni JSON ni regex extrajeron score. 0.5 por
+            # defecto sesga metricas hacia el centro.
+            _judge_fallback_tracker.record_default_return(metric_type)
+            logger.warning(
+                "Score extraction fallback (%s): judge devolvio respuesta "
+                "no parseable y los regex fallaron; usando 0.5 por defecto. "
+                "Raw response (trunc): %r",
+                metric_type.value,
+                response_text[:200],
+            )
 
         return MetricResult(
             metric_type=metric_type,
             value=score,
             details={
                 "justification": "Formato no estructurado",
-                "raw_response": response_text[:500]
+                "raw_response": response_text[:500],
+                "fallback_default_used": was_default,
             },
-            confidence=0.4
+            confidence=0.2 if was_default else 0.4,
         )
 
 
@@ -548,8 +683,15 @@ def _parse_judge_response(response_text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _extract_score_fallback(response_text: str) -> float:
+def _extract_score_fallback_with_status(
+    response_text: str,
+) -> Tuple[float, bool]:
     """Extrae score numerico de respuesta no estructurada.
+
+    Devuelve (score, was_default): `was_default=True` si ningun regex
+    pudo extraer un valor y se devolvio 0.5 por defecto. Este flag permite
+    al caller distinguir "score extraido via regex" (senal debil pero real)
+    de "ningun score, devolvi el centro" (sesgo silencioso).
 
     FIX DT-9: Regex anterior capturaba parciales de numeros mayores.
     Ahora usa word boundaries y patrones explicitos:
@@ -568,7 +710,7 @@ def _extract_score_fallback(response_text: str) -> float:
             numerator = float(match.group(1))
             denominator = float(match.group(2))
             if denominator > 0:
-                return min(1.0, numerator / denominator)
+                return (min(1.0, numerator / denominator), False)
         except ValueError:
             pass
 
@@ -580,7 +722,7 @@ def _extract_score_fallback(response_text: str) -> float:
         try:
             value = float(match.group(1))
             if 0 <= value <= 1:
-                return value
+                return (value, False)
         except ValueError:
             pass
 
@@ -592,11 +734,17 @@ def _extract_score_fallback(response_text: str) -> float:
         try:
             value = int(match.group(1))
             if 1 <= value <= 10:
-                return value / 10
+                return (value / 10, False)
         except ValueError:
             pass
 
-    return 0.5
+    return (0.5, True)
+
+
+def _extract_score_fallback(response_text: str) -> float:
+    """Wrapper que descarta el status. Conservado para compat (tests DT-9)."""
+    score, _ = _extract_score_fallback_with_status(response_text)
+    return score
 
 
 # -- Funciones publicas LLM-Judge (sync) -----------------------------------

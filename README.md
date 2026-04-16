@@ -7,9 +7,9 @@ Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de 
 | Estrategia | Indexacion | Busqueda | Reranker |
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
-| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + KG enrichment (secciones separadas) | Opcional |
+| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + KG enrichment + LLM synthesis del contexto | Off (auto-desactivado) |
 
-**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM. Entity VDB + Relationship VDB para resolucion semantica. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Sin `igraph` o sin LLM → degrada a vector search puro.
+**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM. Entity VDB + Relationship VDB para resolucion semantica. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
 
 ## Arquitectura
 
@@ -44,7 +44,7 @@ sandbox_mteb/                    # Pipeline de evaluacion MTEB/BeIR
   preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
   env.example                    # Plantilla .env
 
-tests/                           # pytest (447 unit + 19 integration tests, 38 archivos)
+tests/                           # pytest (~441 unit + 19 integration tests, 40 archivos)
 ```
 
 ## Pipeline
@@ -56,7 +56,9 @@ tests/                           # pytest (447 unit + 19 integration tests, 38 a
      -> index(ChromaDB)
      -> pre-embed queries (batch REST NIM)
      -> [pre-extract query keywords (batch LLM) si LIGHT_RAG]
-     -> retrieve (sync) -> [rerank si habilitado] -> generate + metrics (async)
+     -> retrieve (sync) -> [rerank si SIMPLE_VECTOR]
+     -> [LLM synthesis del contexto KG si LIGHT_RAG + kg_synthesis_enabled]
+     -> generate + metrics (async)
      -> EvaluationRun -> JSON + CSV
 ```
 
@@ -115,9 +117,14 @@ KG_BATCH_DOCS_PER_CALL=5             # Docs por LLM call en batch
 KG_MAX_ENTITIES=0                     # Cap entidades (0 = default interno 100K)
 KG_CACHE_DIR=                         # Directorio para persistir KG (vacio = sin cache)
 KG_DESCRIPTION_SYNTHESIS=false        # LLM synthesis para descripciones multi-doc (DAM-4)
-KG_SYNTHESIS_CHAR_THRESHOLD=200       # Chars minimos para trigger LLM synthesis
+KG_SYNTHESIS_CHAR_THRESHOLD=200       # Chars minimos para trigger LLM synthesis (DAM-4)
 
-# Reranker (opcional)
+# KG context synthesis en generacion (divergencia LightRAG #2)
+KG_SYNTHESIS_ENABLED=true             # LLM reescribe contexto multi-seccion como narrativa
+KG_SYNTHESIS_MAX_CHARS=0              # 0 = usar max_context_chars del run
+KG_SYNTHESIS_TIMEOUT_S=30.0
+
+# Reranker (opcional, desactivado automaticamente para LIGHT_RAG)
 RERANKER_ENABLED=false
 RERANKER_TOP_N=5
 
@@ -126,6 +133,9 @@ MTEB_DATASET_NAME=hotpotqa
 EVAL_MAX_QUERIES=50
 EVAL_MAX_CORPUS=1000
 GENERATION_ENABLED=true
+
+# LLM judge instrumentation (deuda tecnica #4)
+JUDGE_FALLBACK_THRESHOLD=0.02         # Max tasa de fallback a 0.5 permitida (0 = desactiva)
 
 # DEV_MODE: subset con gold docs garantizados
 DEV_MODE=false
@@ -176,6 +186,8 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 **DTm-62/63/72/73/82/83:** Conditional fusion, eviction mejorada, BFS weighted, co-occurrence bridging, mypy zero errors, eliminacion HYBRID_PLUS.
 
 **Audit Fases 1-5:** 8 bugfixes, 48 tests nuevos, DAM-4 LLM synthesis, eviction con score compuesto. 447 tests, 0 fallos.
+
+**Post-refactor (abril 2026):** instrumentacion de tasa de fallback del LLM judge (deuda #4, +19 tests, threshold enforcement via `JUDGE_FALLBACK_THRESHOLD`) + capa de synthesis KG en generacion (divergencia LightRAG #2, +13 tests, prompt query-aware con citas `[ref:N]`, faithfulness contra structured_context original para penalizar hallucinations de la propia synthesis). Todas las divergencias arquitectonicas con el paper (#4+5, #6, #7, #2) resueltas.
 
 80+ issues resueltos. Ver historial git.
 
