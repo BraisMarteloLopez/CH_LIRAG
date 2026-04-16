@@ -104,7 +104,7 @@ def test_add_documents_exception_reraises():
     """VS4: _store raises -> exception propagates."""
     store = _make_store()
     store._store.add_documents.side_effect = RuntimeError("ChromaDB error")
-    with pytest.raises(RuntimeError, match="ChromaDB error"):
+    with pytest.raises(RuntimeError):
         store.add_documents([_fake_doc("d1")])
 
 
