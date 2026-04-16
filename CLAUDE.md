@@ -10,7 +10,11 @@ Este proyecto es un subsistema de evaluacion RAG, no un producto final. Su propo
 
 **Vision a largo plazo — sistema administrador**: eventualmente este subsistema se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos, orquestar el ciclo de vida de corpus, versionado de KGs, consultas multi-tenant y APIs de uso. El administrador compartira infraestructura con este subsistema (MinIO + Parquet como contrato), asi que la integracion no implica cambiar como consumimos datos, solo apuntar a un prefijo MinIO distinto. **La integracion esta condicionada a que P0 (replicacion del paper) cierre con exito**; si no replicamos, lo unico integrable es SIMPLE_VECTOR y el trabajo sobre KG se vuelve inutil. Trabajo concreto en "Proximos pasos · P3".
 
-**Implicacion de diseno**: las decisiones estructurales favorecen la embedibilidad futura — configuracion declarativa, interfaces claras, sin side-effects globales, capacidad de operar sobre corpus arbitrarios. Pero mientras P0 no este verde, la embedibilidad es solo un objetivo de diseno, no trabajo activo.
+**Implicacion de diseno**: las decisiones estructurales favorecen la embedibilidad futura — configuracion declarativa, interfaces claras, sin side-effects globales, capacidad de operar sobre corpus arbitrarios. **El valor de este subsistema no es resolver HotpotQA, es producir metricas fiables sobre cualquier corpus que el administrador le entregue.** Pero mientras P0 no este verde, la embedibilidad es solo un objetivo de diseno, no trabajo activo.
+
+**Escenario de uso esperado (no confundir con el experimento 3)**: colecciones pequenas (10-50 PDFs) de dominio especializado, no publico, con idiosincrasia propia — terminologia tecnica, entidades internas, relaciones que no estan en el pre-entrenamiento de los embeddings. Este es el escenario tipico del producto a largo plazo. El experimento 3 (P2) es la prueba empirica concreta de ese escenario; el marco general queda aqui.
+
+**Export de KG — proposito del futuro serializador**: cuando LIGHT_RAG sea estrategia de produccion (post-P0), los KGs deberan persistirse **para tres usos concretos del administrador**: versionado (distintas revisiones del mismo corpus), reuso entre runs (no re-indexar cada vez que entra una query nueva) y consultas multi-tenant (un mismo KG servido a varios consumidores). Detalle tecnico del serializador en "Proximos pasos · P3".
 
 ## Estructura clave
 
@@ -125,7 +129,7 @@ Runs F.5 (resultados empiricos pre-refactor y post-refactor) en "Proximos pasos 
 | 1 | ChromaDB: colecciones huerfanas si el proceso se interrumpe | **BAJO** | `evaluator.py:_cleanup()` ahora elimina la coleccion correctamente via `delete_all_documents()` (que llama `delete_collection()` + recrea). Sin embargo, cada run crea `eval_{run_id}` — si el proceso se interrumpe antes de cleanup, la coleccion queda huerfana. Con `PersistentClient`, se acumulan en disco | Aceptable; borrar manualmente `VECTOR_DB_DIR` si se acumulan |
 | 2 | Preflight no valida datos reales | **MEDIO** | `preflight.py` solo verifica bucket MinIO (`head_bucket` + `list_objects MaxKeys=1`). No descarga ni parsea Parquet, no valida schema contra `DATASET_CONFIG`, no verifica espacio en disco. El riesgo principal no es infra (MinIO ya es compartido con el administrador) sino **schema drift del contrato upstream**: cuando el administrador produzca un catalogo nuevo con columnas/tipos/ids diferentes, el fallo ocurre horas despues del start en `_populate_from_dataframes()`, quemando compute | `--dry-run` primero y verificar que el dataset carga |
 | 3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
-| 4 | ~~LLM Judge puede devolver scores por defecto~~ | **RESUELTO** (instrumentacion) | `_extract_score_fallback` devuelve 0.5 silenciosamente si ni JSON ni regex extraen score, sesgando metricas hacia el centro (especialmente faithfulness). Instrumentado con `_JudgeFallbackTracker` thread-safe en `shared/metrics.py` + threshold check `JUDGE_FALLBACK_THRESHOLD` que falla el run si la tasa supera el umbral. Detalles de API, campos y comandos jq en "Observabilidad de runs". La mitigacion de la causa raiz (constrained decoding / judge mas capaz) sigue pendiente pero ya no silenciosa | N/A |
+| 4 | ~~LLM Judge puede devolver scores por defecto~~ | **RESUELTO** (instrumentacion) | `_extract_score_fallback` devuelve 0.5 silenciosamente si ni JSON ni regex extraen score, sesgando metricas hacia el centro (especialmente faithfulness). Instrumentado con `_JudgeFallbackTracker` thread-safe en `shared/metrics.py`. APIs publicas: `get_judge_fallback_stats()`, `reset_judge_fallback_stats()`, `max_judge_default_return_rate()`. `_extract_score_fallback` refactorizado a variante con status `(score, was_default)` preservando la API publica existente. `_parse_judge_result` loguea WARNING con raw response (trunc 200) cuando se devuelve el default. El evaluator resetea stats al inicio del run, las propaga a `config_snapshot._runtime.judge_fallback_stats`, y aplica threshold check post-run via `JUDGE_FALLBACK_THRESHOLD` (default 2%): si alguna metrica supera el umbral, el run lanza `RuntimeError` y emite evento estructurado `run_judge_threshold_exceeded`. La mitigacion de la causa raiz (constrained decoding / judge mas capaz) sigue pendiente pero ya no silenciosa | N/A. Ver campos y comandos jq en "Observabilidad de runs" |
 | 5 | Context window fallback silencioso | **BAJO** (casi aceptable) | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, usa fallback de 4000 chars (~1000 tokens). **Aclaracion importante**: este valor es el **presupuesto total de contexto** pasado al LLM, que `format_context()`/`format_structured_context()` usan para seleccionar cuantos fragmentos (chunks) caben. No es "el LLM recibe un documento truncado a 4000 chars". Con chunks tipicos de 500-1000 chars, 4000 = ~4-8 chunks relevantes, suficiente para casos tipo HotpotQA (2 docs gold) y para catalogos pequenos de PDFs especializados donde las respuestas suelen estar en 2-5 chunks. Se logea WARNING. El unico riesgo real es dejar senal en la mesa cuando el modelo soporta mucho mas (p.ej. 192K chars): no se "rompe" nada, simplemente no se aprovecha toda la ventana | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicitamente en `.env` si se quiere mayor cobertura |
 | 6 | ~~Suite de tests no portable~~ | ~~CRITICO~~ | **Resuelto.** `conftest.py` ahora mockea `dotenv` (ademas de boto3/langchain/chromadb). `test_knowledge_graph.py` usa `pytest.importorskip("igraph")` para skip limpio sin igraph. Con `python-igraph` + `snowballstemmer` instalados: 409 pasan, 6 skipped. Sin igraph: 344 pasan, 65 skipped |
 | 7 | ~~Validacion empirica pendiente post-refactor~~ | **RESUELTO** | F.5 re-ejecutado post-refactor (abril 2026) con los fixes aplicados. Ver tabla "Resultado F.5" en "Proximos pasos" para cifras. La siguiente validacion requiere cambiar de dataset, no mas fixes — ese es P0 | N/A |
@@ -198,14 +202,30 @@ P0 (replicacion del paper)                            <-- GATE activo, varias se
 
 ### Resultado F.5 (referencia historica)
 
-F.5 se ejecuto dos veces sobre HotpotQA (125q, DEV_MODE, seed=42, reranker ON):
+F.5 se ejecuto dos veces sobre HotpotQA (125q, DEV_MODE, seed=42, reranker ON).
 
-| Run | Corpus | Delta gen score (LIGHT_RAG − SIMPLE_VECTOR) |
-|---|---|---|
-| Pre-refactor (divergencias abiertas) | 4000 docs | +0.0113 |
-| Post-refactor (#4+5/#6/#7 resueltos) | 2500 docs | +0.0119 |
+**F.5 pre-refactor** (divergencias #4+5/#6/#7 abiertas, 4000 docs):
 
-Retrieval saturado a 1.000 en ambos runs; gen score dentro del ruido del LLM judge. **HotpotQA no discrimina**: Wikipedia en el pre-entrenamiento del embedding + DEV_MODE saturando gold docs + ventana 192K chars → el embedding resuelve por si solo sin necesitar el KG. Esto no invalida los fixes (el KG se construye bien, las secciones llegan al LLM, el reranker no colapsa); solo dice que este dataset no es util para validar la arquitectura.
+| Metrica | SIMPLE_VECTOR | LIGHT_RAG | Delta |
+|---|---|---|---|
+| Hit@5 | 1.000 | 1.000 | 0 |
+| MRR | 0.992 | 0.992 | 0 |
+| Recall@5 | 0.968 | 0.968 | 0 |
+| Recall@20 | 0.988 | 0.988 | 0 |
+| Avg gen score | 0.7764 | 0.7877 | +0.0113 |
+| Tiempo total | 194.7s | 9002.1s | ×46 |
+
+Todas las metricas de retrieval identicas query por query. El KG aporto ~49 docs exclusivos por query, pero el reranker colapso el ranking final al mismo top-20 que SIMPLE_VECTOR. KG indexado correctamente (23K entidades, 55K relaciones, 32K co-occurrence edges), pero las divergencias #4+5 y #6 impedian que su senal llegara al LLM. Las 10 diferencias en generacion son no-determinismo del LLM con mismo contexto.
+
+**F.5 post-refactor** (#4+5/#6/#7 resueltos, 2500 docs):
+
+| Metrica | SIMPLE_VECTOR | LIGHT_RAG hybrid | Delta |
+|---|---|---|---|
+| Hit@5 / MRR | 1.000 / 1.000 | 1.000 / 1.000 | 0 (saturado) |
+| Avg gen score | 0.8038 | 0.8157 | +0.0119 |
+| Tiempo | 144s | 4589s | ×31.8 |
+
+Delta pre → post se movio 0.6 decimas de porcentaje — dentro del ruido del LLM judge. **HotpotQA no discrimina**: Wikipedia en el pre-entrenamiento del embedding + DEV_MODE saturando gold docs + ventana 192K chars → el embedding resuelve por si solo sin necesitar el KG. Los fixes estan correctamente implementados (el KG se construye, las secciones llegan al LLM con budgets proporcionales, el reranker no colapsa el ranking); simplemente este dataset no es util para validar la arquitectura.
 
 ### P0 — Replicacion empirica del paper · **activo, bloqueante**
 
@@ -252,7 +272,7 @@ Coste: F.7 ~2-3h, full corpus ~4-6h.
 
 **No empezar sin P0 y P2 verdes.** Trabajo de producto, no de investigacion:
 
-- **Embedibilidad**: configuracion via dict inyectado (no solo `.env` global), corpus en memoria, separar "cargar/indexar" de "evaluar" para reusar indices entre runs.
+- **Embedibilidad**: configuracion via dict inyectado (no solo `.env` global), corpus en memoria, separar "cargar/indexar" de "evaluar" para reusar indices entre runs, sin asunciones sobre el filesystem excepto `EVALUATION_RESULTS_DIR` explicito.
 - **Export de KG a MinIO/Parquet**: serializador `KnowledgeGraph` → Parquet (nodos + aristas + pesos + metadatos de co-ocurrencia) + VDBs. Schema a acordar con el administrador. Hoy el KG es efimero (igraph + ChromaDB en memoria, descartado en `_cleanup()`). Sin export, multi-tenant y versionado son imposibles.
 - **Contract testing con el administrador**: validar el schema Parquet upstream contra `DATASET_CONFIG` desde preflight (cierra deuda #2).
 
