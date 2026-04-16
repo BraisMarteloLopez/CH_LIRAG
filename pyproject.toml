@@ -1,6 +1,8 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "--strict-markers"
+asyncio_mode = "strict"
 markers = [
     "integration: requiere NIM y MinIO reales (no ejecutar sin infraestructura)",
 ]
