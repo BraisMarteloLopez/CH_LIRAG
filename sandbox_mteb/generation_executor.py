@@ -86,15 +86,20 @@ class GenerationExecutor:
         dataset_name: str,
     ) -> GenMetricsResult:
         """Procesa una query: generacion async + metricas async."""
-        # F.3/DAM-8: Contexto estructurado si hay datos KG disponibles
+        # F.3/DAM-8: Contexto estructurado si hay datos KG disponibles.
+        # Divergencia #7: modo LightRAG determina presupuestos por seccion.
         kg_entities = retrieval_detail.retrieval_metadata.get("kg_entities")
         kg_relations = retrieval_detail.retrieval_metadata.get("kg_relations")
         if kg_entities or kg_relations:
+            lightrag_mode = retrieval_detail.retrieval_metadata.get(
+                "lightrag_mode", "hybrid"
+            )
             context = format_structured_context(
                 retrieval_detail.get_generation_contents(),
                 kg_entities or [],
                 kg_relations or [],
                 self._max_context_chars,
+                mode=lightrag_mode,
             )
         else:
             context = format_context(
