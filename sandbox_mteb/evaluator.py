@@ -51,7 +51,12 @@ from .checkpoint import (
 from .result_builder import build_run
 from .subset_selection import select_subset_dev, select_subset_standard
 from .retrieval_executor import RetrievalExecutor, format_context
-from .generation_executor import GenerationExecutor, GenMetricsResult
+from .generation_executor import (
+    GenerationExecutor,
+    GenMetricsResult,
+    get_kg_synthesis_stats,
+    reset_kg_synthesis_stats,
+)
 from .embedding_service import batch_embed_queries, resolve_max_context_chars
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,8 @@ class MTEBEvaluator:
         # para que las tasas reflejen solo este run y no estado acumulado
         # de runs previos en el mismo proceso.
         reset_judge_fallback_stats()
+        # Divergencia LightRAG #2: resetear tambien el tracker de synthesis.
+        reset_kg_synthesis_stats()
 
         try:
             # 1. Inicializar componentes
@@ -220,6 +227,22 @@ class MTEBEvaluator:
                     s["default_return_rate"] * 100,
                 )
 
+        # Divergencia LightRAG #2: reporte de stats del KG synthesis.
+        synthesis_stats = get_kg_synthesis_stats()
+        if synthesis_stats["invocations"] > 0:
+            logger.info(
+                "  KG synthesis: invocations=%d, successes=%d, "
+                "errors=%d, empty=%d, truncations=%d, timeouts=%d, "
+                "fallback_rate=%.2f%%",
+                synthesis_stats["invocations"],
+                synthesis_stats["successes"],
+                synthesis_stats["errors"],
+                synthesis_stats["empty_returns"],
+                synthesis_stats["truncations"],
+                synthesis_stats["timeouts"],
+                synthesis_stats["fallback_rate"] * 100,
+            )
+
         structured_log(
             "run_complete",
             run_id=run_id,
@@ -234,6 +257,7 @@ class MTEBEvaluator:
                 else None
             ),
             judge_fallback_stats=judge_stats,
+            kg_synthesis_stats=synthesis_stats,
         )
 
     def _validate_judge_fallback_threshold(self, run_id: str) -> None:
@@ -332,11 +356,21 @@ class MTEBEvaluator:
         if self.config.generation_enabled and self._llm_service:
             self._max_context_chars = resolve_max_context_chars(self.config)
 
+            # Synthesis del contexto KG: solo tiene sentido para LIGHT_RAG
+            # (SIMPLE_VECTOR no produce kg_entities/kg_relations).
+            kg_synthesis_enabled = (
+                self.config.kg_synthesis_enabled
+                and self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG
+            )
+
             # Generation executor
             self._generation_executor = GenerationExecutor(
                 llm_service=self._llm_service,
                 metrics_calculator=self._metrics_calculator,
                 max_context_chars=self._max_context_chars,
+                kg_synthesis_enabled=kg_synthesis_enabled,
+                kg_synthesis_max_chars=self.config.kg_synthesis_max_chars,
+                kg_synthesis_timeout_s=self.config.kg_synthesis_timeout_s,
             )
 
     # -----------------------------------------------------------------

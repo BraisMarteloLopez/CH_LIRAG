@@ -22,6 +22,7 @@ from shared.metrics import get_judge_fallback_stats
 from shared.retrieval import RetrievalStrategy
 
 from .config import MTEBConfig
+from .generation_executor import get_kg_synthesis_stats
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,10 @@ def build_run(
         # Deuda tecnica #4: tasa de fallback del LLM judge por metrica.
         # default_return_rate elevado => metricas del judge sesgadas a 0.5.
         "judge_fallback_stats": judge_fallback_stats,
+        # Divergencia LightRAG #2: stats de la capa de synthesis del KG.
+        # invocations==0 => synthesis no se intento (no LIGHT_RAG, sin KG
+        # data, o flag desactivada).
+        "kg_synthesis_stats": get_kg_synthesis_stats(),
     }
 
     return EvaluationRun(
