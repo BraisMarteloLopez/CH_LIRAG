@@ -44,7 +44,7 @@ Helpers existentes:
 | Clase | Helper |
 |---|---|
 | `LightRAGRetriever` | `tests/helpers.py::make_lightrag` (centralizado; `test_dtm38_strategy_guardrail.py` lo envuelve en `_make_lightrag_with_vector_results` para pre-configurar return values) |
-| `TripletExtractor` | `tests/test_triplet_extractor.py::_make_extractor`, `tests/test_gleaning.py::_make_extractor` |
+| `TripletExtractor` | `tests/helpers.py::make_extractor` (centralizado) |
 | `CrossEncoderReranker` | `tests/test_dt8_09_10_11_reranker_sort.py`, `tests/test_group_a_b_review.py` |
 | `SimpleVectorRetriever` | `tests/test_simple_vector_retriever.py::_make_retriever`, `tests/test_group_a_b_review.py` |
 | `ChromaVectorStore` | `tests/test_vector_store.py::_make_store`, `tests/test_group_a_b_review.py` |

@@ -29,27 +29,7 @@ import pytest
 from shared.retrieval.lightrag.knowledge_graph import KGEntity, KGRelation
 from shared.retrieval.lightrag.triplet_extractor import TripletExtractor
 
-
-# =============================================================================
-# Helpers
-# =============================================================================
-
-def _make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
-    """Crea TripletExtractor con LLM mockeado."""
-    llm = mock_llm or MagicMock()
-    ext = object.__new__(TripletExtractor)
-    ext._llm = llm
-    ext._max_text_chars = max_text_chars
-    ext._keyword_max_tokens = 1024
-    ext._extraction_max_tokens = 4096
-    ext._batch_size = batch_size
-    ext._stats = {
-        "docs_processed": 0, "docs_success": 0, "docs_failed": 0,
-        "docs_empty_input": 0, "docs_empty_result": 0,
-        "docs_json_recovered": 0,
-        "total_entities": 0, "total_relations": 0,
-    }
-    return ext
+from tests.helpers import make_extractor
 
 
 # =============================================================================
@@ -58,7 +38,7 @@ def _make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
 
 def test_parse_valid_json():
     """JSON bien formado -> entidades + relaciones."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '''{
         "entities": [
             {"name": "Alice", "type": "PERSON", "description": "a researcher"},
@@ -85,7 +65,7 @@ def test_parse_valid_json():
 
 def test_parse_json_with_markdown():
     """```json ... ``` -> strip y parse correctamente."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '''```json
 {
     "entities": [{"name": "Bob", "type": "PERSON", "description": ""}],
@@ -105,14 +85,14 @@ def test_parse_json_with_markdown():
 
 def test_parse_malformed_json():
     """JSON roto -> re-raises para que el caller (extract_from_doc_async) lo maneje."""
-    ext = _make_extractor()
+    ext = make_extractor()
     with pytest.raises((json.JSONDecodeError, ValueError)):
         ext._parse_extraction_json("not json at all", "doc1")
 
 
 def test_parse_truncated_json():
     """JSON truncado (incompleto) -> re-raises."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"name": "Alice"'  # truncado
     with pytest.raises((json.JSONDecodeError, ValueError)):
         ext._parse_extraction_json(raw, "doc1")
@@ -124,7 +104,7 @@ def test_parse_truncated_json():
 
 def test_parse_missing_relations():
     """JSON sin 'relations' -> entities ok, relations=[]."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"name": "Alice", "type": "PERSON"}]}'
     entities, relations = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
@@ -133,7 +113,7 @@ def test_parse_missing_relations():
 
 def test_parse_missing_entities():
     """JSON sin 'entities' -> entities=[], relations ok."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"relations": [{"source": "A", "target": "B", "relation": "knows"}]}'
     entities, relations = ext._parse_extraction_json(raw, "doc1")
     assert entities == []
@@ -142,7 +122,7 @@ def test_parse_missing_entities():
 
 def test_parse_entity_without_name():
     """Entity sin 'name' se ignora (isinstance check)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"type": "PERSON"}, {"name": "Alice", "type": "ORG"}], "relations": []}'
     entities, relations = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
@@ -151,7 +131,7 @@ def test_parse_entity_without_name():
 
 def test_parse_relation_without_source():
     """Relation sin 'source' se ignora."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [], "relations": [{"target": "B", "relation": "knows"}]}'
     entities, relations = ext._parse_extraction_json(raw, "doc1")
     assert relations == []
@@ -163,7 +143,7 @@ def test_parse_relation_without_source():
 
 def test_parse_invalid_entity_type_normalized_to_other():
     """Entity con type invalido se normaliza a OTHER (DTm-16)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"name": "SomeThing", "type": "CUSTOM_TYPE"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
@@ -178,7 +158,7 @@ def test_truncation():
     """Doc > max_text_chars se trunca antes de enviar al LLM."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value='{"entities":[],"relations":[]}')
-    ext = _make_extractor(mock_llm=mock_llm, max_text_chars=100)
+    ext = make_extractor(mock_llm=mock_llm, max_text_chars=100)
 
     long_text = "x" * 500
 
@@ -200,7 +180,7 @@ def test_extract_from_doc_llm_error():
     """LLM lanza exception -> ([], []), no propaga."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("API down"))
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     entities, relations = asyncio.run(
         ext.extract_from_doc_async("doc1", "some text")
@@ -217,7 +197,7 @@ def test_extract_from_doc_empty_text():
     """Texto vacio -> ([], []) sin llamar al LLM."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock()
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     entities, relations = asyncio.run(
         ext.extract_from_doc_async("doc1", "")
@@ -231,7 +211,7 @@ def test_extract_from_doc_whitespace_only():
     """Texto solo whitespace -> ([], []) sin llamar al LLM."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock()
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     entities, relations = asyncio.run(
         ext.extract_from_doc_async("doc1", "   \n  ")
@@ -247,7 +227,7 @@ def test_extract_from_doc_whitespace_only():
 
 def test_parse_keywords_valid():
     """JSON de keywords bien formado."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"low_level": ["Alice", "MIT"], "high_level": ["research", "AI"]}'
     low, high = ext._parse_keywords_json(raw)
     assert low == ["Alice", "MIT"]
@@ -256,7 +236,7 @@ def test_parse_keywords_valid():
 
 def test_parse_keywords_missing_field():
     """JSON de keywords sin high_level -> default []."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"low_level": ["Alice"]}'
     low, high = ext._parse_keywords_json(raw)
     assert low == ["Alice"]
@@ -269,7 +249,7 @@ def test_parse_keywords_missing_field():
 
 def test_parse_keywords_malformed():
     """JSON de keywords roto -> ([], [])."""
-    ext = _make_extractor()
+    ext = make_extractor()
     low, high = ext._parse_keywords_json("not json")
     assert low == []
     assert high == []
@@ -281,7 +261,7 @@ def test_parse_keywords_malformed():
 
 def test_entity_name_min_length_accepted():
     """Entity con nombre de 1 char se acepta (DTm-27: MIN_ENTITY_NAME_LEN=1)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"name": "A", "type": "PERSON"}, {"name": "Bob", "type": "PERSON"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 2
@@ -291,7 +271,7 @@ def test_entity_name_min_length_accepted():
 
 def test_entity_empty_name_rejected():
     """Entity con nombre vacio se rechaza (DTm-16)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"name": "", "type": "PERSON"}, {"name": "  ", "type": "PERSON"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 0
@@ -299,7 +279,7 @@ def test_entity_empty_name_rejected():
 
 def test_entity_description_truncated():
     """Description > MAX_DESCRIPTION_CHARS se trunca (DTm-16)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     long_desc = "x" * 500
     raw = f'{{"entities": [{{"name": "Alice", "type": "PERSON", "description": "{long_desc}"}}], "relations": []}}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
@@ -309,7 +289,7 @@ def test_entity_description_truncated():
 
 def test_relation_description_truncated():
     """Relation description > MAX_DESCRIPTION_CHARS se trunca (DTm-16)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     long_desc = "y" * 500
     raw = f'{{"entities": [], "relations": [{{"source": "AA", "target": "BB", "relation": "knows", "description": "{long_desc}"}}]}}'
     _, relations = ext._parse_extraction_json(raw, "doc1")
@@ -319,7 +299,7 @@ def test_relation_description_truncated():
 
 def test_valid_entity_types_accepted():
     """Todos los VALID_ENTITY_TYPES se aceptan sin modificar (DTm-16)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     from shared.retrieval.lightrag.triplet_extractor import VALID_ENTITY_TYPES
     for etype in VALID_ENTITY_TYPES:
         raw = f'{{"entities": [{{"name": "Test Entity", "type": "{etype}"}}], "relations": []}}'
@@ -329,7 +309,7 @@ def test_valid_entity_types_accepted():
 
 def test_entity_type_case_insensitive():
     """Entity type se normaliza a uppercase (DTm-16)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = '{"entities": [{"name": "Alice", "type": "person"}], "relations": []}'
     entities, _ = ext._parse_extraction_json(raw, "doc1")
     assert entities[0].entity_type == "PERSON"
@@ -341,7 +321,7 @@ def test_entity_type_case_insensitive():
 
 def test_stats_initial_zero():
     """TE17: get_stats() devuelve contadores a cero al iniciar (DTm-33)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     stats = ext.get_stats()
     assert all(v == 0 for v in stats.values())
     assert "docs_failed" in stats
@@ -352,7 +332,7 @@ def test_stats_success_counted():
     """TE18: Extraccion exitosa incrementa docs_success y totales (DTm-33)."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value='{"entities": [{"name": "Alice", "type": "PERSON"}], "relations": []}')
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     asyncio.run(ext.extract_from_doc_async("doc1", "Alice is a researcher."))
 
@@ -367,7 +347,7 @@ def test_stats_failure_counted():
     """TE19: Excepcion en LLM incrementa docs_failed (DTm-33)."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("LLM down"))
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     asyncio.run(ext.extract_from_doc_async("doc1", "Some text"))
 
@@ -379,7 +359,7 @@ def test_stats_failure_counted():
 
 def test_stats_empty_input_counted():
     """TE20: Texto vacio incrementa docs_empty_input (DTm-33)."""
-    ext = _make_extractor()
+    ext = make_extractor()
 
     asyncio.run(ext.extract_from_doc_async("doc1", "   "))
 
@@ -393,7 +373,7 @@ def test_stats_reset():
     """TE21: reset_stats() pone todos los contadores a cero (DTm-33)."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value='{"entities": [{"name": "Bob", "type": "PERSON"}], "relations": []}')
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     asyncio.run(ext.extract_from_doc_async("doc1", "Bob works here."))
     assert ext.get_stats()["docs_success"] == 1
@@ -409,7 +389,7 @@ def test_stats_reset():
 
 def test_group_docs_for_batch_basic():
     """TE22: _group_docs_for_batch agrupa docs cortos en mini-batches."""
-    ext = _make_extractor(max_text_chars=3000)
+    ext = make_extractor(max_text_chars=3000)
     docs = [{"doc_id": f"d{i}", "content": "short text"} for i in range(12)]
     groups = ext._group_docs_for_batch(docs, batch_docs_per_call=5)
     # 12 docs / 5 per batch = 3 groups (5, 5, 2)
@@ -421,7 +401,7 @@ def test_group_docs_for_batch_basic():
 
 def test_group_docs_for_batch_budget_limit():
     """TE23: Docs largos se agrupan respetando presupuesto de chars."""
-    ext = _make_extractor(max_text_chars=100)
+    ext = make_extractor(max_text_chars=100)
     # Cada doc tiene 80 chars, budget = 100*3 = 300 chars
     # 3 docs = 240 chars OK, 4th would be 320 > 300
     docs = [{"doc_id": f"d{i}", "content": "x" * 80} for i in range(7)]
@@ -433,7 +413,7 @@ def test_group_docs_for_batch_budget_limit():
 
 def test_build_batch_prompt():
     """TE24: _build_batch_prompt construye prompt con marcadores [DOC N]."""
-    ext = _make_extractor(max_text_chars=100)
+    ext = make_extractor(max_text_chars=100)
     docs = [
         {"doc_id": "doc1", "content": "Alice works at MIT"},
         {"doc_id": "doc2", "content": "Bob studies physics"},
@@ -449,7 +429,7 @@ def test_build_batch_prompt():
 
 def test_parse_batch_extraction_json_valid():
     """TE25: _parse_batch_extraction_json parsea respuesta multi-doc."""
-    ext = _make_extractor()
+    ext = make_extractor()
     raw = json.dumps({
         "documents": [
             {
@@ -477,7 +457,7 @@ def test_parse_batch_extraction_json_valid():
 
 def test_parse_batch_extraction_json_invalid_returns_none():
     """TE26: Non-batch JSON format returns None (triggers fallback)."""
-    ext = _make_extractor()
+    ext = make_extractor()
     # Single-doc format (no "documents" key)
     raw = '{"entities": [{"name": "Alice", "type": "PERSON"}], "relations": []}'
     result = ext._parse_batch_extraction_json(raw, [])
@@ -502,7 +482,7 @@ def test_extract_multi_doc_async_success():
     })
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value=batch_response)
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     docs = [
         {"doc_id": "doc1", "content": "Alice is a researcher."},
@@ -524,7 +504,7 @@ def test_extract_multi_doc_async_fallback_on_bad_response():
     mock_llm = MagicMock()
     # First call returns non-batch format, subsequent calls return single-doc format
     mock_llm.invoke_async = AsyncMock(return_value=single_response)
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     docs = [
         {"doc_id": "doc1", "content": "Alice is a researcher."},
@@ -548,7 +528,7 @@ def test_extract_batch_async_multi_doc_mode():
     })
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value=batch_response)
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     docs = [
         {"doc_id": "d0", "content": "Doc about X."},
@@ -567,7 +547,7 @@ def test_extract_batch_async_legacy_mode():
     single_response = '{"entities": [{"name": "A", "type": "CONCEPT"}], "relations": []}'
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value=single_response)
-    ext = _make_extractor(mock_llm=mock_llm)
+    ext = make_extractor(mock_llm=mock_llm)
 
     docs = [
         {"doc_id": "d0", "content": "Doc A."},

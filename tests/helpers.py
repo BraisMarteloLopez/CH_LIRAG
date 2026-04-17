@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 from shared.retrieval.core import RetrievalConfig
 from shared.retrieval.lightrag.knowledge_graph import KnowledgeGraph
 from shared.retrieval.lightrag.retriever import LightRAGRetriever
+from shared.retrieval.lightrag.triplet_extractor import TripletExtractor
 
 
 def make_lightrag(
@@ -62,3 +63,26 @@ def make_lightrag(
     retriever._entities_vdb = None
     retriever._relationships_vdb = None
     return retriever
+
+
+def make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
+    """Crea TripletExtractor con LLM mockeado.
+
+    Args:
+        mock_llm: AsyncLLMService mock. Si None, crea MagicMock.
+        max_text_chars: limite de chars por doc para extraccion.
+        batch_size: tamano de batch de coroutines.
+    """
+    ext = object.__new__(TripletExtractor)
+    ext._llm = mock_llm or MagicMock()
+    ext._max_text_chars = max_text_chars
+    ext._keyword_max_tokens = 1024
+    ext._extraction_max_tokens = 4096
+    ext._batch_size = batch_size
+    ext._stats = {
+        "docs_processed": 0, "docs_success": 0, "docs_failed": 0,
+        "docs_empty_input": 0, "docs_empty_result": 0,
+        "docs_json_recovered": 0,
+        "total_entities": 0, "total_relations": 0,
+    }
+    return ext
