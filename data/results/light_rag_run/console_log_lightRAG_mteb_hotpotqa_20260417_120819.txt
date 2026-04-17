@@ -1,0 +1,407 @@
+(CH_LI) master@Brais:~/CH_LI$ python -m sandbox_mteb.run --dry-run
+=== MTEB Sandbox Config ===
+  Dataset:    hotpotqa
+  Embedding:  llama-embed-nemotron-8b (asymmetric)
+  Strategy:   LIGHT_RAG
+  Reranker:   ON
+  Generation: ON
+  DEV_MODE:   ON (125 queries, 2500 corpus, gold docs garantizados)
+  KG mode:    hybrid
+  KG tokens:  extraction=4096, keyword=1024
+  KG batch:   3 docs/call
+  KG synth:   ON (max_chars=auto, timeout=35.0s)
+  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento para construir el knowledge graph (concurrencia=32)
+  Shuffle:    seed=42
+  MinIO:      http://172.30.79.110:9000/lakehouse
+  Results:    data/results
+
+[DRY RUN] Config valida. No se ejecuta evaluacion.
+(CH_LI) master@Brais:~/CH_LI$ python -m sandbox_mteb.run
+=== MTEB Sandbox Config ===
+  Dataset:    hotpotqa
+  Embedding:  llama-embed-nemotron-8b (asymmetric)
+  Strategy:   LIGHT_RAG
+  Reranker:   ON
+  Generation: ON
+  DEV_MODE:   ON (125 queries, 2500 corpus, gold docs garantizados)
+  KG mode:    hybrid
+  KG tokens:  extraction=4096, keyword=1024
+  KG batch:   3 docs/call
+  KG synth:   ON (max_chars=auto, timeout=35.0s)
+  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento para construir el knowledge graph (concurrencia=32)
+  Shuffle:    seed=42
+  MinIO:      http://172.30.79.110:9000/lakehouse
+  Results:    data/results
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator: ============================================================
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator: MTEB EVALUATION RUN
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator:   Run ID:     mteb_hotpotqa_20260417_121257
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator:   Dataset:    hotpotqa
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator:   Embedding:  llama-embed-nemotron-8b
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator:   Strategy:   LIGHT_RAG
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator:   Mode:       DEV_MODE (125 queries, 2500 corpus)
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator: ============================================================
+2026-04-17 12:12:57,810 INFO shared.structured_logging: [run_start] run_id=mteb_hotpotqa_20260417_121257, dataset=hotpotqa, embedding=llama-embed-nemotron-8b, strategy=LIGHT_RAG, dev_mode=True
+2026-04-17 12:12:57,810 INFO shared.llm: Cargando embedding NIM: llama-embed-nemotron-8b @ http://172.30.79.103:8000/v1 [tipo=asymmetric]
+2026-04-17 12:12:57,810 INFO sandbox_mteb.evaluator:   Embedding cargado: llama-embed-nemotron-8b
+2026-04-17 12:12:57,810 INFO shared.llm: AsyncLLMService: nvidia/nemotron-3-nano @ http://172.30.79.99:8000/v1 (max_concurrent=32)
+2026-04-17 12:12:57,811 INFO shared.retrieval.reranker: CrossEncoderReranker: nvidia/llama-3.2-nv-rerankqa-1b-v2 @ http://172.30.79.98:9000/v1
+2026-04-17 12:12:57,811 INFO sandbox_mteb.evaluator:   Reranker activo: nvidia/llama-3.2-nv-rerankqa-1b-v2
+2026-04-17 12:12:57,817 INFO sandbox_mteb.embedding_service:   LLM context window: 49152 tokens (modelo: nvidia/nemotron-3-nano)
+2026-04-17 12:12:57,817 INFO sandbox_mteb.embedding_service:   Context chars: 192512 (derivado: 49152 tokens - 1024 overhead = 48128 tokens * 4.0 chars/token)
+2026-04-17 12:12:57,902 INFO sandbox_mteb.loader: MinIOLoader: http://172.30.79.110:9000/lakehouse/datasets/evaluation
+2026-04-17 12:12:58,103 INFO sandbox_mteb.loader: Descargando dataset 'hotpotqa' desde MinIO...
+2026-04-17 12:13:01,574 INFO sandbox_mteb.loader: Dataset 'hotpotqa' cargado: {'name': 'hotpotqa', 'dataset_type': 'HYBRID', 'queries_loaded': 7405, 'queries_total': 7405, 'queries_with_text_answer': 7405, 'queries_with_relevant_docs': 7405, 'corpus_loaded': 66576, 'corpus_total': 66576, 'primary_metric': 'f1_score', 'load_status': 'success'}
+2026-04-17 12:13:01,852 INFO sandbox_mteb.evaluator:   DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS
+2026-04-17 12:13:01,871 INFO sandbox_mteb.subset_selection:   DEV_MODE: 125 queries, 248 gold docs, 2252 distractores, 2500 corpus total
+2026-04-17 12:13:01,872 INFO sandbox_mteb.evaluator:   Usando 125 queries, 2500 docs
+2026-04-17 12:13:01,872 INFO shared.retrieval: Factory: creando retriever LIGHT_RAG
+2026-04-17 12:13:01,874 WARNING sandbox_mteb.evaluator:   LIGHT_RAG: indexacion hara ~2500 llamadas LLM para extraccion de tripletas. Estimacion: ~3 min (2500 docs, 32 concurrentes, ~2s/llamada). Tip: configura KG_CACHE_DIR para persistir el grafo entre runs.
+2026-04-17 12:13:01,874 INFO sandbox_mteb.evaluator:   Indexando 2500 documentos...
+2026-04-17 12:13:01,874 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: indexando 2500 documentos...
+2026-04-17 12:13:01.935179792 [W:onnxruntime:Default, device_discovery.cc:211 DiscoverDevicesForPlatform] GPU device discovery failed: device_discovery.cc:91 ReadFileContents Failed to open file: "/sys/class/drm/card0/device/vendor"
+2026-04-17 12:13:02,157 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 12:13:02,164 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 12:14:12,370 INFO shared.retrieval.core: Indexados 2500 documentos en 'eval_mteb_hotpotqa_20260417_121257'
+2026-04-17 12:18:45,306 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:21:29,272 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:21:45,445 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:21:56,045 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:24:40,303 WARNING shared.llm: Intento 2/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 2s...
+2026-04-17 12:30:43,802 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:33:16,667 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:34:45,963 WARNING shared.llm: Intento 2/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 2s...
+2026-04-17 12:39:40,863 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:39:40,863 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:39:40,883 WARNING shared.retrieval.lightrag.triplet_extractor: Batch parse failed for 3 docs, falling back to single-doc extraction
+2026-04-17 12:41:36,451 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:43:22,989 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:43:36,784 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:43:56,200 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:44:03,997 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:49:12,326 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:50:45,273 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:51:14,086 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:53:05,144 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:53:31,031 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:53:39,348 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:58:50,957 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 12:58:51,062 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:00:53,575 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:01:49,662 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:02:28,847 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:03:08,924 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:03:10,933 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:03:53,340 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:10:41,667 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:11:07,200 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:11:54,741 WARNING shared.retrieval.lightrag.triplet_extractor: Batch parse failed for 3 docs, falling back to single-doc extraction
+2026-04-17 13:12:58,462 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:13:08,816 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:13:21,749 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:13:22,875 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:13:31,232 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:13:32,365 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:13:39,565 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:15:50,477 WARNING shared.llm: Intento 2/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 2s...
+2026-04-17 13:19:08,453 WARNING shared.llm: Intento 3/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 4s...
+2026-04-17 13:23:45,161 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:26:15,467 WARNING shared.llm: Intento 2/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 2s...
+2026-04-17 13:26:38,636 INFO shared.retrieval.lightrag.triplet_extractor: TripletExtractor: batch 2500 docs en 4346264ms. 18341 entidades, 13341 relaciones extraidas. | 0 fallidos, 0 input vacio, 1 resultado vacio
+2026-04-17 13:26:55,272 INFO shared.retrieval.lightrag.knowledge_graph: KnowledgeGraph: 18972 co-occurrence edges added (DTm-73), 1121 connected components
+2026-04-17 13:26:55,273 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: 18972 co-occurrence edges creadas
+2026-04-17 13:26:55,276 INFO shared.retrieval.lightrag.knowledge_graph: KnowledgeGraph: descripciones mergeadas para 991 entidades (multi-doc)
+2026-04-17 13:26:55,276 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: 991 entidades con descripciones consolidadas
+2026-04-17 13:26:55,278 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:26:55,279 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:28:53,155 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: entity VDB construido en 117878ms (14329 entidades indexadas)
+2026-04-17 13:28:53,221 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:28:53,222 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:33:57,064 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: relationship VDB construido en 303844ms (32306 relaciones indexadas)
+2026-04-17 13:33:57,076 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: KG construido en 4784705ms. 13341 tripletas de 2500 docs.
+2026-04-17 13:33:57,089 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: indexacion 4855206ms. Graph: True. KG stats: {'num_entities': 14329, 'num_relations': 32026, 'num_docs_with_entities': 2492, 'avg_entities_per_doc': 6.440208667736758, 'graph_connected_components': 1121, 'entities_dropped': 0, 'entities_evicted': 0, 'triplets_dropped_by_cap': 0, 'max_entities': 100000, 'approx_memory_mb': 5.63}
+2026-04-17 13:33:57,089 INFO sandbox_mteb.evaluator:   Indexacion completada
+2026-04-17 13:33:57,090 INFO sandbox_mteb.embedding_service:   Pre-embedding 125 queries (batch=5, type=asymmetric)...
+2026-04-17 13:33:59,130 INFO sandbox_mteb.embedding_service:   Queries embebidas: 125/125
+2026-04-17 13:33:59,130 INFO sandbox_mteb.embedding_service:   Pre-embedding completado: 125 queries en 2.0s (61 queries/s)
+2026-04-17 13:33:59,130 INFO sandbox_mteb.evaluator:   Pre-extrayendo keywords de 125 queries (batch LLM)...
+2026-04-17 13:33:59,130 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: pre-extrayendo keywords de 125 queries...
+2026-04-17 13:34:22,425 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:34:38,044 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-17 13:34:44,255 INFO shared.retrieval.lightrag.triplet_extractor: TripletExtractor: query keywords batch 125 queries (125 unicas) en 45124ms
+2026-04-17 13:34:44,255 INFO sandbox_mteb.evaluator:   Keywords pre-extraidas en 45.1s
+2026-04-17 13:34:44,255 INFO sandbox_mteb.evaluator:   Chunk 1: queries 1-50/125 (50 queries)
+2026-04-17 13:34:44,293 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:34:44,425 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:34:44,479 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:35:28,296 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What was Iqbal F. Qadir on when he participated in an attack...'; usando contexto estructurado.
+2026-04-17 13:35:28,297 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'When did the park at which Tivolis Koncertsal is located ope...'; usando contexto estructurado.
+2026-04-17 13:35:28,297 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What is the shared country of ancestry between Art Laboe and...'; usando contexto estructurado.
+2026-04-17 13:35:28,297 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The school in which the Wilmslow Show is held is designated ...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who will Billy Howle be seen opposite in the upcoming Britis...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What animated movie, starring Danny Devito, featured music w...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Out of the actors who have played the role of Luc Deveraux i...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Tommy's Honour was a drama film that included the actor who ...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which rock band chose its name by drawing it out of a hat, S...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query '"Tunak", is a bhangra/pop love song by an artist born in whi...'; usando contexto estructurado.
+2026-04-17 13:35:28,298 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which Captain launched the attack which led to more casualti...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'In which film did Emilio Estevez star in in the same year as...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What was the concept of the business Eric S .Pistorius worke...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which port city lies approximately 25 km north of the Lingna...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Has Stefan Edberg won more events than  Édouard Roger-Vassel...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query ' Jason Regler, stated that he had the idea for the flashing ...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query ' The Soul of Buddha is a 1918 American silent romance film s...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which "Blackzilians" fighter is currently competing in the M...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Were was the Mexican state after which there is Villa Unión,...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What language, traditionally written with the ancient Libyco...'; usando contexto estructurado.
+2026-04-17 13:35:28,299 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who is the fictional head of a British Secret Service divisi...'; usando contexto estructurado.
+2026-04-17 13:35:28,300 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Phillip Pullman's book set in a parallel universe featuring ...'; usando contexto estructurado.
+2026-04-17 13:35:28,300 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who directed the second film in a British series of action c...'; usando contexto estructurado.
+2026-04-17 13:35:28,300 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'George Gershwin is an American Composer and Judith Weir is a...'; usando contexto estructurado.
+2026-04-17 13:35:28,300 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What Was the name of Juan Manuel Márquez's  WBO champion hol...'; usando contexto estructurado.
+2026-04-17 13:35:28,300 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The Running Man Brothers is a South Korean pop duo. Kim Jong...'; usando contexto estructurado.
+2026-04-17 13:35:28,300 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Ruddles Brewery is owned by a pub retailer and brewer based ...'; usando contexto estructurado.
+2026-04-17 13:35:28,302 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The creator of the Lisa Simpson character was born in what y...'; usando contexto estructurado.
+2026-04-17 13:35:28,318 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Where is the international airport which Eagle Aviation wet ...'; usando contexto estructurado.
+2026-04-17 13:35:28,318 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Robert Earl Holding owned an oil company that was originally...'; usando contexto estructurado.
+2026-04-17 13:35:28,321 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What occupation was shared by David Yates and Pietro Germi?...'; usando contexto estructurado.
+2026-04-17 13:35:28,321 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who sang lead vocals on the Oasis hit single which had an ac...'; usando contexto estructurado.
+2026-04-17 13:35:28,321 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'St. John's College, Belize offers an education in a traditio...'; usando contexto estructurado.
+2026-04-17 13:35:28,322 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What instrument does Duff McKagan play on Macy Gray's single...'; usando contexto estructurado.
+2026-04-17 13:35:28,323 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which American popular music and country music singer record...'; usando contexto estructurado.
+2026-04-17 13:35:28,326 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'In which six Western European territories have Celtic langua...'; usando contexto estructurado.
+2026-04-17 13:35:28,326 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who is known for composing  American Beauty: Original Motion...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What film was written and directed by Joby Harold with music...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What group did Carlene LeFevre and Rich LeFevre form in Broo...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Michaël Llodra of France, called "the best volleyer on tour"...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What company produced the 1978 movie based on a book written...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'How many students were enrolled in American professional bow...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which canal, Miami Canal or Dundee Canal, also supplies hydr...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What is the middle name of the singer who recorded Would You...'; usando contexto estructurado.
+2026-04-17 13:35:28,327 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What was Richard Connell's best known work The Hounds of Zar...'; usando contexto estructurado.
+2026-04-17 13:35:28,328 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The Stone Book series is set in what country? ...'; usando contexto estructurado.
+2026-04-17 13:35:28,330 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Are both Jonathan Marray and Wayne Black British?...'; usando contexto estructurado.
+2026-04-17 13:35:28,330 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Sporobolus and Zea are in the same what?...'; usando contexto estructurado.
+2026-04-17 13:35:28,337 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Are Mick Jagger and Brett Scallions both musicians?...'; usando contexto estructurado.
+2026-04-17 13:35:28,339 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'When did Senator Ted Kennedy helped dedicate a new room at t...'; usando contexto estructurado.
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_1547:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_2054:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_478:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_3245:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_1119:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_3575:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_978:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_1668:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_6149:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_4237:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_1106:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_6953:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_2375:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_5129:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_4491:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_720:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_1205:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_5136:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_4151:
+2026-04-17 13:36:53,321 WARNING sandbox_mteb.evaluator:   Error async query q_4456:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_6054:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_7110:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_4166:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_1564:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_6694:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_3802:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_7043:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_4109:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_4368:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_150:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_6058:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_1653:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_4619:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_2179:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_6444:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_3882:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_2951:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_224:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_902:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_1009:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_6856:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_7251:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_654:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_6395:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_1979:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_2395:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_3048:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_4120:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_5848:
+2026-04-17 13:36:53,322 WARNING sandbox_mteb.evaluator:   Error async query q_2923:
+2026-04-17 13:36:53,401 INFO sandbox_mteb.checkpoint:   Checkpoint guardado: 50 queries → mteb_hotpotqa_20260417_121257_checkpoint.json
+2026-04-17 13:36:53,401 INFO sandbox_mteb.evaluator:   Chunk 2: queries 51-100/125 (50 queries)
+2026-04-17 13:37:37,425 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which 8-year old star of an epistolary novel turned musical ...'; usando contexto estructurado.
+2026-04-17 13:37:37,426 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which music group has the most members, DC Talk, or Manchest...'; usando contexto estructurado.
+2026-04-17 13:37:37,426 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Orlando Brown is best known for his role as 3J Winslow in an...'; usando contexto estructurado.
+2026-04-17 13:37:37,429 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The Livesey Hal War Memorial commemorates the fallen of whic...'; usando contexto estructurado.
+2026-04-17 13:37:37,431 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Where was the air-cooled version of a weapon system used on ...'; usando contexto estructurado.
+2026-04-17 13:37:37,431 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'BMW X5 is a mid-size version that was produced alongside whi...'; usando contexto estructurado.
+2026-04-17 13:37:37,433 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Did Minersville School District v. Gobitis and Gravel v. Uni...'; usando contexto estructurado.
+2026-04-17 13:37:37,434 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Yakuza Kiwami is a remake of the first video game in what vi...'; usando contexto estructurado.
+2026-04-17 13:37:37,435 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query ' The 1919 Mississippi gubernatorial election Incumbent Democ...'; usando contexto estructurado.
+2026-04-17 13:37:37,437 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Are both genera Silphium and Heliotropium, genera of floweri...'; usando contexto estructurado.
+2026-04-17 13:37:37,438 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Mexican Indignados Movement is a response to a war also know...'; usando contexto estructurado.
+2026-04-17 13:37:37,439 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Are Harry Everett Smith and Vladimir Danilevich both from Ru...'; usando contexto estructurado.
+2026-04-17 13:37:37,441 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Robert Allen "Bob" Case is best known for inspiring the nami...'; usando contexto estructurado.
+2026-04-17 13:37:37,442 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What film adaptation do both Jerome Bernard and Ira Lewis ha...'; usando contexto estructurado.
+2026-04-17 13:37:37,443 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who has more scope of profession, Bob Fosse or Angelina Joli...'; usando contexto estructurado.
+2026-04-17 13:37:37,445 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What bitcoin start up featured Erik Voorhees as Director of ...'; usando contexto estructurado.
+2026-04-17 13:37:37,446 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What is the birth name of the disc jockey that notably used ...'; usando contexto estructurado.
+2026-04-17 13:37:37,448 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who did Neleus of Scepsis study under in addition to Theophr...'; usando contexto estructurado.
+2026-04-17 13:37:37,449 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'In what basketball position does the brother of Saulius Kuzm...'; usando contexto estructurado.
+2026-04-17 13:37:37,451 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which gaming console was both Yakuza Kiwami and Yakuza 0 rel...'; usando contexto estructurado.
+2026-04-17 13:37:37,452 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which film was released first out of The Hunchback of Notre ...'; usando contexto estructurado.
+2026-04-17 13:37:37,453 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What was built near the residential neighborhood of Ramsay, ...'; usando contexto estructurado.
+2026-04-17 13:37:37,454 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Tommy Swerdlow co-wrote the screenplay of what film directed...'; usando contexto estructurado.
+2026-04-17 13:37:37,456 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Of what county is the city 7 miles east of Trace State Park ...'; usando contexto estructurado.
+2026-04-17 13:37:37,457 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Works by Hanna Leena Kristiina Varis are part of a collectio...'; usando contexto estructurado.
+2026-04-17 13:37:37,459 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Jennifer Gordon received a bachelor of arts degree from whic...'; usando contexto estructurado.
+2026-04-17 13:37:37,460 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'In which U.S. state are MedStar Georgetown University Hospit...'; usando contexto estructurado.
+2026-04-17 13:37:37,461 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The subject of McGinniss' 1983 book "Fatal Vision" was convi...'; usando contexto estructurado.
+2026-04-17 13:37:37,462 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which American Director doubled as a choreographer also, Sta...'; usando contexto estructurado.
+2026-04-17 13:37:37,464 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Lou Pai is a former executive of an energy company that went...'; usando contexto estructurado.
+2026-04-17 13:37:37,465 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What religion is the composer for India's first science fict...'; usando contexto estructurado.
+2026-04-17 13:37:37,466 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which battle took place first out of the Battle of the Ch'on...'; usando contexto estructurado.
+2026-04-17 13:37:37,467 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What year was the brother of this first round draft pick by ...'; usando contexto estructurado.
+2026-04-17 13:37:37,469 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which them park is host to both the Back to the Future Rid a...'; usando contexto estructurado.
+2026-04-17 13:37:37,469 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'When was the band who composited "Discipline" formed?...'; usando contexto estructurado.
+2026-04-17 13:37:37,471 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Did the Sandy and Beaver Canal remain operational until a la...'; usando contexto estructurado.
+2026-04-17 13:37:37,472 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who directed the 1940 film in which John Arledge appeared?...'; usando contexto estructurado.
+2026-04-17 13:37:37,474 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Are Mirpur University of Science and Technology and Universi...'; usando contexto estructurado.
+2026-04-17 13:37:37,476 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'which American actress, singer, and songwriter too the tour ...'; usando contexto estructurado.
+2026-04-17 13:37:37,476 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Grounded Vindaloop is an episode from an animated television...'; usando contexto estructurado.
+2026-04-17 13:37:37,477 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'How many consecutive years had the Serie A been comprised of...'; usando contexto estructurado.
+2026-04-17 13:37:37,478 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What British made dance competition television series franch...'; usando contexto estructurado.
+2026-04-17 13:37:37,478 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'How many Grammy awards were won by an album named after the ...'; usando contexto estructurado.
+2026-04-17 13:37:37,480 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What award does Crystal Palace F.C. present, first won by Jo...'; usando contexto estructurado.
+2026-04-17 13:37:37,480 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which was published more frequently, Popular Science or Girl...'; usando contexto estructurado.
+2026-04-17 13:37:37,481 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'In what year did the actor who starred in the TV Land origin...'; usando contexto estructurado.
+2026-04-17 13:37:37,482 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The Robey-Peters Gun-Carrier was built at a commuter village...'; usando contexto estructurado.
+2026-04-17 13:37:37,482 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'This American is best known for his work on such Disney anim...'; usando contexto estructurado.
+2026-04-17 13:37:37,483 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'In what part of England is John Folwes' country house locate...'; usando contexto estructurado.
+2026-04-17 13:37:37,483 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Richard Münch portrayed the German general who served in wha...'; usando contexto estructurado.
+2026-04-17 13:39:02,509 WARNING sandbox_mteb.evaluator:   Error async query q_4913:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6818:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_680:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_37:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_3201:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6650:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_1606:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6481:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6982:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_4536:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_5693:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_4568:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_4128:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_3340:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_7365:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6623:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_2667:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_2980:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_1833:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6508:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_4032:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6771:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_5203:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6280:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_176:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_1712:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_3388:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_2543:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_2893:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_6613:
+2026-04-17 13:39:02,510 WARNING sandbox_mteb.evaluator:   Error async query q_854:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_4865:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_102:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_3235:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_5498:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_1666:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_4240:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_4787:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_3042:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_3620:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_1611:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_4233:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_5948:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_1011:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_754:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_592:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_5683:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_3681:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_2703:
+2026-04-17 13:39:02,511 WARNING sandbox_mteb.evaluator:   Error async query q_1419:
+2026-04-17 13:39:02,640 INFO sandbox_mteb.checkpoint:   Checkpoint guardado: 100 queries → mteb_hotpotqa_20260417_121257_checkpoint.json
+2026-04-17 13:39:02,640 INFO sandbox_mteb.evaluator:   Chunk 3: queries 101-125/125 (25 queries)
+2026-04-17 13:39:02,827 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:39:41,924 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which style is the building located on the East Side of Midt...'; usando contexto estructurado.
+2026-04-17 13:39:41,924 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What is the are of the university at which Dick Biddle serve...'; usando contexto estructurado.
+2026-04-17 13:39:41,925 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The Chinese actress also known as Crystal Liu stars in Night...'; usando contexto estructurado.
+2026-04-17 13:39:41,925 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which City in the Miami metropolitan area is home to the Pri...'; usando contexto estructurado.
+2026-04-17 13:39:41,925 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Where is the company that Sachin Warrier worked for as a sof...'; usando contexto estructurado.
+2026-04-17 13:39:41,925 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What was the name of a land where Maria Anna of Spain's husb...'; usando contexto estructurado.
+2026-04-17 13:39:41,925 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who was the team president of the 2012 Cleveland Browns?...'; usando contexto estructurado.
+2026-04-17 13:39:41,926 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who directed the 2014 American biographical survival drama f...'; usando contexto estructurado.
+2026-04-17 13:39:41,926 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'The Very Best of Ugly Kid Joe: As Ugly as It Gets includes a...'; usando contexto estructurado.
+2026-04-17 13:39:41,926 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'which German philosopher wrote "The opera "Lulu"  ...'; usando contexto estructurado.
+2026-04-17 13:39:41,926 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Are Toshi and Warrel Dane both in the band Sanctuary?...'; usando contexto estructurado.
+2026-04-17 13:39:41,926 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Dr. Saleha Mahmood Abedin's daughter was born in what year ?...'; usando contexto estructurado.
+2026-04-17 13:39:41,926 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What is the nationality of this company that services MS Mob...'; usando contexto estructurado.
+2026-04-17 13:39:41,927 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Brandy was handpicked by a producer that herself had been re...'; usando contexto estructurado.
+2026-04-17 13:39:41,927 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Which minor role did this New Zealand storyboard artist play...'; usando contexto estructurado.
+2026-04-17 13:39:41,927 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What year did the director of The Quiet American die?...'; usando contexto estructurado.
+2026-04-17 13:39:41,927 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Blue Dwarf is what type of online text-based role-playing ga...'; usando contexto estructurado.
+2026-04-17 13:39:41,927 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Who was the boyfriend of Thelma Lou in the series with Jim N...'; usando contexto estructurado.
+2026-04-17 13:39:41,927 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What was the sequel of the game that e was published by U.S....'; usando contexto estructurado.
+2026-04-17 13:39:41,928 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Private Music signed the drummer who was part of which Engli...'; usando contexto estructurado.
+2026-04-17 13:39:41,928 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'When was the American singer, songwriter, actress and LGBT r...'; usando contexto estructurado.
+2026-04-17 13:39:41,928 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'What position did the winner of the MVP in Pool C of the 201...'; usando contexto estructurado.
+2026-04-17 13:39:41,928 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Kadeem Jack is a player in a league that started with how ma...'; usando contexto estructurado.
+2026-04-17 13:39:41,928 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'Suzanne Simone Baptiste Louverture is the wife of the leader...'; usando contexto estructurado.
+2026-04-17 13:39:41,928 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (35.0s) para query 'when was the album that includes the song by Dustin Lynch re...'; usando contexto estructurado.
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_7382:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_626:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_2806:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_4502:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_41:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_6937:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_2778:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_4589:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_2724:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_5148:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_4438:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_5597:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_4851:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_6672:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_1654:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_3696:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_797:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_4993:
+2026-04-17 13:41:06,914 WARNING sandbox_mteb.evaluator:   Error async query q_1260:
+2026-04-17 13:41:06,915 WARNING sandbox_mteb.evaluator:   Error async query q_1865:
+2026-04-17 13:41:06,915 WARNING sandbox_mteb.evaluator:   Error async query q_2907:
+2026-04-17 13:41:06,915 WARNING sandbox_mteb.evaluator:   Error async query q_3859:
+2026-04-17 13:41:06,915 WARNING sandbox_mteb.evaluator:   Error async query q_3222:
+2026-04-17 13:41:06,915 WARNING sandbox_mteb.evaluator:   Error async query q_2022:
+2026-04-17 13:41:06,915 WARNING sandbox_mteb.evaluator:   Error async query q_350:
+2026-04-17 13:41:07,067 INFO sandbox_mteb.checkpoint:   Checkpoint guardado: 125 queries → mteb_hotpotqa_20260417_121257_checkpoint.json
+2026-04-17 13:41:07,067 WARNING sandbox_mteb.evaluator:   Queries: 0 completadas, 125 fallidas
+2026-04-17 13:41:07,067 INFO sandbox_mteb.checkpoint:   Checkpoint eliminado: mteb_hotpotqa_20260417_121257_checkpoint.json
+2026-04-17 13:41:07,071 INFO sandbox_mteb.evaluator: RUN COMPLETADO en 5289.3s | Hit@5=0.0000 | MRR=0.0000
+2026-04-17 13:41:07,071 INFO sandbox_mteb.evaluator:   Judge fallback (faithfulness): invocations=29, parse_failure_rate=0.00%, default_return_rate=0.00%
+2026-04-17 13:41:07,071 INFO sandbox_mteb.evaluator:   KG synthesis: invocations=125, successes=0, errors=0, empty=0, truncations=0, timeouts=125, fallback_rate=100.00%
+2026-04-17 13:41:07,071 INFO shared.structured_logging: [run_complete] run_id=mteb_hotpotqa_20260417_121257, elapsed_s=5289.26, queries_evaluated=0, queries_failed=125, hit_at_5=0.0, mrr=0.0, avg_generation_score=None, judge_fallback_stats={'faithfulness': {'invocations': 29, 'parse_failures': 0, 'default_returns': 0, 'parse_failure_rate': 0.0, 'default_return_rate': 0.0}}, kg_synthesis_stats={'invocations': 125, 'successes': 0, 'errors': 0, 'empty_returns': 0, 'truncations': 0, 'timeouts': 125, 'fallback_rate': 1.0}
+2026-04-17 13:41:07,105 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:41:07,319 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:41:07,784 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-17 13:41:07,898 INFO shared.report: Run mteb_hotpotqa_20260417_121257 exportado a data/results: mteb_hotpotqa_20260417_121257.json, mteb_hotpotqa_20260417_121257_summary.csv, mteb_hotpotqa_20260417_121257_detail.csv
+
+Resultados exportados:
+  json: data/results/mteb_hotpotqa_20260417_121257.json
+  summary_csv: data/results/mteb_hotpotqa_20260417_121257_summary.csv
+  detail_csv: data/results/mteb_hotpotqa_20260417_121257_detail.csv
+(CH_LI) master@Brais:~/CH_LI$

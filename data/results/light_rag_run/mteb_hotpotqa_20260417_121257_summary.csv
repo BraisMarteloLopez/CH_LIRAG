@@ -1,0 +1,2 @@
+run_id,dataset,embedding_model,strategy,queries_evaluated,queries_failed,total_documents,hit_rate_at_5,mrr,avg_generation_score,avg_retrieved_count,avg_expected_count,gen_recall,gen_hit,reranker_rescue_count,retrieval_k,reranker_top_n,corpus_shuffle_seed,corpus_indexed,corpus_total_available,gen_zero_count,gen_nonzero_count,execution_time_s,timestamp
+mteb_hotpotqa_20260417_121257,hotpotqa,llama-embed-nemotron-8b,LIGHT_RAG,0,125,2500,0.0,0.0,,0.0,0.0,,,,20,5,42,2500,66576,0,0,5289.26,2026-04-17T13:41:07.071260
