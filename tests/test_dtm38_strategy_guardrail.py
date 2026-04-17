@@ -34,7 +34,11 @@ from tests.helpers import make_lightrag
 # =============================================================================
 
 def _make_lightrag_with_vector_results(has_graph=True):
-    """Crea LightRAGRetriever con vector retriever pre-configurado."""
+    """Crea LightRAGRetriever con vector retriever pre-configurado.
+
+    Cuando has_graph=True, configura mocks de KG para que _retrieve_via_kg
+    pueda producir resultados via source_doc_ids + get_documents_by_ids.
+    """
     retriever = make_lightrag(has_graph=has_graph)
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(
         doc_ids=[f"d{i}" for i in range(20)],
@@ -47,6 +51,29 @@ def _make_lightrag_with_vector_results(has_graph=True):
     retriever._vector_retriever.retrieve_by_vector.return_value = (
         retriever._vector_retriever.retrieve.return_value
     )
+    if has_graph:
+        # KG entity with source_doc_ids for _retrieve_via_kg
+        mock_entity = MagicMock()
+        mock_entity.name = "test_entity"
+        mock_entity.entity_type = "THING"
+        mock_entity.description = "test"
+        mock_entity.source_doc_ids = {f"d{i}" for i in range(5)}
+        retriever._kg.get_all_entities.return_value = {"test_entity": mock_entity}
+        retriever._kg.get_entity.return_value = mock_entity
+
+        # Entity VDB returns the entity
+        mock_entity_doc = MagicMock()
+        mock_entity_doc.metadata = {"entity_name": "test_entity"}
+        mock_entity_vdb = MagicMock()
+        mock_entity_vdb.similarity_search_with_score.return_value = [
+            (mock_entity_doc, 0.1),
+        ]
+        retriever._entities_vdb = mock_entity_vdb
+
+        # Vector store returns contents for those doc_ids
+        retriever._vector_retriever._vector_store.get_documents_by_ids.return_value = {
+            f"d{i}": f"c{i}" for i in range(5)
+        }
     return retriever
 
 
@@ -104,10 +131,7 @@ def test_strategy_simple_vector_when_no_graph():
 def test_strategy_light_rag_when_graph_active():
     """Con grafo activo, strategy_used debe ser LIGHT_RAG."""
     r = _make_lightrag_with_vector_results(has_graph=True)
-    # Mock keyword extraction y graph queries
-    r._extractor.extract_query_keywords.return_value = (["alice"], ["research"])
-    r._kg.query_entities.return_value = [("d0", 0.9)]
-    r._kg.query_by_keywords.return_value = []
+    r._extractor.extract_query_keywords.return_value = (["test_entity"], ["research"])
 
     result = r.retrieve("test query", top_k=5)
     assert result.strategy_used == RetrievalStrategy.LIGHT_RAG
@@ -127,9 +151,7 @@ def test_graph_active_metadata_false():
 def test_graph_active_metadata_true():
     """metadata['graph_active']=True cuando hay grafo."""
     r = _make_lightrag_with_vector_results(has_graph=True)
-    r._extractor.extract_query_keywords.return_value = (["x"], [])
-    r._kg.query_entities.return_value = []
-    r._kg.query_by_keywords.return_value = []
+    r._extractor.extract_query_keywords.return_value = (["test_entity"], [])
 
     result = r.retrieve("test query", top_k=5)
     assert result.metadata["graph_active"] is True
