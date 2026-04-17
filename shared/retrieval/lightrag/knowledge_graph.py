@@ -1,13 +1,13 @@
 """
 Modulo: Knowledge Graph
 Descripcion: Grafo de conocimiento in-memory basado en igraph (C-backed).
-             Almacena entidades y relaciones extraidas por LLM,
-             soporta traversal multi-hop y busqueda por entidades.
+             Almacena entidades y relaciones extraidas por LLM.
 
 Ubicacion: shared/retrieval/knowledge_graph.py
 
-Uso: LIGHT_RAG construye el grafo durante indexacion y lo consulta
-durante retrieval para complementar busqueda vectorial.
+Uso: LIGHT_RAG construye el grafo durante indexacion. Durante retrieval,
+las entidades resueltas via Entity VDB proveen source_doc_ids para
+obtener chunks (paper-aligned, divergencia #8 resuelta opcion A).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import logging
 import math
 import re
 import sys
-from collections import Counter, defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -37,17 +37,6 @@ except ImportError:
     HAS_IGRAPH = False
     ig = None  # type: ignore[assignment,unused-ignore]
 
-# =============================================================================
-# IMPORTACION CONDICIONAL — Snowball Stemmer
-# =============================================================================
-
-try:
-    import snowballstemmer
-    _STEMMER = snowballstemmer.stemmer("english")
-    HAS_STEMMER = True
-except ImportError:
-    _STEMMER = None
-    HAS_STEMMER = False
 
 
 # =============================================================================
@@ -83,8 +72,8 @@ class KnowledgeGraph:
 
     Operaciones principales:
       - add_triplets(): construir grafo incrementalmente
-      - query_entities(): traversal por entidades especificas (low-level)
-      - query_by_keywords(): busqueda por keywords en descripciones (high-level)
+      - get_entity() / get_all_entities(): lookup de entidades con source_doc_ids
+      - get_neighbors_ranked(): vecinos 1-hop rankeados por peso
     """
 
     _DEFAULT_MAX_ENTITIES = KG_DEFAULT_MAX_ENTITIES
@@ -111,11 +100,6 @@ class KnowledgeGraph:
         self._triplets_dropped_by_cap = 0
         # DTm-63: contador de entidades evictas por importancia
         self._entities_evicted = 0
-        # Indices invertidos para query_by_keywords (DTm-30)
-        # token -> set de entity names que contienen ese token
-        self._kw_entity_index: Dict[str, Set[str]] = defaultdict(set)
-        # token -> set de (src, tgt, doc_id) para relaciones
-        self._kw_relation_index: Dict[str, Set[Tuple[str, str, str]]] = defaultdict(set)
 
     @property
     def num_entities(self) -> int:
@@ -168,60 +152,6 @@ class KnowledgeGraph:
                 })
         return relations
 
-    # -----------------------------------------------------------------
-    # F.3: Acceso a entidades/relaciones por doc_ids (DAM-8)
-    # -----------------------------------------------------------------
-
-    def get_entities_for_docs(self, doc_ids: List[str]) -> List[Dict[str, Any]]:
-        """Retorna entidades asociadas a una lista de doc_ids.
-
-        Recorre _doc_to_entities para encontrar entidades vinculadas
-        a los documentos indicados. Deduplica por nombre.
-
-        Returns:
-            Lista de dicts con entity_name, entity_type, description.
-        """
-        seen: Set[str] = set()
-        result: List[Dict[str, Any]] = []
-        for doc_id in doc_ids:
-            for name in self._doc_to_entities.get(doc_id, set()):
-                if name in seen:
-                    continue
-                seen.add(name)
-                entity = self._entities.get(name)
-                if entity:
-                    result.append({
-                        "entity": entity.name,
-                        "type": entity.entity_type,
-                        "description": entity.description,
-                    })
-        return result
-
-    def get_relations_for_docs(self, doc_ids: List[str]) -> List[Dict[str, Any]]:
-        """Retorna relaciones cuyos source_doc_id esta en doc_ids.
-
-        Recorre _doc_to_relations para encontrar relaciones vinculadas
-        a los documentos indicados. Deduplica por (source, target, relation).
-
-        Returns:
-            Lista de dicts con source, target, relation, description.
-        """
-        seen: Set[Tuple[str, str, str]] = set()
-        result: List[Dict[str, Any]] = []
-        for doc_id in doc_ids:
-            for rel in self._doc_to_relations.get(doc_id, []):
-                key = (rel.source, rel.target, rel.relation)
-                if key in seen:
-                    continue
-                seen.add(key)
-                result.append({
-                    "source": rel.source,
-                    "target": rel.target,
-                    "relation": rel.relation,
-                    "description": rel.description,
-                })
-        return result
-
     # Articulos iniciales en ingles (DTm-18).
     _LEADING_ARTICLES = ("the ", "a ", "an ")
     # Patron para eliminar puntuacion excepto guiones y apostrofes internos (DTm-18, G.7/DTm-57).
@@ -239,38 +169,6 @@ class KnowledgeGraph:
         result = self._RE_NON_ALNUM.sub("", result)
         result = " ".join(result.split())
         return result.strip()
-
-    @staticmethod
-    def _tokenize(text: str) -> List[str]:
-        """Tokeniza texto en palabras lowercase con stemming para el indice invertido."""
-        tokens = text.lower().split()
-        if _STEMMER is not None:
-            try:
-                tokens = _STEMMER.stemWords(tokens)
-            except Exception as e:
-                logger.debug("Stemmer fallo, usando tokens sin stemming: %s", e)
-        return tokens
-
-    def _index_entity_tokens(self, entity_name: str) -> None:
-        """Indexa tokens de nombre y descripcion de una entidad (DTm-30)."""
-        entity = self._entities.get(entity_name)
-        if not entity:
-            return
-        tokens = self._tokenize(entity_name)
-        if entity.description:
-            tokens.extend(self._tokenize(entity.description))
-        for token in tokens:
-            self._kw_entity_index[token].add(entity_name)
-
-    def _index_relation_tokens(
-        self, src: str, tgt: str, rel_info: Dict[str, str]
-    ) -> None:
-        """Indexa tokens de una relacion (DTm-30)."""
-        rel_text = (rel_info.get("relation", "") + " " + rel_info.get("description", ""))
-        doc_id = rel_info.get("doc_id", "")
-        entry = (src, tgt, doc_id)
-        for token in self._tokenize(rel_text):
-            self._kw_relation_index[token].add(entry)
 
     # -----------------------------------------------------------------
     # Graph primitive helpers (igraph)
@@ -606,174 +504,6 @@ class KnowledgeGraph:
             vid = self._name_to_vid.get(norm)
             if vid is not None:
                 self._graph.vs[vid]["entity_type"] = self._entities[norm].entity_type
-            # DTm-69: token indexing diferido a build_keyword_indices()
-
-    def _resolve_entity_names(
-        self, entity_names: List[str],
-    ) -> List[Tuple[str, float]]:
-        """Resuelve nombres de entidad a entidades del KG (DTm-70).
-
-        Intenta exact match primero. Si falla, usa fuzzy matching via
-        token overlap con _kw_entity_index. Devuelve lista de
-        (entity_name_in_kg, confidence) donde confidence es:
-          - 1.0 para exact match
-          - tokens_matched/tokens_query para fuzzy match
-
-        Fuzzy match requiere que TODOS los tokens del query name
-        aparezcan en el nombre/descripcion de la entidad candidata.
-        Esto evita falsos positivos (e.g. "John" matcheando "John Smith"
-        Y "John Wayne") a costa de no matchear parciales.
-        """
-        resolved: List[Tuple[str, float]] = []
-        seen: Set[str] = set()
-
-        for name in entity_names:
-            norm = self._normalize_name(name)
-            if not norm:
-                continue
-
-            # Fast path: exact match
-            if norm in self._entities and self._has_node(norm):
-                if norm not in seen:
-                    resolved.append((norm, 1.0))
-                    seen.add(norm)
-                continue
-
-            # Fuzzy match: buscar entidades via token overlap en el indice
-            query_tokens = self._tokenize(norm)
-            if not query_tokens:
-                continue
-
-            # Recopilar candidatos: entidades que contienen al menos 1 token
-            candidate_hits: Counter = Counter()
-            for token in query_tokens:
-                for entity_name in self._kw_entity_index.get(token, set()):
-                    candidate_hits[entity_name] += 1
-
-            # Filtrar: candidatos que matchean TODOS los tokens del query
-            n_tokens = len(query_tokens)
-            for entity_name, hits in candidate_hits.items():
-                if hits >= n_tokens and entity_name not in seen:
-                    confidence = hits / max(
-                        n_tokens, len(self._tokenize(entity_name))
-                    )
-                    resolved.append((entity_name, confidence))
-                    seen.add(entity_name)
-
-        if resolved:
-            n_exact = sum(1 for _, c in resolved if c == 1.0)
-            n_fuzzy = len(resolved) - n_exact
-            if n_fuzzy > 0:
-                logger.debug(
-                    f"query_entities: resolved {len(entity_names)} names -> "
-                    f"{n_exact} exact + {n_fuzzy} fuzzy matches"
-                )
-
-        return resolved
-
-    def query_entities(
-        self,
-        entity_names: List[str],
-        max_hops: int = 2,
-        max_docs: int = 20,
-        pre_resolved: Optional[List[str]] = None,
-    ) -> List[Tuple[str, float]]:
-        """Low-level retrieval: busca doc_ids conectados a entidades dadas.
-
-        Traversal BFS hasta max_hops desde cada entidad query.
-        Scoring: docs mas cercanos (menos hops) reciben score mas alto.
-
-        Args:
-            entity_names: Keywords de entidad de la query.
-            max_hops: Profundidad maxima de BFS.
-            max_docs: Maximo de docs a retornar.
-            pre_resolved: Si proporcionado, entity names ya resueltos por
-                VDB similarity search (DAM-1). Salta _resolve_entity_names.
-        """
-        doc_scores: Dict[str, float] = {}
-
-        if pre_resolved is not None:
-            # DAM-1: entidades resueltas externamente via entity VDB
-            resolved = [
-                (name, 1.0) for name in pre_resolved
-                if name in self._entities and self._has_node(name)
-            ]
-        else:
-            resolved = self._resolve_entity_names(entity_names)
-
-        for norm, confidence in resolved:
-            # BFS con distancia y peso de arista (DTm-72)
-            # Queue: (entity_name, depth, accumulated_weight_factor)
-            visited: Set[str] = set()
-            queue: deque[Tuple[str, int, float]] = deque([(norm, 0, 1.0)])
-            visited.add(norm)
-
-            while queue:
-                current, depth, weight_acc = queue.popleft()
-                if depth > max_hops:
-                    continue
-
-                # Score: distancia inversa * confidence * peso acumulado
-                hop_score = (confidence * weight_acc) / (1.0 + depth)
-
-                # Documentos asociados a esta entidad
-                for doc_id in self._entity_to_docs.get(current, set()):
-                    doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + hop_score
-
-                # Expandir vecinos con peso de arista (DTm-72)
-                if depth < max_hops:
-                    for neighbor, edge_weight in self._get_neighbors_weighted(current):
-                        if neighbor not in visited:
-                            visited.add(neighbor)
-                            queue.append((neighbor, depth + 1, edge_weight))
-
-        # Ordenar por score y limitar
-        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        return ranked[:max_docs]
-
-    def query_by_keywords(
-        self,
-        keywords: List[str],
-        max_docs: int = 20,
-    ) -> List[Tuple[str, float]]:
-        """High-level retrieval: busca docs por keywords en nombres de entidad
-        y descripciones de relaciones.
-
-        Usa indice invertido por token (DTm-30) en lugar de scan completo.
-        """
-        doc_scores: Dict[str, float] = {}
-        keywords_lower = [k.lower().strip() for k in keywords if k.strip()]
-
-        if not keywords_lower:
-            return []
-
-        # Buscar entidades via indice invertido (DTm-30)
-        matched_entities: Set[str] = set()
-        for kw in keywords_lower:
-            kw_tokens = self._tokenize(kw)
-            for token in kw_tokens:
-                matched_entities.update(self._kw_entity_index.get(token, set()))
-
-        for entity_name in matched_entities:
-            entity = self._entities.get(entity_name)
-            if not entity:
-                continue
-            for doc_id in entity.source_doc_ids:
-                doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 1.0
-
-        # Buscar relaciones via indice invertido (DTm-30)
-        matched_relations: Set[Tuple[str, str, str]] = set()
-        for kw in keywords_lower:
-            kw_tokens = self._tokenize(kw)
-            for token in kw_tokens:
-                matched_relations.update(self._kw_relation_index.get(token, set()))
-
-        for _src, _tgt, doc_id in matched_relations:
-            if doc_id:
-                doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 0.5
-
-        ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        return ranked[:max_docs]
 
     # =================================================================
     # SERIALIZACION (DTm-34)
@@ -914,22 +644,8 @@ class KnowledgeGraph:
                     if src_vid is not None and tgt_vid is not None:
                         kg._graph.add_edge(src_vid, tgt_vid, relations=link.get("relations", []))
 
-        # Reconstruir indices invertidos de keywords (DTm-30)
-        kg._rebuild_keyword_indices()
-
         return kg
 
-    def build_keyword_indices(self) -> None:
-        """Construye indices invertidos de keywords para query_by_keywords (DTm-30/69).
-
-        Debe llamarse una vez despues de que todos los add_triplets() hayan
-        terminado (fase post-build). Llamar durante add_triplets() por cada
-        tripleta era O(n*stemming) entrelazado con I/O — diferirlo reduce
-        el tiempo de build del KG.
-
-        Tambien se llama desde from_dict() al cargar desde cache.
-        """
-        self._rebuild_keyword_indices()
 
     # -----------------------------------------------------------------
     # DTm-73: Co-occurrence bridging
@@ -945,7 +661,7 @@ class KnowledgeGraph:
         aparecen en el mismo doc pero no tienen relacion explicita del LLM.
         Las aristas se crean con relacion "co-occurs" y peso bajo.
 
-        Debe llamarse despues de add_triplets() y antes de build_keyword_indices().
+        Debe llamarse despues de add_triplets().
 
         Returns:
             Numero de aristas co-occurrence creadas.
@@ -992,21 +708,6 @@ class KnowledgeGraph:
             )
 
         return edges_added
-
-    def _rebuild_keyword_indices(self) -> None:
-        """Reconstruye _kw_entity_index y _kw_relation_index desde el estado actual."""
-        self._kw_entity_index = defaultdict(set)
-        self._kw_relation_index = defaultdict(set)
-
-        for entity_name in self._entities:
-            self._index_entity_tokens(entity_name)
-
-        for eid in range(self._graph.ecount()):
-            edge = self._graph.es[eid]
-            src_name = self._graph.vs[edge.source]["name"]
-            tgt_name = self._graph.vs[edge.target]["name"]
-            for rel_info in edge["relations"]:
-                self._index_relation_tokens(src_name, tgt_name, rel_info)
 
     # V.4: max chars para descripcion mergeada. Embedding models truncan
     # a ~512 tokens (~2000 chars). Con "name: description" el budget

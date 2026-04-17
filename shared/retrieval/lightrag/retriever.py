@@ -1,23 +1,23 @@
 """
 Modulo: LightRAG Retriever
 Descripcion: Retriever basado en LightRAG (EMNLP 2025).
-             Combina busqueda vectorial con knowledge graph.
-             Sin BM25 — el grafo reemplaza la funcion de bridging lexical.
-
-Ubicacion: shared/retrieval/lightrag_retriever.py
+             Chunks obtenidos a traves del KG (paper-aligned,
+             divergencia #8 resuelta opcion A).
 
 Flujo:
     Indexacion:
       1. Extraer tripletas de cada doc via LLM (TripletExtractor)
       2. Construir KnowledgeGraph con entidades y relaciones
-      3. Indexar contenido original en ChromaDB (vector search)
+      3. Indexar contenido original en ChromaDB (vector store)
+      4. Construir Entity VDB y Relationship VDB
 
-    Retrieval:
-      1. Vector search (ChromaDB) -> top_k candidatos
-      2. Query analysis via LLM -> low_level + high_level keywords
-      3. Graph traversal (low-level: entity BFS, high-level: keyword match)
-      4. Fusion de resultados vector + graph
-      5. Contenido original para generacion
+    Retrieval (modos local/global/hybrid):
+      1. Query analysis via LLM -> low_level + high_level keywords
+      2. Resolver keywords contra Entity VDB / Relationship VDB
+      3. Obtener source_doc_ids de entidades/relaciones resueltas
+      4. Reference-count scoring: chunk score = n entidades/relaciones que lo referencian
+      5. Fetch contenido desde vector store via get_documents_by_ids
+      6. Fallback a vector search si el KG no produce resultados
 """
 
 from __future__ import annotations
@@ -277,13 +277,6 @@ class LightRAGRetriever(BaseRetriever):
         if co_edges:
             logger.info(f"LightRAGRetriever: {co_edges} co-occurrence edges creadas")
 
-        # DTm-69: construir indices invertidos de keywords en fase post-build
-        # (antes se hacia por cada tripleta, entrelazado con I/O del grafo)
-        t_idx = time.perf_counter()
-        self._kg.build_keyword_indices()
-        idx_ms = (time.perf_counter() - t_idx) * 1000
-        logger.info(f"LightRAGRetriever: keyword indices construidos en {idx_ms:.0f}ms")
-
         # DAM-4: merge descripciones multi-doc antes de construir VDBs
         merged = self._kg.merge_entity_descriptions()
         if merged:
@@ -450,22 +443,22 @@ class LightRAGRetriever(BaseRetriever):
         self,
         keywords: List[str],
         top_k: int = 10,
-    ) -> List[str]:
+    ) -> List[Tuple[str, float]]:
         """Resuelve keywords de query a entity names via embedding similarity.
 
-        Reemplaza _resolve_entity_names (string matching) con semantic search
-        contra entities_vdb (DAM-1).
+        Semantic search contra entities_vdb (DAM-1).
 
         V.2: Filtra resultados por threshold de cosine distance para evitar
         matches irrelevantes.
 
         Returns:
-            Lista de entity names (normalizados) encontrados en el KG.
+            Lista de (entity_name, vdb_distance) ordenada por aparicion.
+            distance es cosine distance [0, 2]: 0=identical, 2=opposite.
         """
         if not self._entities_vdb or not keywords:
             return []
 
-        resolved_names: List[str] = []
+        resolved: List[Tuple[str, float]] = []
         seen: set = set()
 
         for keyword in keywords:
@@ -475,15 +468,14 @@ class LightRAGRetriever(BaseRetriever):
                 keyword, k=top_k,
             )
             for doc, distance in results:
-                # V.2: filter by cosine distance threshold
                 if distance > self._ENTITY_VDB_MAX_DISTANCE:
                     continue
                 entity_name = doc.metadata.get("entity_name", "")
                 if entity_name and entity_name not in seen:
                     seen.add(entity_name)
-                    resolved_names.append(entity_name)
+                    resolved.append((entity_name, float(distance)))
 
-        return resolved_names
+        return resolved
 
     def _build_relationships_vdb(self) -> None:
         """Construye relationship VDB: ChromaDB collection con embeddings de relaciones.
@@ -557,50 +549,6 @@ class LightRAGRetriever(BaseRetriever):
     # V.6: Max cosine distance for relationship matches (same scale as entity VDB).
     _RELATIONSHIP_VDB_MAX_DISTANCE = 0.8
 
-    def _resolve_relationships_via_vdb(
-        self,
-        keywords: List[str],
-        top_k: int = 20,
-    ) -> List[Tuple[str, float]]:
-        """Resuelve high-level keywords a doc_ids via relationship VDB.
-
-        Busca relaciones semanticamente similares a los keywords y retorna
-        los doc_ids asociados con scores ponderados por edge weight (DAM-2, DAM-5).
-
-        V.6: Cosine distance [0, 2] → similarity [1.0, 0.0] via (1 - d/2).
-        Filtra por threshold antes de acumular scores.
-
-        Returns:
-            Lista de (doc_id, score) ordenada por score desc.
-        """
-        if not self._relationships_vdb or not keywords:
-            return []
-
-        from collections import Counter
-        doc_scores: Counter = Counter()
-
-        for keyword in keywords:
-            if not keyword.strip():
-                continue
-            results = self._relationships_vdb.similarity_search_with_score(
-                keyword, k=top_k,
-            )
-            for doc, distance in results:
-                # V.6: filter by cosine distance threshold
-                if distance > self._RELATIONSHIP_VDB_MAX_DISTANCE:
-                    continue
-                doc_id = doc.metadata.get("doc_id", "")
-                weight = doc.metadata.get("weight", 1)
-                if doc_id:
-                    # V.6: cosine distance [0,2] -> similarity [1.0, 0.0]
-                    similarity = max(0.0, 1.0 - distance / 2.0)
-                    doc_scores[doc_id] += similarity * weight
-
-        ranked: List[Tuple[str, float]] = [
-            (doc_id, float(score)) for doc_id, score in doc_scores.most_common(top_k)
-        ]
-        return ranked
-
     @staticmethod
     def _corpus_fingerprint(
         documents: List[Dict[str, Any]],
@@ -643,17 +591,17 @@ class LightRAGRetriever(BaseRetriever):
         query: str,
         top_k: Optional[int] = None,
     ) -> RetrievalResult:
-        """Retrieval con modo configurable (F.4/DTm-79).
+        """Retrieval con modo configurable (paper-aligned, divergencia #8 resuelta).
 
         Modos (paper original):
           naive         — solo vector search (sin KG)
-          local         — entidades relevantes + vector chunks
-          global        — relaciones relevantes + vector chunks
-          hybrid        — entidades + relaciones + vector chunks (default)
+          local         — chunks via entidades del KG + entidades en metadata
+          global        — chunks via relaciones del KG + relaciones en metadata
+          hybrid        — chunks via entidades + relaciones (default)
 
-        En local/global/hybrid, el vector search produce el ranking de chunks
-        y el KG aporta contexto complementario (entidades/relaciones) como
-        secciones separadas en metadata. No hay fusion RRF.
+        En local/global/hybrid, los chunks se obtienen a traves del KG:
+        query keywords → VDB resolution → source_doc_ids → reference-count
+        scoring. Fallback a vector search cuando el KG no produce resultados.
         """
         k = top_k or self.config.retrieval_k
         start_time = time.perf_counter()
@@ -664,9 +612,7 @@ class LightRAGRetriever(BaseRetriever):
         if mode == "naive" or not graph_available:
             result = self._vector_retriever.retrieve(query, top_k=k)
         else:
-            # local, global, hybrid: vector search + KG enrichment
-            vector_result = self._vector_retriever.retrieve(query, top_k=k)
-            result = self._enrich_with_graph(query, vector_result, k)
+            result = self._retrieve_via_kg(query, k)
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
         result.strategy_used = (
@@ -683,7 +629,12 @@ class LightRAGRetriever(BaseRetriever):
         query_vector: List[float],
         top_k: Optional[int] = None,
     ) -> RetrievalResult:
-        """Retrieval con vector pre-computado + KG enrichment."""
+        """Retrieval con vector pre-computado (paper-aligned).
+
+        Para modos local/global/hybrid usa KG-based retrieval (el vector
+        pre-computado no se usa porque los chunks vienen del KG).
+        Para naive, usa el vector pre-computado directamente.
+        """
         k = top_k or self.config.retrieval_k
         start_time = time.perf_counter()
 
@@ -695,10 +646,7 @@ class LightRAGRetriever(BaseRetriever):
                 query_text, query_vector, top_k=k
             )
         else:
-            vector_result = self._vector_retriever.retrieve_by_vector(
-                query_text, query_vector, top_k=k
-            )
-            result = self._enrich_with_graph(query_text, vector_result, k)
+            result = self._retrieve_via_kg(query_text, k)
 
         result.retrieval_time_ms = (time.perf_counter() - start_time) * 1000
         result.strategy_used = (
@@ -710,55 +658,77 @@ class LightRAGRetriever(BaseRetriever):
         return result
 
     # -----------------------------------------------------------------
-    # KG Enrichment: entidades/relaciones como contexto complementario
+    # KG-based retrieval (paper-aligned, divergencia #8 resuelta)
     # -----------------------------------------------------------------
 
     _MAX_CONTEXT_ENTITIES = 30
     _MAX_CONTEXT_RELATIONS = 30
 
-    def _enrich_with_graph(
+    def _retrieve_via_kg(
         self,
         query: str,
-        vector_result: RetrievalResult,
         top_k: int,
     ) -> RetrievalResult:
-        """Enriquece resultados vectoriales con datos del KG (paper-aligned).
+        """Retrieval paper-aligned: chunks obtenidos a traves del KG.
 
-        No fusiona rankings. El vector search produce el ranking de chunks
-        (para metricas de retrieval). El KG aporta entidades y relaciones
-        relevantes a la query como contexto complementario en metadata.
+        Flujo:
+          1. Extraer query keywords (low-level + high-level)
+          2. Resolver keywords contra Entity VDB / Relationship VDB
+          3. Obtener source_doc_ids de entidades/relaciones resueltas
+          4. Scoring: cada doc_id acumula score de las entidades/relaciones
+             que lo referencian
+          5. Fetch contenido de chunks desde el vector store
+          6. Fallback a vector search si el KG no produce resultados
 
-        Cada modo determina que canales KG se consultan:
-          local  — entidades (low-level keywords)
-          global — relaciones (high-level keywords)
-          hybrid — entidades + relaciones
+        Scoring formula (simetrica entre canales):
+          entidades:  sum(1/(1+rank) * similarity)
+          relaciones: sum(1/(1+rank) * similarity * edge_weight)
+
+        Donde similarity = max(0, 1 - cosine_distance/2), rank es la
+        posicion en los resultados del VDB (0 = mas relevante), y
+        edge_weight es el numero de docs que mencionan la relacion.
+
+        Diferencias con el paper (HKUDS/LightRAG operate.py):
+        - El paper usa un contador descendiente `order = N - i` para
+          decay por posicion; aqui usamos `1/(1+rank)` (inverse-rank).
+          Ambos producen el mismo efecto (posiciones altas dominan)
+          pero con curva de decay distinta: inverse-rank decae mas
+          rapido (1.0, 0.5, 0.33...) que lineal (N, N-1, N-2...).
+        - Las entidades no ponderan por weight porque el Entity VDB
+          no almacena un peso equivalente al edge_weight de relaciones.
+          len(entity.source_doc_ids) seria un proxy razonable (mas docs
+          = entidad mas relevante) pero el paper no lo hace
+          explicitamente para el canal de entidades.
         """
         if self._kg is None:
-            raise RuntimeError("_enrich_with_graph llamado sin KnowledgeGraph")
+            raise RuntimeError("_retrieve_via_kg llamado sin KnowledgeGraph")
         if self._extractor is None:
-            raise RuntimeError("_enrich_with_graph llamado sin TripletExtractor")
+            raise RuntimeError("_retrieve_via_kg llamado sin TripletExtractor")
 
-        # Paso 1: Query analysis
         low_level, high_level = self._get_query_keywords(query)
 
         if not low_level and not high_level:
-            vector_result.metadata["query_keywords"] = {"low": [], "high": []}
-            vector_result.metadata["kg_entities"] = []
-            vector_result.metadata["kg_relations"] = []
-            return vector_result
+            logger.debug(
+                "KG retrieval: no keywords extracted, falling back to vector search"
+            )
+            result = self._vector_retriever.retrieve(query, top_k=top_k)
+            result.metadata["kg_fallback"] = "no_keywords"
+            result.metadata["query_keywords"] = {"low": [], "high": []}
+            result.metadata["kg_entities"] = []
+            result.metadata["kg_relations"] = []
+            return result
 
         use_local = self._lightrag_mode in ("local", "hybrid")
         use_global = self._lightrag_mode in ("global", "hybrid")
 
-        # Paso 2: Recopilar entidades relevantes a la query (low-level)
-        # Divergencia #9: cada entidad incluye vecinos 1-hop ranked por
-        # edge_weight + degree_centrality (paper-aligned).
+        # --- Paso 1: Resolver entidades y relaciones via VDBs ---
+        resolved_entities: List[Tuple[str, float]] = []
         kg_entities: List[Dict[str, Any]] = []
         if use_local and low_level:
-            resolved_names = self._resolve_entities_via_vdb(low_level)
-            if resolved_names:
+            resolved_entities = self._resolve_entities_via_vdb(low_level)
+            if resolved_entities:
                 entities = self._kg.get_all_entities()
-                for name in resolved_names:
+                for name, _ in resolved_entities:
                     entity = entities.get(name)
                     if entity:
                         entry: Dict[str, Any] = {
@@ -775,30 +745,113 @@ class LightRAGRetriever(BaseRetriever):
                                 entry["neighbors"] = neighbors
                         except Exception:
                             logger.debug(
-                                f"Neighbor lookup failed for {name}, "
-                                f"continuing without"
+                                "Neighbor lookup failed for %s, continuing without",
+                                name,
                             )
                         kg_entities.append(entry)
                     if len(kg_entities) >= self._MAX_CONTEXT_ENTITIES:
                         break
 
-        # Paso 3: Recopilar relaciones relevantes a la query (high-level)
-        kg_relations: List[Dict[str, Any]] = []
+        resolved_relations: List[Dict[str, Any]] = []
         if use_global and high_level:
-            kg_relations = self._resolve_relations_for_context(high_level)
+            resolved_relations = self._resolve_relations_for_context(high_level)
+
+        # --- Paso 2: Scoring sobre source_doc_ids (order × similarity × weight) ---
+        doc_scores: Dict[str, float] = {}
+
+        if resolved_entities:
+            all_entities = self._kg.get_all_entities()
+            for rank, (name, distance) in enumerate(resolved_entities):
+                entity = all_entities.get(name)
+                if entity:
+                    similarity = max(0.0, 1.0 - distance / 2.0)
+                    order_score = 1.0 / (1 + rank)
+                    ent_score = order_score * similarity
+                    for doc_id in entity.source_doc_ids:
+                        doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + ent_score
+
+        if resolved_relations:
+            for rank, rel in enumerate(resolved_relations):
+                source = rel.get("source", "")
+                target = rel.get("target", "")
+                distance = rel.get("vdb_distance", 0.0)
+                weight = rel.get("weight", 1)
+                similarity = max(0.0, 1.0 - distance / 2.0)
+                order_score = 1.0 / (1 + rank)
+                rel_score = order_score * similarity * weight
+                rel_doc_ids: set = set()
+                for ent_name in (source, target):
+                    entity = self._kg.get_entity(ent_name)
+                    if entity:
+                        rel_doc_ids.update(entity.source_doc_ids)
+                for doc_id in rel_doc_ids:
+                    doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + rel_score
+
+        # --- Paso 3: Fallback si el KG no produjo doc_ids ---
+        if not doc_scores:
+            logger.debug(
+                "KG retrieval: no doc_ids from KG, falling back to vector search"
+            )
+            result = self._vector_retriever.retrieve(query, top_k=top_k)
+            result.metadata["kg_fallback"] = "no_doc_ids"
+            result.metadata["query_keywords"] = {
+                "low": low_level, "high": high_level,
+            }
+            result.metadata["kg_entities"] = kg_entities
+            result.metadata["kg_relations"] = resolved_relations
+            return result
+
+        ranked_doc_ids = sorted(
+            doc_scores.items(), key=lambda x: x[1], reverse=True,
+        )[:top_k]
+
+        # --- Paso 4: Fetch contenido desde el vector store ---
+        target_ids = [did for did, _ in ranked_doc_ids]
+        contents_map = self._vector_retriever.get_documents_by_ids(target_ids)
+
+        doc_ids: List[str] = []
+        contents: List[str] = []
+        scores: List[float] = []
+        for did, score in ranked_doc_ids:
+            content = contents_map.get(did, "")
+            if content:
+                doc_ids.append(did)
+                contents.append(content)
+                scores.append(score)
+
+        if not doc_ids:
+            logger.debug(
+                "KG retrieval: doc_ids from KG not found in vector store, "
+                "falling back to vector search"
+            )
+            result = self._vector_retriever.retrieve(query, top_k=top_k)
+            result.metadata["kg_fallback"] = "docs_not_in_store"
+            result.metadata["query_keywords"] = {
+                "low": low_level, "high": high_level,
+            }
+            result.metadata["kg_entities"] = kg_entities
+            result.metadata["kg_relations"] = resolved_relations
+            return result
 
         logger.debug(
-            f"KG enrichment: {len(kg_entities)} entities, "
-            f"{len(kg_relations)} relations for query '{query[:60]}...'"
+            "KG retrieval: %d chunks via KG (%d entities, %d relations) "
+            "for query '%s...'",
+            len(doc_ids), len(kg_entities), len(resolved_relations),
+            query[:60],
         )
 
-        # Paso 4: Retornar resultado vectorial con KG data en metadata
-        vector_result.metadata["query_keywords"] = {
-            "low": low_level, "high": high_level,
-        }
-        vector_result.metadata["kg_entities"] = kg_entities
-        vector_result.metadata["kg_relations"] = kg_relations
-        return vector_result
+        return RetrievalResult(
+            doc_ids=doc_ids,
+            contents=contents,
+            scores=scores,
+            metadata={
+                "query_keywords": {"low": low_level, "high": high_level},
+                "kg_entities": kg_entities,
+                "kg_relations": resolved_relations,
+                "kg_doc_scores": {did: s for did, s in ranked_doc_ids},
+                "kg_fallback": None,
+            },
+        )
 
     def _resolve_relations_for_context(
         self,
@@ -809,11 +862,14 @@ class LightRAGRetriever(BaseRetriever):
 
         Divergencia #9: enriquece cada relacion con las descripciones y tipos
         de sus entidades endpoint (source/target) desde el KG.
+
+        Cada relacion incluye vdb_distance y weight para que el scoring
+        en _retrieve_via_kg pueda calcular order × similarity × weight
+        (paper-aligned: _find_most_related_text_unit_from_relationships).
         """
         if not self._relationships_vdb or not keywords:
             return []
 
-        # Fetch entities dict once for endpoint enrichment
         all_entities = self._kg.get_all_entities() if self._kg else {}
 
         seen: set = set()
@@ -840,6 +896,8 @@ class LightRAGRetriever(BaseRetriever):
                     "target": target,
                     "relation": relation,
                     "description": doc.page_content,
+                    "vdb_distance": float(distance),
+                    "weight": doc.metadata.get("weight", 1),
                 }
                 src_entity = all_entities.get(source)
                 if src_entity:
