@@ -151,9 +151,30 @@ class RetrievalExecutor:
                     retrieval_metadata=full_result.metadata,
                 ), reranked_ok
             else:
-                # Sin reranker: retrieval_k docs para metricas y generacion
+                # Sin reranker: retrieval_k docs para metricas.
                 result = _do_retrieve(retrieval_k)
                 _check_strategy(result)
+
+                # LIGHT_RAG: separar docs de generacion (top-N por KG score)
+                # de docs de metricas (todos retrieval_k). Analogo a
+                # reranker.top_n para SV: el KG scoring ya rankeo los chunks,
+                # seleccionamos los top-N para el LLM generador.
+                gen_top_n = self._config.retrieval.lightrag_generation_top_n
+                if (
+                    gen_top_n > 0
+                    and configured_strategy == RetrievalStrategy.LIGHT_RAG
+                    and len(result.doc_ids) > gen_top_n
+                ):
+                    return QueryRetrievalDetail(
+                        retrieved_doc_ids=result.doc_ids,
+                        retrieved_contents=result.contents,
+                        retrieval_scores=result.scores,
+                        expected_doc_ids=expected_doc_ids,
+                        retrieval_time_ms=result.retrieval_time_ms,
+                        generation_doc_ids=result.doc_ids[:gen_top_n],
+                        generation_contents=result.contents[:gen_top_n],
+                        retrieval_metadata=result.metadata,
+                    ), None
 
                 return QueryRetrievalDetail(
                     retrieved_doc_ids=result.doc_ids,
