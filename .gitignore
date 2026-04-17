@@ -3,4 +3,5 @@ __pycache__/
 *.pyo
 .env
 data/
+!data/results/
 *.egg-info/
