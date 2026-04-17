@@ -133,6 +133,15 @@ class KnowledgeGraph:
         """Retorna dict de entity_name -> KGEntity para todas las entidades."""
         return self._entities
 
+    def get_entity(self, name: str) -> Optional["KGEntity"]:
+        """Retorna una entidad por nombre, o None si no existe.
+
+        Normaliza el nombre igual que `add_triplets` (lowercase + strip)
+        para que el caller pueda pasar la forma original sin conocer
+        las reglas internas de normalizacion.
+        """
+        return self._entities.get(self._normalize_name(name))
+
     def get_all_relations(self) -> List[Dict[str, Any]]:
         """Retorna lista de relaciones unicas con metadata.
 
@@ -326,6 +335,57 @@ class KnowledgeGraph:
             unique_docs = len({r.get("doc_id", "") for r in relations if r.get("doc_id")})
             weight_factor = math.log1p(max(unique_docs, 1))
             result.append((neighbor_name, weight_factor))
+        return result
+
+    def get_neighbors_ranked(
+        self, name: str, max_neighbors: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """1-hop neighbors ranked by edge_weight + degree_centrality.
+
+        Paper-aligned scoring: neighbors with stronger edges AND higher
+        connectivity in the graph rank first. Returns metadata for each
+        neighbor (name, type, description, relation label, score).
+        """
+        vid = self._name_to_vid.get(name)
+        if vid is None:
+            return []
+
+        scored: List[Tuple[float, str, str]] = []
+        for eid in self._graph.incident(vid):
+            edge = self._graph.es[eid]
+            neighbor_vid = edge.target if edge.source == vid else edge.source
+            neighbor_name = self._graph.vs[neighbor_vid]["name"]
+
+            relations = edge["relations"]
+            unique_docs = len(
+                {r.get("doc_id", "") for r in relations if r.get("doc_id")}
+            )
+            edge_weight = math.log1p(max(unique_docs, 1))
+            degree = self._graph.degree(neighbor_vid)
+            score = edge_weight + degree
+
+            relation_label = ""
+            if relations:
+                relation_label = relations[0].get("relation", "")
+
+            scored.append((score, neighbor_name, relation_label))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        result: List[Dict[str, Any]] = []
+        for score, nb_name, rel_label in scored[:max_neighbors]:
+            entry: Dict[str, Any] = {
+                "entity": nb_name,
+                "score": round(score, 3),
+            }
+            if rel_label:
+                entry["relation"] = rel_label
+            entity = self._entities.get(nb_name)
+            if entity:
+                entry["type"] = entity.entity_type
+                entry["description"] = entity.description
+            result.append(entry)
+
         return result
 
     # -----------------------------------------------------------------

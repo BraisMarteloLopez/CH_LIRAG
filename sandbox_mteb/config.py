@@ -102,6 +102,32 @@ class MTEBConfig:
     dev_queries: int = 200
     dev_corpus_size: int = 4000
 
+    # Umbral de tasa de fallback del LLM judge (deuda tecnica #4).
+    # Si en el run la proporcion de scores devueltos como default 0.5
+    # (el judge no pudo producir JSON parseable ni score via regex) supera
+    # este umbral para CUALQUIER metrica del judge, el run se marca como
+    # fallido al final. Protege metricas como faithfulness del sesgo
+    # silencioso hacia el centro. 0.0 desactiva la validacion (no fallar).
+    # Default 0.02 (2%) — razonable para judge modernos bien prompteados;
+    # subir durante iteracion, bajar antes del experimento 3.
+    judge_fallback_threshold: float = 0.02
+
+    # Synthesis de contexto KG en generacion (divergencia LightRAG #2).
+    # Cuando hay datos KG presentes (entidades o relaciones del KG) y esta
+    # flag esta activa, el contexto multi-seccion (entidades + relaciones +
+    # chunks) se reescribe como narrativa coherente via LLM ANTES de la
+    # generacion final. Faithfulness se sigue evaluando contra el contexto
+    # estructurado original (no contra la narrativa), para que cualquier
+    # alucinacion introducida por la propia synthesis sea penalizada.
+    # Solo aplica a LIGHT_RAG (SIMPLE_VECTOR no produce datos KG).
+    kg_synthesis_enabled: bool = True
+    # Limite de output de la synthesis en caracteres. Si 0, usa el mismo
+    # limite que la generacion (max_context_chars resuelto en runtime).
+    kg_synthesis_max_chars: int = 0
+    # Timeout dedicado para la llamada de synthesis (1 LLM call extra).
+    # Si se supera, se hace fallback al contexto estructurado original.
+    kg_synthesis_timeout_s: float = 30.0
+
     @classmethod
     def from_env(cls, env_path: str = ".env") -> "MTEBConfig":
         """Construye config completa desde .env.
@@ -125,6 +151,10 @@ class MTEBConfig:
             dev_mode=_env_bool("DEV_MODE", False),
             dev_queries=_env_int("DEV_QUERIES", 200),
             dev_corpus_size=_env_int("DEV_CORPUS_SIZE", 4000),
+            judge_fallback_threshold=_env_float("JUDGE_FALLBACK_THRESHOLD", 0.02),
+            kg_synthesis_enabled=_env_bool("KG_SYNTHESIS_ENABLED", True),
+            kg_synthesis_max_chars=_env_int("KG_SYNTHESIS_MAX_CHARS", 0),
+            kg_synthesis_timeout_s=_env_float("KG_SYNTHESIS_TIMEOUT_S", 30.0),
         )
 
         errors = config.validate()
@@ -182,6 +212,23 @@ class MTEBConfig:
             if self.dev_corpus_size <= 0:
                 errors.append(f"DEV_CORPUS_SIZE={self.dev_corpus_size} debe ser > 0 cuando DEV_MODE=true")
 
+        if not 0.0 <= self.judge_fallback_threshold <= 1.0:
+            errors.append(
+                f"JUDGE_FALLBACK_THRESHOLD={self.judge_fallback_threshold} "
+                "debe estar en [0.0, 1.0] (0.0 desactiva la validacion)"
+            )
+
+        if self.kg_synthesis_max_chars < 0:
+            errors.append(
+                f"KG_SYNTHESIS_MAX_CHARS={self.kg_synthesis_max_chars} "
+                "debe ser >= 0 (0 = usar max_context_chars del run)"
+            )
+        if self.kg_synthesis_timeout_s <= 0:
+            errors.append(
+                f"KG_SYNTHESIS_TIMEOUT_S={self.kg_synthesis_timeout_s} "
+                "debe ser > 0"
+            )
+
         return errors
 
     def ensure_directories(self) -> None:
@@ -211,6 +258,13 @@ class MTEBConfig:
                 f"  KG mode:    {self.retrieval.lightrag_mode}",
                 f"  KG tokens:  extraction={self.retrieval.kg_extraction_max_tokens}, keyword={self.retrieval.kg_keyword_max_tokens}",
                 f"  KG batch:   {self.retrieval.kg_batch_docs_per_call} docs/call",
+                f"  KG synth:   {'ON' if self.kg_synthesis_enabled else 'OFF'}"
+                + (
+                    f" (max_chars={self.kg_synthesis_max_chars or 'auto'}, "
+                    f"timeout={self.kg_synthesis_timeout_s}s)"
+                    if self.kg_synthesis_enabled
+                    else ""
+                ),
                 f"  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento "
                 f"para construir el knowledge graph (concurrencia={self.infra.nim_max_concurrent})",
             ])
@@ -244,8 +298,65 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
 }
 
 
+# =========================================================================
+# PROMPT DE SYNTHESIS DE CONTEXTO KG (divergencia LightRAG #2)
+# =========================================================================
+# El system prompt acepta un placeholder {max_chars} que se rellena en
+# runtime con kg_synthesis_max_chars (o max_context_chars si es 0).
+# El user prompt recibe la pregunta y el contexto multi-seccion ya
+# formateado por format_structured_context().
+
+KG_SYNTHESIS_SYSTEM_PROMPT = """You are a context-synthesis assistant for a Retrieval-Augmented Generation \
+(RAG) system. A downstream model will answer the user's QUESTION using ONLY \
+the narrative you produce, so your output must contain every piece of \
+evidence relevant to the QUESTION and nothing else.
+
+INPUT FORMAT
+You will receive:
+- QUESTION: the user's question.
+- Knowledge Graph Data (Entity): JSON list of entities with descriptions.
+- Knowledge Graph Data (Relationship): JSON list of (source, target, \
+relation) triples with descriptions.
+- Document Chunks: JSON list of {{"reference_id": N, "content": "..."}} \
+passages from the corpus.
+Any of the KG sections may be empty.
+
+YOUR TASK
+Rewrite the input as a coherent narrative (one or a few paragraphs) that:
+- Connects the entities and relationships to the textual evidence.
+- Focuses on information relevant to the QUESTION.
+- Preserves chunk provenance: when you state a fact taken from a chunk, \
+cite it inline as [ref:N] using the chunk's reference_id.
+
+STRICT RULES
+1. Use ONLY information present in the input sections. Do NOT introduce \
+facts, entities, dates, or relationships that are not explicitly stated. \
+Direct inferences from the input are allowed.
+2. Do NOT answer the QUESTION. Synthesize the supporting context only.
+3. If the KG data and the chunks disagree, prefer the chunks (the chunks \
+are the source; the KG is derived from them by an extractor that may have \
+errored).
+4. If a section is empty, omit it from the narrative.
+5. Keep your output under {max_chars} characters. Prefer clarity over \
+completeness when the limit is tight.
+
+OUTPUT
+Plain prose. No headings, no bullet lists, no JSON. Use [ref:N] inline \
+to cite chunk content."""
+
+
+KG_SYNTHESIS_USER_TEMPLATE = """QUESTION:
+{query}
+
+{structured_context}
+
+Now produce the synthesis narrative."""
+
+
 __all__ = [
     "MTEBConfig",
     "MinIOStorageConfig",
     "GENERATION_PROMPTS",
+    "KG_SYNTHESIS_SYSTEM_PROMPT",
+    "KG_SYNTHESIS_USER_TEMPLATE",
 ]

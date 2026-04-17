@@ -19,22 +19,7 @@ from shared.retrieval.lightrag.knowledge_graph import KGEntity, KGRelation
 from shared.retrieval.lightrag.triplet_extractor import TripletExtractor
 from shared.llm import run_sync
 
-
-def _make_extractor(mock_llm=None):
-    """Crea TripletExtractor con LLM mockeado."""
-    llm = mock_llm or MagicMock()
-    ext = object.__new__(TripletExtractor)
-    ext._llm = llm
-    ext._max_text_chars = 3000
-    ext._keyword_max_tokens = 1024
-    ext._extraction_max_tokens = 4096
-    ext._batch_size = 64
-    ext._stats = {
-        "docs_processed": 0, "docs_success": 0, "docs_failed": 0,
-        "docs_empty_input": 0, "docs_empty_result": 0,
-        "docs_json_recovered": 0,
-    }
-    return ext
+from tests.helpers import make_extractor
 
 
 def _make_entity(name: str, entity_type: str = "PERSON") -> KGEntity:
@@ -58,7 +43,7 @@ def test_gleaning_returns_additional_entities():
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value=response_json)
 
-    ext = _make_extractor(mock_llm)
+    ext = make_extractor(mock_llm)
     previous = [_make_entity("Einstein"), _make_entity("Ulm")]
 
     entities, relations = run_sync(
@@ -80,7 +65,7 @@ def test_gleaning_empty_previous_entities():
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value="should not be called")
 
-    ext = _make_extractor(mock_llm)
+    ext = make_extractor(mock_llm)
 
     entities, relations = run_sync(
         ext.glean_from_doc_async("doc1", "Some text", [])
@@ -98,7 +83,7 @@ def test_gleaning_empty_previous_entities():
 def test_gleaning_empty_text():
     """Gleaning con texto vacio retorna ([], [])."""
     mock_llm = MagicMock()
-    ext = _make_extractor(mock_llm)
+    ext = make_extractor(mock_llm)
 
     entities, relations = run_sync(
         ext.glean_from_doc_async("doc1", "", [_make_entity("X")])
@@ -111,7 +96,7 @@ def test_gleaning_empty_text():
 def test_gleaning_whitespace_text():
     """Gleaning con texto solo whitespace retorna ([], [])."""
     mock_llm = MagicMock()
-    ext = _make_extractor(mock_llm)
+    ext = make_extractor(mock_llm)
 
     entities, relations = run_sync(
         ext.glean_from_doc_async("doc1", "   \n  ", [_make_entity("X")])
@@ -131,7 +116,7 @@ def test_gleaning_prompt_includes_previous_entities():
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value=response_json)
 
-    ext = _make_extractor(mock_llm)
+    ext = make_extractor(mock_llm)
     previous = [_make_entity("Albert Einstein"), _make_entity("Ulm")]
 
     run_sync(ext.glean_from_doc_async("doc1", "text", previous))
@@ -151,7 +136,7 @@ def test_gleaning_llm_failure():
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("NIM timeout"))
 
-    ext = _make_extractor(mock_llm)
+    ext = make_extractor(mock_llm)
     previous = [_make_entity("X")]
 
     entities, relations = run_sync(

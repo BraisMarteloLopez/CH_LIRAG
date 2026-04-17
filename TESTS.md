@@ -1,6 +1,6 @@
 # TESTS.md
 
-Referencia interna para Claude Code. Describe la suite de tests, patrones de mock, atributos requeridos por `object.__new__()`, y trampas conocidas. Consultar antes de modificar tests o codigo de produccion que afecte firmas/atributos.
+Referencia interna para Claude Code. Describe la suite de tests, patrones de mock y trampas conocidas. Consultar antes de modificar tests o codigo de produccion que afecte firmas.
 
 ## Infraestructura de mocks (conftest.py)
 
@@ -33,87 +33,36 @@ markers = ["integration: requiere NIM y MinIO reales"]
 
 Ejecutar unit tests: `pytest tests/ -m "not integration"`
 
-## Patron object.__new__() — atributos requeridos
+## Patron object.__new__() — referencia a helpers
 
-Varios tests crean objetos sin pasar por `__init__` usando `object.__new__(Class)`. **Cada atributo nuevo en produccion requiere actualizar estos helpers.** Lista exhaustiva de atributos por clase:
+Varios tests crean objetos sin pasar por `__init__` usando `object.__new__(Class)` porque los `__init__` reales conectan a ChromaDB, NVIDIARerank u otra infraestructura. Es un antipatron aceptado mientras no exista dependency injection en las clases afectadas.
 
-### LightRAGRetriever
+**Fuente de verdad de atributos**: los helpers `_make_X()` en los tests. No mantener listas paralelas aqui — driftan y se descubren solo en runtime. Para escribir un test nuevo, abrir el helper del test mas proximo y copiar su set de atributos; si falta alguno, revisar el `__init__` real del modulo de produccion.
 
-Archivos: `test_lightrag_fusion.py:_make_lightrag()`, `test_dtm38_strategy_guardrail.py:_make_lightrag()`
+Helpers existentes:
 
-```python
-retriever.config = RetrievalConfig()
-retriever._kg_max_hops = 2
-retriever._kg = MagicMock(spec=KnowledgeGraph)  # o None
-retriever._extractor = MagicMock()               # o None
-retriever._has_graph = True
-retriever._lightrag_mode = "hybrid"
-retriever._query_keywords_cache = OrderedDict()
-retriever._cache_lock = threading.Lock()
-retriever._QUERY_CACHE_MAX_SIZE = 10_000
-retriever._vector_retriever = MagicMock()
-retriever._entities_vdb = None
-retriever._relationships_vdb = None
-```
+| Clase | Helper |
+|---|---|
+| `LightRAGRetriever` | `tests/helpers.py::make_lightrag` (centralizado; `test_dtm38_strategy_guardrail.py` lo envuelve en `_make_lightrag_with_vector_results` para pre-configurar return values) |
+| `TripletExtractor` | `tests/helpers.py::make_extractor` (centralizado) |
+| `CrossEncoderReranker` | `tests/helpers.py::make_reranker` (centralizado) |
+| `SimpleVectorRetriever` | `tests/helpers.py::make_retriever` (centralizado) |
+| `ChromaVectorStore` | `tests/helpers.py::make_vector_store` (centralizado) |
+| `MinIOLoader` | `tests/helpers.py::make_loader` (centralizado) |
 
-### TripletExtractor
+Regla de oro: si cambias el `__init__` de alguna de estas clases, abrir los helpers correspondientes y sincronizar atributos. No hay validacion automatica.
 
-Archivos: `test_triplet_extractor.py:_make_extractor()`, `test_gleaning.py:_make_extractor()`
+## Imports privados intencionales
 
-```python
-ext._llm_service = MagicMock()
-ext._max_text_chars = 3000
-ext._max_tokens = 4096
-ext._keyword_max_tokens = 1024
-ext._batch_docs_per_call = 5
-ext._gleaning_rounds = 0
-ext._stats = {
-    "docs_processed": 0, "docs_failed": 0,
-    "docs_empty": 0, "total_entities": 0,
-    "total_relations": 0,
-}
-```
+Tres archivos importan simbolos con prefijo `_` directamente desde produccion. Son accesos deliberados, no accidentales — documentados aqui para que no se "corrijan" sin contexto.
 
-### CrossEncoderReranker
+| Test | Import | Razon |
+|---|---|---|
+| `test_dt9_extract_score_fallback.py:9` | `shared.metrics._extract_score_fallback` | Funcion pura (text → float). El test es la suite dedicada de la funcion (21 casos de regex). No hay API publica equivalente; la funcion es consumida internamente por `_parse_judge_result`. Renombrarla a publica seria correcto pero no urgente |
+| `test_judge_fallback_tracker.py:74,126,152` | `shared.metrics._judge_fallback_tracker` | Singleton module-level del tracker de fallback del judge. Los tests inyectan estado (`record_invocation`, `record_default_return`) para simular el flujo del judge sin invocar el LLM real. Las stats se verifican via API publica (`get_judge_fallback_stats()`). No hay alternativa practica sin rehacer la arquitectura del tracker |
+| `test_kg_synthesis.py` | `sandbox_mteb.generation_executor._kg_synthesis_tracker` | Patron identico al anterior: singleton de instrumentacion de la capa de synthesis KG. Tests inyectan estado y verifican stats. Misma justificacion |
 
-Archivos: `test_dt8_09_10_11_reranker_sort.py`, `test_group_a_b_review.py`
-
-```python
-reranker._reranker = MagicMock()  # langchain NVIDIARerank mock
-reranker._top_n = 5
-```
-
-### SimpleVectorRetriever
-
-Archivo: `test_group_a_b_review.py`
-
-```python
-retriever.config = RetrievalConfig()
-retriever._vector_store = MagicMock()  # o None
-retriever._embedding_model = MagicMock()
-```
-
-### ChromaVectorStore
-
-Archivo: `test_group_a_b_review.py`
-
-```python
-store._collection = MagicMock()
-store._CHROMA_IN_BATCH_SIZE = 100
-```
-
-### MinIOLoader
-
-Archivo: `test_loader.py`
-
-```python
-loader.endpoint = "http://fake:9000"
-loader.bucket = "test-bucket"
-loader.prefix = "datasets/eval"
-loader.cache_dir = Path("/tmp/test_cache")
-loader.client = MagicMock()
-loader._manifest = None
-```
+**Regla**: no eliminar estos imports sin proporcionar una API publica equivalente que permita inyectar estado de test.
 
 ## Mapa test → produccion
 
@@ -124,7 +73,8 @@ loader._manifest = None
 | test_metrics_reference_based.py | shared/metrics.py | 15 | normalize_text, f1_score, exact_match, accuracy |
 | test_semantic_similarity.py | shared/metrics.py | 9 | semantic_similarity coseno, vector cero, empty input, numpy guard |
 | test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context |
-| test_dt9_extract_score_fallback.py | shared/metrics.py | 6 | _extract_score_fallback regex |
+| test_dt9_extract_score_fallback.py | shared/metrics.py | 21 | _extract_score_fallback regex |
+| test_judge_fallback_tracker.py | shared/metrics.py, sandbox_mteb/evaluator.py | 19 | _JudgeFallbackTracker, get_judge_fallback_stats, max_judge_default_return_rate, _validate_judge_fallback_threshold |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
 | test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
 | test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
@@ -156,6 +106,7 @@ loader._manifest = None
 | test_dtm38_strategy_guardrail.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 8 | strategy mismatch, config_snapshot |
 | test_dtm5_12_13_secondary_metric_errors.py | sandbox_mteb/generation_executor.py | 3 | secondary metric errors |
 | test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
+| test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 13 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
 | test_run_cli.py | sandbox_mteb/run.py | 11 | parse_args, setup_logging, main (dry-run, full, errors) |
 | test_preflight.py | sandbox_mteb/preflight.py | 8 | _check wrapper, dependencies, lock_file, config, main |
 | test_checkpoint.py | sandbox_mteb/checkpoint.py | 11 | save/load/delete checkpoint |
@@ -180,14 +131,51 @@ loader._manifest = None
 | Area | Detalle |
 |------|---------|
 | loader.py:_safe_str() | Utility helper para None/NaN coercion, cubierta indirectamente por test_loader |
-| loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
+| ~~loader.py:175-176~~ | ~~Auto-conversion comparison → label~~ **Resuelto**: test_dtm4_loader_populate.py (3 tests: conversion, idempotencia, no-op para otros tipos) |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
+
+## Deuda de tests pendiente (bloques E-G)
+
+Items identificados en la auditoria de PR #32, no implementados. Ordenados de menos invasivo a mas invasivo.
+
+### Bloque E — Consolidacion por modulo (cosmetico, sin cambios funcionales)
+
+Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test. Hoy los nombres reflejan tickets historicos, no el modulo que cubren.
+
+| Item | Accion | Archivos afectados |
+|---|---|---|
+| E17 | Consolidar tests de `retrieval_executor.py` | Fusionar: `test_dt5_pre_rerank_traceability.py`, `test_dt7_05_06_rerank_status.py`, `test_dt7_07_no_reranker.py`, `test_format_context.py`, `test_structured_context.py`, parte de `test_dtm38_strategy_guardrail.py` → `test_retrieval_executor.py` |
+| E18 | Consolidar tests de `shared/metrics.py` | Fusionar: `test_metrics_reference_based.py`, `test_semantic_similarity.py`, `test_dt6_context_truncation.py`, `test_dt9_extract_score_fallback.py`, `test_judge_fallback_tracker.py` → `test_metrics.py` |
+| E19 | Consolidar tests de `shared/report.py` | Fusionar: `test_report.py`, `test_dt7_08_csv_reranked.py`, parte de `test_dtm17_generation_retrieval_metrics.py` → `test_report.py` |
+| E20 | Consolidar tests de `evaluator.py` / `result_builder.py` | Fusionar: `test_evaluator.py`, `test_dtm4_build_run_aggregation.py`, `test_dtm5_12_13_secondary_metric_errors.py` → separar en `test_evaluator.py` + `test_result_builder.py` |
+
+### Bloque F — Reducir mocking excesivo (requiere construir fixtures reales)
+
+| Item | Accion | Detalle |
+|---|---|---|
+| F21 | Mini-KG real en `test_lightrag_fusion.py` | Construir igraph real con 3-5 entidades en vez de mock de `KnowledgeGraph`. Elimina mock de KG + VDB + extractor simultaneo |
+| F22 | Reducir mocking en `test_evaluator.py` | Evaluar que se puede inyectar real (retriever fake determinista en lugar de MagicMock) |
+| F23 | Test E2E real en `test_pipeline_e2e.py` | Hoy toda la infra esta mockeada. Evaluar si debe moverse a `tests/integration/` o sustituirse por test con KG real en memoria + embeddings deterministas |
+
+### Bloque G — Desacoplar tests de internals (requiere cambios en produccion)
+
+| Item | Accion | Detalle |
+|---|---|---|
+| G24 | API publica para `_build_run` | 17 llamadas en `test_dtm4_build_run_aggregation.py`. Extraer a funcion publica en `result_builder.py` o testear solo el resultado final de `evaluator.run()` |
+| G25 | API publica para `_synthesize_kg_context_async` y `_enrich_with_graph` | Hoy testeados directamente. Considerar interfaces inyectables o testing de caja negra via `generation_executor.execute()` / `lightrag_retriever.retrieve()` |
+| G26 | API publica para `_init_components`, `_cleanup`, `_assemble_results` | `test_evaluator.py`. Similar tratamiento |
+
+### Orden de ejecucion recomendado
+
+1. **E17-E20** despues de que los bloques C/D esten estables (evita merge conflicts con refactors recientes).
+2. **F21-F23** solo si el tiempo lo permite; miden "tests que prueban comportamiento real" vs glue.
+3. **G24-G26** al final: requieren cambios en produccion y aceptar riesgo de reviews mas largos.
 
 ## Reglas para modificar tests
 
-1. **Atributo nuevo en clase con `object.__new__()`**: actualizar TODOS los helpers listados arriba. Buscar con `grep -r "object.__new__(ClassName)" tests/`
+1. **Atributo nuevo en clase con `object.__new__()`**: sincronizar los helpers `_make_X()` listados en "Patron object.__new__()". Localizar todos los usos con `grep -rn "object.__new__(ClassName)" tests/`
 2. **Nuevo campo en RetrievalConfig**: propagado automaticamente via `RetrievalConfig()` default. Sin accion en tests salvo que el field necesite valor no-default
-3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required
+3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos de campos recientes: `judge_fallback_threshold` (deuda #4), `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s` (divergencia LightRAG #2) — todos tienen defaults, no requieren tocar helpers
 4. **Nuevo campo en QueryRetrievalDetail o QueryEvaluationResult**: actualizar `_make_qr()` en test_checkpoint.py si el field es required
 5. **Import de botocore.exceptions**: nunca directo en tests. Usar `_FakeClientError` + `@patch`
 6. **Cada assertion debe usar `assert`**: nunca dejar expresiones booleanas sueltas (`x is None` sin assert)

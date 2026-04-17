@@ -24,34 +24,12 @@ from shared.retrieval.core import (
 from shared.retrieval.lightrag.knowledge_graph import KnowledgeGraph, KGEntity
 from shared.retrieval.lightrag.retriever import LightRAGRetriever
 
+from tests.helpers import make_lightrag
+
 
 # =============================================================================
 # Helpers
 # =============================================================================
-
-def _make_lightrag(
-    kg=None,
-    extractor=None,
-    vector_retriever=None,
-    lightrag_mode="hybrid",
-):
-    """Crea LightRAGRetriever con dependencias mockeadas."""
-    retriever = object.__new__(LightRAGRetriever)
-    retriever.config = RetrievalConfig()
-    retriever._kg_max_hops = 2
-    retriever._kg = kg or MagicMock(spec=KnowledgeGraph)
-    retriever._extractor = extractor or MagicMock()
-    retriever._has_graph = True
-    retriever._lightrag_mode = lightrag_mode
-    import threading
-    from collections import OrderedDict
-    retriever._query_keywords_cache = OrderedDict()
-    retriever._cache_lock = threading.Lock()
-    retriever._QUERY_CACHE_MAX_SIZE = 10_000
-    retriever._vector_retriever = vector_retriever or MagicMock()
-    retriever._entities_vdb = None
-    retriever._relationships_vdb = None
-    return retriever
 
 
 def _make_vector_result(doc_ids, contents, scores):
@@ -81,7 +59,7 @@ def _make_entity(name, entity_type="PERSON", description=""):
 
 def test_enrich_no_keywords():
     """Sin keywords extraidos, retorna vector_result con metadata KG vacia."""
-    r = _make_lightrag()
+    r = make_lightrag()
     r._extractor.extract_query_keywords.return_value = ([], [])
 
     vr = _make_vector_result(["d1"], ["c1"], [0.9])
@@ -95,7 +73,7 @@ def test_enrich_no_keywords():
 
 def test_enrich_hybrid_collects_entities_and_relations():
     """Modo hybrid: recopila entidades + relaciones en metadata."""
-    r = _make_lightrag(lightrag_mode="hybrid")
+    r = make_lightrag(lightrag_mode="hybrid")
 
     # Setup entity VDB
     mock_entity_vdb = MagicMock()
@@ -140,7 +118,7 @@ def test_enrich_hybrid_collects_entities_and_relations():
 
 def test_enrich_local_only_entities():
     """Modo local: solo recopila entidades, no relaciones."""
-    r = _make_lightrag(lightrag_mode="local")
+    r = make_lightrag(lightrag_mode="local")
 
     mock_entity_vdb = MagicMock()
     mock_doc = MagicMock()
@@ -167,7 +145,7 @@ def test_enrich_local_only_entities():
 
 def test_enrich_global_only_relations():
     """Modo global: solo recopila relaciones, no entidades."""
-    r = _make_lightrag(lightrag_mode="global")
+    r = make_lightrag(lightrag_mode="global")
 
     mock_entity_vdb = MagicMock()
     r._entities_vdb = mock_entity_vdb
@@ -194,7 +172,7 @@ def test_enrich_global_only_relations():
 
 def test_enrich_preserves_vector_ranking():
     """Enrichment never changes the vector ranking or scores."""
-    r = _make_lightrag()
+    r = make_lightrag()
 
     mock_entity_vdb = MagicMock()
     mock_doc = MagicMock()
@@ -222,7 +200,7 @@ def test_enrich_preserves_vector_ranking():
 
 def test_retrieve_mode_naive_skips_graph():
     """Modo naive: solo vector search, ignora KG."""
-    r = _make_lightrag(lightrag_mode="naive")
+    r = make_lightrag(lightrag_mode="naive")
     r._vector_retriever.retrieve.return_value = _make_vector_result(
         ["v1"], ["Content"], [0.9],
     )
@@ -245,7 +223,7 @@ def test_resolve_entities_via_vdb_deduplicates():
     # Same entity returned for both keywords
     mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
 
-    r = _make_lightrag()
+    r = make_lightrag()
     r._entities_vdb = mock_vdb
 
     result = r._resolve_entities_via_vdb(["keyword1", "keyword2"], top_k=5)
@@ -254,7 +232,7 @@ def test_resolve_entities_via_vdb_deduplicates():
 
 def test_resolve_entities_via_vdb_empty_keywords():
     """_resolve_entities_via_vdb con keywords vacios retorna []."""
-    r = _make_lightrag()
+    r = make_lightrag()
     r._entities_vdb = MagicMock()
     assert r._resolve_entities_via_vdb([]) == []
     assert r._resolve_entities_via_vdb(["", "  "]) == []
@@ -272,7 +250,7 @@ def test_resolve_entities_via_vdb_filters_by_distance():
         (close_doc, 0.1), (far_doc, 0.9),
     ]
 
-    r = _make_lightrag()
+    r = make_lightrag()
     r._entities_vdb = mock_vdb
 
     result = r._resolve_entities_via_vdb(["keyword"], top_k=5)
@@ -295,7 +273,7 @@ def test_resolve_relations_for_context_returns_descriptions():
     mock_doc.page_content = "alice -> mentors -> bob: academic mentorship"
     mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
 
-    r = _make_lightrag()
+    r = make_lightrag()
     r._relationships_vdb = mock_vdb
 
     result = r._resolve_relations_for_context(["mentorship"])
@@ -318,7 +296,7 @@ def test_resolve_relations_for_context_deduplicates():
     # Same relation returned for both keywords
     mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
 
-    r = _make_lightrag()
+    r = make_lightrag()
     r._relationships_vdb = mock_vdb
 
     result = r._resolve_relations_for_context(["kw1", "kw2"])
@@ -327,7 +305,7 @@ def test_resolve_relations_for_context_deduplicates():
 
 def test_resolve_relations_for_context_empty():
     """_resolve_relations_for_context con keywords vacios retorna []."""
-    r = _make_lightrag()
+    r = make_lightrag()
     r._relationships_vdb = MagicMock()
     assert r._resolve_relations_for_context([]) == []
 
@@ -349,7 +327,7 @@ def test_resolve_relations_for_context_filters_by_distance():
         (close_doc, 0.1), (far_doc, 0.9),
     ]
 
-    r = _make_lightrag()
+    r = make_lightrag()
     r._relationships_vdb = mock_vdb
 
     result = r._resolve_relations_for_context(["keyword"])
@@ -403,3 +381,194 @@ def test_corpus_fingerprint_changes_with_max_text_chars():
     fp_5000 = LightRAGRetriever._corpus_fingerprint(docs, max_text_chars=5000)
     assert fp_default != fp_3000
     assert fp_3000 != fp_5000
+
+
+# =============================================================================
+# Divergencia #9: 1-hop neighbor expansion en _enrich_with_graph
+# =============================================================================
+
+
+def test_enrich_entity_with_neighbors():
+    """Entidades resueltas incluyen vecinos 1-hop cuando get_neighbors_ranked retorna datos."""
+    r = make_lightrag(lightrag_mode="hybrid")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.return_value = [
+        {"entity": "bob", "type": "PERSON", "description": "Engineer", "relation": "works_with", "score": 3.5},
+        {"entity": "carol", "type": "PERSON", "description": "PI", "relation": "supervises", "score": 2.1},
+    ]
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._enrich_with_graph("query about alice", vr, top_k=5)
+
+    entity = result.metadata["kg_entities"][0]
+    assert entity["entity"] == "alice"
+    assert "neighbors" in entity
+    assert len(entity["neighbors"]) == 2
+    assert entity["neighbors"][0]["entity"] == "bob"
+    assert entity["neighbors"][1]["entity"] == "carol"
+
+
+def test_enrich_entity_no_neighbors():
+    """Sin vecinos, el dict de entidad no tiene clave 'neighbors'."""
+    r = make_lightrag(lightrag_mode="local")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.return_value = []
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._enrich_with_graph("query", vr, top_k=5)
+
+    entity = result.metadata["kg_entities"][0]
+    assert entity["entity"] == "alice"
+    assert "neighbors" not in entity
+
+
+def test_enrich_entity_neighbor_fallback():
+    """Si get_neighbors_ranked lanza excepcion, la entidad aparece sin vecinos."""
+    r = make_lightrag(lightrag_mode="hybrid")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.side_effect = RuntimeError("graph error")
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._enrich_with_graph("query", vr, top_k=5)
+
+    entity = result.metadata["kg_entities"][0]
+    assert entity["entity"] == "alice"
+    assert "neighbors" not in entity
+
+
+def test_enrich_preserves_vector_ranking_with_neighbors():
+    """Neighbor expansion no altera el ranking vectorial."""
+    r = make_lightrag(lightrag_mode="hybrid")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.return_value = [
+        {"entity": "bob", "type": "PERSON", "description": "Engineer", "score": 3.5},
+    ]
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1", "d2", "d3"], ["c1", "c2", "c3"], [0.9, 0.7, 0.5])
+    result = r._enrich_with_graph("query", vr, top_k=5)
+
+    assert result.doc_ids == ["d1", "d2", "d3"]
+    assert result.scores == [0.9, 0.7, 0.5]
+
+
+# =============================================================================
+# Divergencia #9: Relation endpoint enrichment
+# =============================================================================
+
+
+def test_resolve_relations_endpoint_enrichment():
+    """Relaciones incluyen description y type de sus entidades endpoint."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "alice",
+        "target_entity": "bob",
+        "relation": "mentors",
+    }
+    mock_doc.page_content = "alice -> mentors -> bob"
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
+
+    r = make_lightrag()
+    r._relationships_vdb = mock_vdb
+    alice = _make_entity("alice", "PERSON", "A researcher at MIT")
+    bob = _make_entity("bob", "PERSON", "A data scientist")
+    r._kg.get_all_entities.return_value = {"alice": alice, "bob": bob}
+
+    result = r._resolve_relations_for_context(["mentorship"])
+
+    assert len(result) == 1
+    assert result[0]["source"] == "alice"
+    assert result[0]["target"] == "bob"
+    assert result[0]["source_description"] == "A researcher at MIT"
+    assert result[0]["source_type"] == "PERSON"
+    assert result[0]["target_description"] == "A data scientist"
+    assert result[0]["target_type"] == "PERSON"
+
+
+def test_resolve_relations_missing_endpoint():
+    """Endpoint no encontrado en KG: campos de description/type ausentes."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "alice",
+        "target_entity": "unknown_entity",
+        "relation": "works_with",
+    }
+    mock_doc.page_content = "alice -> works_with -> unknown_entity"
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
+
+    r = make_lightrag()
+    r._relationships_vdb = mock_vdb
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+
+    result = r._resolve_relations_for_context(["collaboration"])
+
+    assert len(result) == 1
+    assert result[0]["source_description"] == "A researcher"
+    assert result[0]["source_type"] == "PERSON"
+    assert "target_description" not in result[0]
+    assert "target_type" not in result[0]
+
+
+def test_resolve_relations_no_kg():
+    """Sin KG disponible, relaciones se resuelven sin enrichment."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "a",
+        "target_entity": "b",
+        "relation": "r",
+    }
+    mock_doc.page_content = "a -> r -> b"
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+
+    r = make_lightrag()
+    r._kg = None
+    r._relationships_vdb = mock_vdb
+
+    result = r._resolve_relations_for_context(["keyword"])
+
+    assert len(result) == 1
+    assert result[0]["source"] == "a"
+    assert "source_description" not in result[0]

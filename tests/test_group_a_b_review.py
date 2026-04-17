@@ -15,7 +15,8 @@ from shared.retrieval.core import (
     RetrievalStrategy,
     SimpleVectorRetriever,
 )
-from shared.retrieval.reranker import CrossEncoderReranker
+
+from tests.helpers import make_reranker, make_retriever, make_vector_store
 
 
 # =============================================================================
@@ -39,10 +40,7 @@ def _make_retrieval_result_with_vector_scores(n=6):
 
 
 def _make_reranker_with_mock_compress(fake_docs):
-    reranker = object.__new__(CrossEncoderReranker)
-    reranker.base_url = "mock"
-    reranker.model_name = "mock"
-    reranker._reranker = MagicMock()
+    reranker = make_reranker()
     reranker._reranker.compress_documents = MagicMock(return_value=fake_docs)
     return reranker
 
@@ -53,10 +51,7 @@ def _make_reranker_with_mock_compress(fake_docs):
 
 def test_get_documents_by_ids_delegates_to_vector_store():
     """El metodo publico delega al _vector_store interno."""
-    config = RetrievalConfig()
-    retriever = object.__new__(SimpleVectorRetriever)
-    retriever.config = config
-    retriever._vector_store = MagicMock()
+    retriever = make_retriever(with_store=True)
     retriever._vector_store.get_documents_by_ids.return_value = {
         "d1": "contenido_1",
         "d2": "contenido_2",
@@ -77,10 +72,7 @@ def test_get_documents_by_ids_delegates_to_vector_store():
 
 def test_get_documents_by_ids_no_store():
     """Sin vector store inicializado retorna dict vacio."""
-    config = RetrievalConfig()
-    retriever = object.__new__(SimpleVectorRetriever)
-    retriever.config = config
-    retriever._vector_store = None
+    retriever = make_retriever(with_store=False)
 
     result = retriever.get_documents_by_ids(["d1", "d2"])
     assert result == {}
@@ -89,10 +81,7 @@ def test_get_documents_by_ids_no_store():
 
 def test_get_documents_by_ids_empty_list():
     """Lista vacia retorna {} sin llamar al store."""
-    config = RetrievalConfig()
-    retriever = object.__new__(SimpleVectorRetriever)
-    retriever.config = config
-    retriever._vector_store = MagicMock()
+    retriever = make_retriever(with_store=True)
 
     result = retriever.get_documents_by_ids([])
     assert result == {}
@@ -106,14 +95,8 @@ def test_get_documents_by_ids_empty_list():
 
 def test_chroma_batching():
     """Con >_CHROMA_IN_BATCH_SIZE ids, se hacen multiples llamadas collection.get."""
-    from shared.vector_store import ChromaVectorStore
-
-    store = object.__new__(ChromaVectorStore)
-    store.collection_name = "test_col"
-
-    # Mock del client + collection
+    store = make_vector_store()
     mock_collection = MagicMock()
-    store._client = MagicMock()
     store._client.get_collection.return_value = mock_collection
 
     # Generar 250 doc_ids (deberia hacer 3 batches: 100+100+50)
@@ -146,13 +129,8 @@ def test_chroma_batching():
 
 def test_chroma_single_batch():
     """Con <=100 ids, se hace una sola llamada."""
-    from shared.vector_store import ChromaVectorStore
-
-    store = object.__new__(ChromaVectorStore)
-    store.collection_name = "test_col"
-
+    store = make_vector_store()
     mock_collection = MagicMock()
-    store._client = MagicMock()
     store._client.get_collection.return_value = mock_collection
 
     doc_ids = [f"doc_{i}" for i in range(50)]
@@ -214,10 +192,7 @@ def test_reranker_propagates_vector_scores():
 
 def test_reranker_propagates_vector_scores_on_error():
     """Rerank fallido preserva vector_scores[:top_n] del original."""
-    reranker = object.__new__(CrossEncoderReranker)
-    reranker.base_url = "mock"
-    reranker.model_name = "mock"
-    reranker._reranker = MagicMock()
+    reranker = make_reranker()
     reranker._reranker.compress_documents.side_effect = RuntimeError("API down")
 
     original = _make_retrieval_result_with_vector_scores(n=6)

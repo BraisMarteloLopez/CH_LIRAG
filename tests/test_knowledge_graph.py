@@ -82,7 +82,7 @@ def test_add_triplets_dedup_entities():
 
     assert kg.num_entities == 3  # alice, bob, charlie
     # Alice aparece en doc1 y doc2
-    alice = kg._entities["alice"]
+    alice = kg.get_entity("Alice")
     assert alice.source_doc_ids == {"doc1", "doc2"}
 
 
@@ -116,6 +116,12 @@ def test_add_triplets_self_loop():
 
 # =============================================================================
 # KG5: relacion duplicada en arista
+#
+# White-box intencional: _get_edge_data es un helper privado que inspecciona
+# la metadata interna de una arista (dict con "relations" list). No tiene
+# equivalente publico porque get_all_relations() devuelve un formato plano.
+# Los tests lo usan para asertar acumulacion de relaciones duplicadas sobre
+# la misma arista, que es comportamiento interno de add_triplets.
 # =============================================================================
 
 def test_add_triplets_duplicate_relation_accumulates():
@@ -320,7 +326,7 @@ def test_add_entity_metadata():
     kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
 
     kg.add_entity_metadata("Alice", "PERSON", "A researcher")
-    alice = kg._entities["alice"]
+    alice = kg.get_entity("Alice")
     assert alice.entity_type == "PERSON"
     assert alice.description == "A researcher"
 
@@ -348,10 +354,11 @@ def test_max_entities_cap_with_eviction():
     added = kg.add_triplets("doc2", [_rel("C", "D", "r")])
     assert kg.num_entities == 3  # cap respetado
     assert added == 1  # tripleta anadida gracias a eviction
-    assert kg._entities_evicted >= 1
+    assert kg.get_stats()["entities_evicted"] >= 1
     # C y D deben estar en el grafo
-    assert "c" in kg._entities  # normalized
-    assert "d" in kg._entities
+    entities = kg.get_all_entities()
+    assert "c" in entities  # normalized
+    assert "d" in entities
 
 
 def test_max_entities_cap_no_eviction_possible():
@@ -367,7 +374,7 @@ def test_max_entities_cap_no_eviction_possible():
     added = kg.add_triplets("doc3", [_rel("C", "D", "r")])
     assert kg.num_entities == 2
     assert added == 0
-    assert kg._entities_dropped > 0
+    assert kg.get_stats()["entities_dropped"] > 0
 
 
 def test_max_entities_existing_entities_still_updated():
@@ -397,28 +404,35 @@ def test_eviction_prefers_low_doc_count():
     added = kg.add_triplets("doc4", [_rel("A", "E", "r4")])
     assert added == 1
     assert kg.num_entities == 4  # cap respetado
-    assert "a" in kg._entities  # A sobrevive (2 docs)
-    assert "b" in kg._entities  # B sobrevive (2 docs)
-    assert "e" in kg._entities  # E entro
+    entities = kg.get_all_entities()
+    assert "a" in entities  # A sobrevive (2 docs)
+    assert "b" in entities  # B sobrevive (2 docs)
+    assert "e" in entities  # E entro
     # C o D fue evicta (la que el algoritmo eligio)
-    evicted = {"c", "d"} - set(kg._entities.keys())
+    evicted = {"c", "d"} - set(entities.keys())
     assert len(evicted) == 1
 
 
 def test_eviction_cleans_indices():
-    """Eviction limpia _entity_to_docs y _doc_to_entities (DTm-63)."""
+    """Eviction limpia indices invertidos internos (DTm-63): tras eviction,
+    la entidad evicta deja de aparecer en get_entities_for_docs para
+    cualquier doc en el que estaba."""
     kg = KnowledgeGraph(max_entities=2)
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
-    assert "a" in kg._entity_to_docs
-    assert "a" in kg._doc_to_entities.get("doc1", set())
+    entities_doc1 = {e["entity"] for e in kg.get_entities_for_docs(["doc1"])}
+    assert "a" in entities_doc1
 
     # C, D necesitan evictar A o B
     kg.add_triplets("doc2", [_rel("C", "D", "r")])
-    # La entidad evicta no debe estar en los indices
-    evicted = {"a", "b"} - set(kg._entities.keys())
+    # La entidad evicta no debe estar en ningun doc ni en el catalogo
+    entities_all = kg.get_all_entities()
+    evicted = {"a", "b"} - set(entities_all.keys())
     assert len(evicted) >= 1
     evicted_name = evicted.pop()
-    assert evicted_name not in kg._entity_to_docs
+    entities_all_docs = {
+        e["entity"] for e in kg.get_entities_for_docs(["doc1", "doc2"])
+    }
+    assert evicted_name not in entities_all_docs
 
 
 def test_eviction_serialization_roundtrip():
@@ -432,7 +446,7 @@ def test_eviction_serialization_roundtrip():
     assert data["entities_evicted"] >= 1
 
     kg2 = KnowledgeGraph.from_dict(data)
-    assert kg2._entities_evicted == kg._entities_evicted
+    assert kg2.get_stats()["entities_evicted"] == kg.get_stats()["entities_evicted"]
 
 
 # =============================================================================
@@ -593,6 +607,14 @@ def test_roundtrip_preserves_edge_relations():
 
 # =============================================================================
 # KG24-KG28: Indice invertido para query_by_keywords (DTm-30)
+#
+# White-box intencional: estos tests verifican la estructura de los indices
+# invertidos (_kw_entity_index, _kw_relation_index) que construye
+# build_keyword_indices(). La unica API publica que los consume es
+# query_by_keywords(), que ya se testea aparte. Si se quiere ejercitar todo
+# via caja negra, habria que duplicar esos tests con query_by_keywords() y
+# asumir la transformacion intermedia; preferimos aqui asertar la estructura
+# directa del indice para detectar regresiones de indexacion especificas.
 # =============================================================================
 
 
@@ -690,6 +712,12 @@ def test_keyword_query_uses_index():
 
 # =============================================================================
 # DTm-70: Fuzzy entity matching in query_entities
+#
+# White-box intencional: _resolve_entity_names y _normalize_name son helpers
+# privados invocados por query_entities(). Los tests los ejercitan directamente
+# en lugar de via query_entities() para aislar la logica de matching/scoring
+# sin el resto del pipeline BFS. query_entities() se testea por separado en
+# las secciones KG6+ como caja negra.
 # =============================================================================
 
 def test_resolve_entity_names_exact_match():
@@ -999,14 +1027,14 @@ def test_co_occurrence_bridges_disconnected_components():
     kg.add_triplets("doc1", [_rel("A", "B", "r1")])
     kg.add_triplets("doc1", [_rel("C", "D", "r2")])
     # A-B y C-D son 2 componentes (A,B no conectan con C,D via triplet)
-    components_before = len(kg._graph.connected_components())
+    components_before = kg.get_stats()["graph_connected_components"]
     assert components_before == 2
 
     edges_added = kg.build_co_occurrence_edges()
 
     # doc1 tiene A, B, C, D -> co-occurrence los conecta
     assert edges_added > 0
-    components_after = len(kg._graph.connected_components())
+    components_after = kg.get_stats()["graph_connected_components"]
     assert components_after < components_before
 
 
@@ -1014,13 +1042,13 @@ def test_co_occurrence_no_duplicate_edges():
     """No crea aristas donde ya existe una relacion LLM."""
     kg = KnowledgeGraph()
     kg.add_triplets("doc1", [_rel("A", "B", "knows")])
-    edges_before = kg._graph.ecount()
+    edges_before = kg.num_relations
 
     edges_added = kg.build_co_occurrence_edges()
 
     # A y B ya estan conectados -> no se crea arista nueva
     assert edges_added == 0
-    assert kg._graph.ecount() == edges_before
+    assert kg.num_relations == edges_before
 
 
 def test_co_occurrence_single_entity_doc_no_edges():
@@ -1151,3 +1179,111 @@ def test_bfs_weighted_depth_zero_unaffected():
 
     # doc1 esta asociado directamente a A (depth=0), score = confidence / (1+0) = 1.0
     assert score_map.get("doc1", 0) >= 1.0
+
+
+# =============================================================================
+# get_entity / get_neighbors_ranked (divergencia #9)
+# =============================================================================
+
+
+def test_get_entity_returns_entity():
+    """get_entity retorna KGEntity cuando existe."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_entity_metadata("Alice", "PERSON", "A researcher")
+    entity = kg.get_entity("Alice")
+    assert entity is not None
+    assert entity.name == "alice"
+    assert entity.entity_type == "PERSON"
+
+
+def test_get_entity_returns_none_for_missing():
+    """get_entity retorna None para entidad inexistente."""
+    kg = KnowledgeGraph()
+    assert kg.get_entity("nonexistent") is None
+
+
+def test_get_neighbors_ranked_basic():
+    """get_neighbors_ranked retorna vecinos con score y metadata."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows", desc="A knows B"),
+        _rel("A", "C", "works_with", desc="A works with C"),
+    ])
+    kg.add_entity_metadata("B", "PERSON", "Engineer")
+    kg.add_entity_metadata("C", "PERSON", "Scientist")
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    assert len(neighbors) == 2
+    names = {n["entity"] for n in neighbors}
+    assert "b" in names
+    assert "c" in names
+    for n in neighbors:
+        assert "score" in n
+        assert n["score"] > 0
+        assert "type" in n
+        assert "description" in n
+
+
+def test_get_neighbors_ranked_sort_order():
+    """Vecinos con mayor edge_weight + degree se rankean primero."""
+    kg = KnowledgeGraph()
+    # B tiene degree=1 (solo A-B), C tiene degree=2 (A-C y C-D)
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows"),
+        _rel("A", "C", "works_with"),
+        _rel("C", "D", "manages"),
+    ])
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    assert len(neighbors) == 2
+    # C should rank higher: same edge_weight (1 doc each) but degree(C)=2 > degree(B)=1
+    assert neighbors[0]["entity"] == "c"
+    assert neighbors[1]["entity"] == "b"
+    assert neighbors[0]["score"] > neighbors[1]["score"]
+
+
+def test_get_neighbors_ranked_max_neighbors():
+    """max_neighbors limita el numero de resultados."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("Hub", "N1", "r1"),
+        _rel("Hub", "N2", "r2"),
+        _rel("Hub", "N3", "r3"),
+        _rel("Hub", "N4", "r4"),
+        _rel("Hub", "N5", "r5"),
+    ])
+
+    neighbors = kg.get_neighbors_ranked("hub", max_neighbors=3)
+    assert len(neighbors) == 3
+
+
+def test_get_neighbors_ranked_unknown_entity():
+    """Entidad desconocida retorna lista vacia."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    assert kg.get_neighbors_ranked("nonexistent") == []
+
+
+def test_get_neighbors_ranked_includes_relation_label():
+    """Cada vecino incluye la etiqueta de relacion del edge."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "mentors")])
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    assert len(neighbors) == 1
+    assert neighbors[0]["relation"] == "mentors"
+
+
+def test_get_neighbors_ranked_edge_weight_from_multiple_docs():
+    """Edges con mas docs producen mayor edge_weight y score."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows", doc_id="doc1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "knows", doc_id="doc2")])
+    kg.add_triplets("doc3", [_rel("A", "B", "knows", doc_id="doc3")])
+    kg.add_triplets("doc1", [_rel("A", "C", "works_with", doc_id="doc1")])
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    scores = {n["entity"]: n["score"] for n in neighbors}
+    # B has 3 docs on edge -> higher edge_weight than C with 1 doc
+    assert scores["b"] > scores["c"]

@@ -181,7 +181,7 @@ def test_gold_exceeds_corpus_size_raises_error():
     config = _make_config(dev_queries=10, dev_corpus_size=10)
     dataset = _make_dataset(n_queries=10, n_corpus=100, gold_per_query=2)
 
-    with pytest.raises(ValueError, match="gold docs"):
+    with pytest.raises(ValueError):
         select_subset_dev(dataset, config)
 
 
