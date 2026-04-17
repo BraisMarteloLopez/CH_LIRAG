@@ -71,7 +71,7 @@ def _make_lightrag_with_vector_results(has_graph=True):
         retriever._entities_vdb = mock_entity_vdb
 
         # Vector store returns contents for those doc_ids
-        retriever._vector_retriever._vector_store.get_documents_by_ids.return_value = {
+        retriever._vector_retriever.get_documents_by_ids.return_value = {
             f"d{i}": f"c{i}" for i in range(5)
         }
     return retriever

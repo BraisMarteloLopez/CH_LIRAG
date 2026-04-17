@@ -752,16 +752,21 @@ class LightRAGRetriever(BaseRetriever):
                         doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 1.0
 
         if resolved_relations:
-            for rel in resolved_relations:
+            for rank, rel in enumerate(resolved_relations):
                 source = rel.get("source", "")
                 target = rel.get("target", "")
+                distance = rel.get("vdb_distance", 0.0)
+                weight = rel.get("weight", 1)
+                similarity = max(0.0, 1.0 - distance / 2.0)
+                order_score = 1.0 / (1 + rank)
+                rel_score = order_score * similarity * weight
                 rel_doc_ids: set = set()
                 for ent_name in (source, target):
                     entity = self._kg.get_entity(ent_name)
                     if entity:
                         rel_doc_ids.update(entity.source_doc_ids)
                 for doc_id in rel_doc_ids:
-                    doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 0.5
+                    doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + rel_score
 
         # --- Paso 3: Fallback si el KG no produjo doc_ids ---
         if not doc_scores:
@@ -783,9 +788,7 @@ class LightRAGRetriever(BaseRetriever):
 
         # --- Paso 4: Fetch contenido desde el vector store ---
         target_ids = [did for did, _ in ranked_doc_ids]
-        contents_map = self._vector_retriever._vector_store.get_documents_by_ids(
-            target_ids,
-        )
+        contents_map = self._vector_retriever.get_documents_by_ids(target_ids)
 
         doc_ids: List[str] = []
         contents: List[str] = []
@@ -840,11 +843,14 @@ class LightRAGRetriever(BaseRetriever):
 
         Divergencia #9: enriquece cada relacion con las descripciones y tipos
         de sus entidades endpoint (source/target) desde el KG.
+
+        Cada relacion incluye vdb_distance y weight para que el scoring
+        en _retrieve_via_kg pueda calcular order × similarity × weight
+        (paper-aligned: _find_most_related_text_unit_from_relationships).
         """
         if not self._relationships_vdb or not keywords:
             return []
 
-        # Fetch entities dict once for endpoint enrichment
         all_entities = self._kg.get_all_entities() if self._kg else {}
 
         seen: set = set()
@@ -871,6 +877,8 @@ class LightRAGRetriever(BaseRetriever):
                     "target": target,
                     "relation": relation,
                     "description": doc.page_content,
+                    "vdb_distance": float(distance),
+                    "weight": doc.metadata.get("weight", 1),
                 }
                 src_entity = all_entities.get(source)
                 if src_entity:

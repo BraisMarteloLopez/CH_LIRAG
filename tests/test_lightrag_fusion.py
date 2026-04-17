@@ -81,11 +81,9 @@ def _setup_kg_retrieval(r, entities_map, relations=None, store_contents=None):
 
     # Vector store: return contents for doc_ids
     if store_contents:
-        r._vector_retriever._vector_store.get_documents_by_ids.return_value = (
-            store_contents
-        )
+        r._vector_retriever.get_documents_by_ids.return_value = store_contents
     else:
-        r._vector_retriever._vector_store.get_documents_by_ids.return_value = {}
+        r._vector_retriever.get_documents_by_ids.return_value = {}
 
     # Relationship VDB if relations provided
     if relations:
@@ -97,9 +95,10 @@ def _setup_kg_retrieval(r, entities_map, relations=None, store_contents=None):
                 "source_entity": rel["source"],
                 "target_entity": rel["target"],
                 "relation": rel["relation"],
+                "weight": rel.get("weight", 1),
             }
             doc.page_content = rel.get("description", "")
-            rel_docs.append((doc, 0.2))
+            rel_docs.append((doc, rel.get("vdb_distance", 0.2)))
         mock_rel_vdb.similarity_search_with_score.return_value = rel_docs
         r._relationships_vdb = mock_rel_vdb
 
@@ -211,12 +210,13 @@ def test_retrieve_via_kg_global_only_relations():
     mock_doc = MagicMock()
     mock_doc.metadata = {
         "source_entity": "x", "target_entity": "y", "relation": "rel",
+        "weight": 1,
     }
     mock_doc.page_content = "x -> rel -> y"
     mock_rel_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
     r._relationships_vdb = mock_rel_vdb
 
-    r._vector_retriever._vector_store.get_documents_by_ids.return_value = {
+    r._vector_retriever.get_documents_by_ids.return_value = {
         "d1": "content1", "d2": "content2",
     }
 
@@ -444,8 +444,14 @@ def test_reference_count_scoring_ranks_by_entity_overlap():
     assert result.scores[0] > result.scores[1]
 
 
-def test_reference_count_relations_contribute_half_score():
-    """Relations contribute 0.5 per doc_id to the scoring."""
+def test_relation_scoring_uses_order_similarity_weight():
+    """Relation scoring uses order × similarity × weight, not a flat value.
+
+    With distance=0.2 (similarity=0.9) and weight=1 and rank=0:
+      rel_score = 1.0/(1+0) * 0.9 * 1 = 0.9
+    d1: 1.0 (entity alice) + 0.9 (relation) = 1.9
+    d2: 0.9 (relation endpoint bob only)
+    """
     r = make_lightrag(lightrag_mode="hybrid")
 
     alice = _make_entity("alice", "PERSON", "A", source_doc_ids=["d1"])
@@ -457,6 +463,7 @@ def test_reference_count_relations_contribute_half_score():
         relations=[{
             "source": "alice", "target": "bob",
             "relation": "works_with", "description": "collab",
+            "vdb_distance": 0.2, "weight": 1,
         }],
         store_contents={"d1": "c1", "d2": "c2"},
     )
@@ -464,13 +471,100 @@ def test_reference_count_relations_contribute_half_score():
 
     result = r._retrieve_via_kg("query", top_k=5)
 
-    # d1: 1.0 (entity alice) + 0.5 (relation endpoint alice) = 1.5
-    # d2: 0.5 (relation endpoint bob)
     assert "d1" in result.doc_ids
     assert "d2" in result.doc_ids
     d1_idx = result.doc_ids.index("d1")
     d2_idx = result.doc_ids.index("d2")
     assert result.scores[d1_idx] > result.scores[d2_idx]
+    # d1 gets entity (1.0) + relation (0.9), d2 gets only relation (0.9)
+    assert result.scores[d1_idx] > 1.5
+
+
+def test_relation_scoring_weight_amplifies():
+    """Higher edge weight (more docs mentioning the relation) amplifies score."""
+    r = make_lightrag(lightrag_mode="global")
+
+    x = _make_entity("x", "CONCEPT", "X", source_doc_ids=["d1"])
+    y = _make_entity("y", "CONCEPT", "Y", source_doc_ids=["d2"])
+
+    r._kg.get_entity.side_effect = lambda n: {"x": x, "y": y}.get(n)
+    r._kg.get_all_entities.return_value = {"x": x, "y": y}
+
+    mock_entity_vdb = MagicMock()
+    r._entities_vdb = mock_entity_vdb
+
+    mock_rel_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "x", "target_entity": "y", "relation": "rel",
+        "weight": 5,
+    }
+    mock_doc.page_content = "x -> rel -> y"
+    mock_rel_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
+    r._relationships_vdb = mock_rel_vdb
+
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d1": "content1", "d2": "content2",
+    }
+
+    r._extractor.extract_query_keywords.return_value = ([], ["theme"])
+
+    result = r._retrieve_via_kg("query", top_k=5)
+
+    # score = 1.0/(1+0) * (1 - 0.2/2) * 5 = 1.0 * 0.9 * 5 = 4.5 per doc
+    assert result.scores[0] == pytest.approx(4.5, abs=0.1)
+
+
+def test_relation_scoring_rank_decay():
+    """Later-ranked relations contribute less (inverse rank order)."""
+    r = make_lightrag(lightrag_mode="global")
+
+    a = _make_entity("a", "T", "A", source_doc_ids=["d_a_only"])
+    b = _make_entity("b", "T", "B", source_doc_ids=["d_b_only"])
+    c = _make_entity("c", "T", "C", source_doc_ids=["d_c_only"])
+    d = _make_entity("d", "T", "D", source_doc_ids=["d_d_only"])
+
+    r._kg.get_entity.side_effect = lambda n: {
+        "a": a, "b": b, "c": c, "d": d,
+    }.get(n)
+    r._kg.get_all_entities.return_value = {"a": a, "b": b, "c": c, "d": d}
+
+    mock_entity_vdb = MagicMock()
+    r._entities_vdb = mock_entity_vdb
+
+    # Two relations at different ranks, same distance and weight
+    mock_rel_vdb = MagicMock()
+    doc1 = MagicMock()
+    doc1.metadata = {
+        "source_entity": "a", "target_entity": "b", "relation": "r1",
+        "weight": 1,
+    }
+    doc1.page_content = "r1"
+    doc2 = MagicMock()
+    doc2.metadata = {
+        "source_entity": "c", "target_entity": "d", "relation": "r2",
+        "weight": 1,
+    }
+    doc2.page_content = "r2"
+    mock_rel_vdb.similarity_search_with_score.return_value = [
+        (doc1, 0.2), (doc2, 0.2),
+    ]
+    r._relationships_vdb = mock_rel_vdb
+
+    r._vector_retriever.get_documents_by_ids.return_value = {
+        "d_a_only": "ca", "d_b_only": "cb",
+        "d_c_only": "cc", "d_d_only": "cd",
+    }
+
+    r._extractor.extract_query_keywords.return_value = ([], ["theme"])
+
+    result = r._retrieve_via_kg("query", top_k=10)
+
+    # Relation r1 at rank 0: order=1.0, r2 at rank 1: order=0.5
+    # d_a_only, d_b_only get score from r1 (rank 0)
+    # d_c_only, d_d_only get score from r2 (rank 1)
+    scores = dict(zip(result.doc_ids, result.scores))
+    assert scores["d_a_only"] > scores["d_c_only"]
 
 
 # =============================================================================
