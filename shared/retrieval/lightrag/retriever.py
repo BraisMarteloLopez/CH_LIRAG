@@ -443,7 +443,7 @@ class LightRAGRetriever(BaseRetriever):
         self,
         keywords: List[str],
         top_k: int = 10,
-    ) -> List[str]:
+    ) -> List[Tuple[str, float]]:
         """Resuelve keywords de query a entity names via embedding similarity.
 
         Semantic search contra entities_vdb (DAM-1).
@@ -452,12 +452,13 @@ class LightRAGRetriever(BaseRetriever):
         matches irrelevantes.
 
         Returns:
-            Lista de entity names (normalizados) encontrados en el KG.
+            Lista de (entity_name, vdb_distance) ordenada por aparicion.
+            distance es cosine distance [0, 2]: 0=identical, 2=opposite.
         """
         if not self._entities_vdb or not keywords:
             return []
 
-        resolved_names: List[str] = []
+        resolved: List[Tuple[str, float]] = []
         seen: set = set()
 
         for keyword in keywords:
@@ -467,15 +468,14 @@ class LightRAGRetriever(BaseRetriever):
                 keyword, k=top_k,
             )
             for doc, distance in results:
-                # V.2: filter by cosine distance threshold
                 if distance > self._ENTITY_VDB_MAX_DISTANCE:
                     continue
                 entity_name = doc.metadata.get("entity_name", "")
                 if entity_name and entity_name not in seen:
                     seen.add(entity_name)
-                    resolved_names.append(entity_name)
+                    resolved.append((entity_name, float(distance)))
 
-        return resolved_names
+        return resolved
 
     def _build_relationships_vdb(self) -> None:
         """Construye relationship VDB: ChromaDB collection con embeddings de relaciones.
@@ -706,13 +706,13 @@ class LightRAGRetriever(BaseRetriever):
         use_global = self._lightrag_mode in ("global", "hybrid")
 
         # --- Paso 1: Resolver entidades y relaciones via VDBs ---
-        resolved_names: List[str] = []
+        resolved_entities: List[Tuple[str, float]] = []
         kg_entities: List[Dict[str, Any]] = []
         if use_local and low_level:
-            resolved_names = self._resolve_entities_via_vdb(low_level)
-            if resolved_names:
+            resolved_entities = self._resolve_entities_via_vdb(low_level)
+            if resolved_entities:
                 entities = self._kg.get_all_entities()
-                for name in resolved_names:
+                for name, _ in resolved_entities:
                     entity = entities.get(name)
                     if entity:
                         entry: Dict[str, Any] = {
@@ -740,16 +740,19 @@ class LightRAGRetriever(BaseRetriever):
         if use_global and high_level:
             resolved_relations = self._resolve_relations_for_context(high_level)
 
-        # --- Paso 2: Reference-count scoring sobre source_doc_ids ---
+        # --- Paso 2: Scoring sobre source_doc_ids (order × similarity × weight) ---
         doc_scores: Dict[str, float] = {}
 
-        if resolved_names:
+        if resolved_entities:
             all_entities = self._kg.get_all_entities()
-            for name in resolved_names:
+            for rank, (name, distance) in enumerate(resolved_entities):
                 entity = all_entities.get(name)
                 if entity:
+                    similarity = max(0.0, 1.0 - distance / 2.0)
+                    order_score = 1.0 / (1 + rank)
+                    ent_score = order_score * similarity
                     for doc_id in entity.source_doc_ids:
-                        doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + 1.0
+                        doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + ent_score
 
         if resolved_relations:
             for rank, rel in enumerate(resolved_relations):

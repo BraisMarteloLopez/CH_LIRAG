@@ -255,14 +255,15 @@ def test_resolve_entities_via_vdb_deduplicates():
     mock_vdb = MagicMock()
     mock_doc = MagicMock()
     mock_doc.metadata = {"entity_name": "entity_a"}
-    # Same entity returned for both keywords
     mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
 
     r = make_lightrag()
     r._entities_vdb = mock_vdb
 
     result = r._resolve_entities_via_vdb(["keyword1", "keyword2"], top_k=5)
-    assert result == ["entity_a"]  # deduplicated
+    assert len(result) == 1
+    assert result[0][0] == "entity_a"
+    assert result[0][1] == pytest.approx(0.1)
 
 
 def test_resolve_entities_via_vdb_empty_keywords():
@@ -280,7 +281,6 @@ def test_resolve_entities_via_vdb_filters_by_distance():
     close_doc.metadata = {"entity_name": "close_entity"}
     far_doc = MagicMock()
     far_doc.metadata = {"entity_name": "far_entity"}
-    # One within threshold (0.1), one beyond (0.9)
     mock_vdb.similarity_search_with_score.return_value = [
         (close_doc, 0.1), (far_doc, 0.9),
     ]
@@ -289,7 +289,8 @@ def test_resolve_entities_via_vdb_filters_by_distance():
     r._entities_vdb = mock_vdb
 
     result = r._resolve_entities_via_vdb(["keyword"], top_k=5)
-    assert result == ["close_entity"]
+    assert len(result) == 1
+    assert result[0][0] == "close_entity"
 
 
 # =============================================================================
@@ -422,11 +423,10 @@ def test_corpus_fingerprint_changes_with_max_text_chars():
 # E9: Reference-count scoring
 # =============================================================================
 
-def test_reference_count_scoring_ranks_by_entity_overlap():
+def test_entity_scoring_ranks_by_overlap():
     """Docs referenciados por mas entidades obtienen mayor score."""
     r = make_lightrag(lightrag_mode="local")
 
-    # d2 is referenced by both entities -> should rank first
     alice = _make_entity("alice", "PERSON", "A", source_doc_ids=["d1", "d2"])
     bob = _make_entity("bob", "PERSON", "B", source_doc_ids=["d2", "d3"])
 
@@ -439,9 +439,39 @@ def test_reference_count_scoring_ranks_by_entity_overlap():
 
     result = r._retrieve_via_kg("query", top_k=5)
 
-    # d2 has score 2.0 (from alice + bob), d1 and d3 have 1.0 each
+    # d2 referenced by both entities -> highest combined score
     assert result.doc_ids[0] == "d2"
     assert result.scores[0] > result.scores[1]
+
+
+def test_entity_scoring_uses_order_and_similarity():
+    """Entity scoring uses order × similarity, not flat 1.0.
+
+    With distance=0.1 (similarity=0.95):
+      entity at rank 0: 1.0/(1+0) * 0.95 = 0.95
+      entity at rank 1: 1.0/(1+1) * 0.95 = 0.475
+    """
+    r = make_lightrag(lightrag_mode="local")
+
+    # Each entity references a unique doc
+    e1 = _make_entity("e1", "T", "first", source_doc_ids=["d1"])
+    e2 = _make_entity("e2", "T", "second", source_doc_ids=["d2"])
+
+    _setup_kg_retrieval(
+        r,
+        entities_map={"e1": e1, "e2": e2},
+        store_contents={"d1": "c1", "d2": "c2"},
+    )
+    r._extractor.extract_query_keywords.return_value = (["e1", "e2"], [])
+
+    result = r._retrieve_via_kg("query", top_k=5)
+
+    # e1 at rank 0 -> d1 gets higher score than d2 (e2 at rank 1)
+    scores = dict(zip(result.doc_ids, result.scores))
+    assert scores["d1"] > scores["d2"]
+    # With distance=0.1: similarity = 0.95
+    assert scores["d1"] == pytest.approx(0.95, abs=0.01)
+    assert scores["d2"] == pytest.approx(0.475, abs=0.01)
 
 
 def test_relation_scoring_uses_order_similarity_weight():

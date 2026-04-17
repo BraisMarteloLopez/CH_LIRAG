@@ -76,10 +76,10 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_dt9_extract_score_fallback.py | shared/metrics.py | 21 | _extract_score_fallback regex |
 | test_judge_fallback_tracker.py | shared/metrics.py, sandbox_mteb/evaluator.py | 19 | _JudgeFallbackTracker, get_judge_fallback_stats, max_judge_default_return_rate, _validate_judge_fallback_threshold |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
-| test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 65 | CRUD, BFS weighted, keywords, persistence, VDB, stats, eviction, co-occurrence |
+| test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | ~43 | CRUD, persistence, stats, eviction, co-occurrence, neighbors |
 | test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
 | test_gleaning.py | shared/retrieval/lightrag/triplet_extractor.py | 6 | glean_from_doc_async |
-| test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 20 | _enrich_with_graph, fingerprint, VDBs, modes |
+| test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | ~30 | _retrieve_via_kg, reference-count scoring, fingerprint, VDBs, modes, fallbacks |
 | test_simple_vector_retriever.py | shared/retrieval/core.py | 10 | retrieve, retrieve_by_vector, index_documents, clear_index, get_documents_by_ids |
 | test_dt8_09_10_11_reranker_sort.py | shared/retrieval/reranker.py | 3 | rerank sorting |
 | test_reranker.py | shared/retrieval/reranker.py | 8 | empty passthrough, ordering, top_n, vector_scores, error fallback, metadata |
@@ -132,7 +132,7 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 |------|---------|
 | loader.py:_safe_str() | Utility helper para None/NaN coercion, cubierta indirectamente por test_loader |
 | ~~loader.py:175-176~~ | ~~Auto-conversion comparison → label~~ **Resuelto**: test_dtm4_loader_populate.py (3 tests: conversion, idempotencia, no-op para otros tipos) |
-| Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
+| Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte `_retrieve_via_kg()` pero no tiene tests de modo dedicados |
 
 ## Deuda de tests pendiente (bloques E-G)
 
@@ -162,7 +162,7 @@ Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test
 | Item | Accion | Detalle |
 |---|---|---|
 | G24 | API publica para `_build_run` | 17 llamadas en `test_dtm4_build_run_aggregation.py`. Extraer a funcion publica en `result_builder.py` o testear solo el resultado final de `evaluator.run()` |
-| G25 | API publica para `_synthesize_kg_context_async` y `_enrich_with_graph` | Hoy testeados directamente. Considerar interfaces inyectables o testing de caja negra via `generation_executor.execute()` / `lightrag_retriever.retrieve()` |
+| G25 | API publica para `_synthesize_kg_context_async` y `_retrieve_via_kg` | Hoy testeados directamente. Considerar interfaces inyectables o testing de caja negra via `generation_executor.execute()` / `lightrag_retriever.retrieve()` |
 | G26 | API publica para `_init_components`, `_cleanup`, `_assemble_results` | `test_evaluator.py`. Similar tratamiento |
 
 ### Orden de ejecucion recomendado
