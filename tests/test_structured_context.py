@@ -23,7 +23,7 @@ def test_structured_context_includes_all_sections():
     ]
     contents = ["Document text here."]
 
-    result = format_structured_context(contents, entities, relations, max_length=5000)
+    result = format_structured_context(contents, entities, relations, max_length=60000)
 
     assert "Knowledge Graph Data (Entity):" in result
     assert "Knowledge Graph Data (Relationship):" in result
@@ -133,7 +133,11 @@ def test_structured_context_mode_global_excludes_entities():
 
 
 def test_structured_context_kg_cannot_starve_chunks():
-    """KG voluminoso no puede consumir todo el budget — chunks tienen espacio reservado."""
+    """KG voluminoso no puede consumir todo el budget — chunks tienen espacio reservado.
+
+    Con budgets fijos (paper-aligned), KG sections se capean al 50% del total.
+    Chunks siempre reciben al menos 50% del max_length.
+    """
     # 30 entidades largas (cada una ~250 chars en JSON)
     big_entities = [
         {"entity": f"E{i}", "type": "CONCEPT", "description": "x" * 200}
@@ -148,16 +152,15 @@ def test_structured_context_kg_cannot_starve_chunks():
     chunk_text = "important chunk content here" * 3  # chunk mediano
     contents = [chunk_text, chunk_text, chunk_text]
 
-    # Con hybrid: 20% entidades, 20% relaciones, 60% chunks
-    # max_length=5000 → chunks tienen garantizados ~3000 chars
+    # max_length=60000: entity budget=24000, relation budget=6000 (cap),
+    # chunks reciben el resto (~30000). KG se trunca a su budget fijo.
     result = format_structured_context(
-        contents, big_entities, big_relations, max_length=5000, mode="hybrid",
+        contents, big_entities, big_relations, max_length=60000, mode="hybrid",
     )
 
     assert "Document Chunks:" in result
     assert "important chunk content here" in result
-    # Las secciones KG se truncan para no desbordar
-    assert len(result) <= 5500  # buffer razonable por headers/separadores
+    assert len(result) <= 61000
 
 
 def test_structured_context_unused_kg_budget_redistributes_to_chunks():
@@ -187,7 +190,7 @@ def test_structured_context_unknown_mode_defaults_hybrid():
     relations = [{"source": "A", "target": "B", "relation": "r", "description": "d"}]
 
     result = format_structured_context(
-        ["content"], entities, relations, max_length=5000, mode="garbage",
+        ["content"], entities, relations, max_length=60000, mode="garbage",
     )
 
     # Con hybrid, ambas secciones KG deben aparecer
@@ -250,7 +253,7 @@ def test_structured_context_enriched_relation_serializes():
             "target_type": "PERSON",
         },
     ]
-    result = format_structured_context(["doc text"], [], relations, max_length=5000)
+    result = format_structured_context(["doc text"], [], relations, max_length=60000)
 
     assert "Knowledge Graph Data (Relationship):" in result
 
@@ -312,7 +315,7 @@ def test_structured_context_mode_parameter_default_is_hybrid():
     relations = [{"source": "A", "target": "B", "relation": "r", "description": "d"}]
 
     # Llamada sin mode (como los tests pre-existentes)
-    result = format_structured_context(["content"], entities, relations, max_length=5000)
+    result = format_structured_context(["content"], entities, relations, max_length=60000)
 
     assert "Knowledge Graph Data (Entity):" in result
     assert "Knowledge Graph Data (Relationship):" in result
