@@ -675,14 +675,30 @@ class LightRAGRetriever(BaseRetriever):
           1. Extraer query keywords (low-level + high-level)
           2. Resolver keywords contra Entity VDB / Relationship VDB
           3. Obtener source_doc_ids de entidades/relaciones resueltas
-          4. Reference-count scoring: cada doc_id acumula score segun
-             cuantas entidades/relaciones resueltas lo referencian
+          4. Scoring: cada doc_id acumula score de las entidades/relaciones
+             que lo referencian
           5. Fetch contenido de chunks desde el vector store
           6. Fallback a vector search si el KG no produce resultados
 
-        Reference-count scoring es el equivalente a la acumulacion
-        order*weight en _find_most_related_text_unit_from_entities
-        del paper original (HKUDS/LightRAG operate.py).
+        Scoring formula (simetrica entre canales):
+          entidades:  sum(1/(1+rank) * similarity)
+          relaciones: sum(1/(1+rank) * similarity * edge_weight)
+
+        Donde similarity = max(0, 1 - cosine_distance/2), rank es la
+        posicion en los resultados del VDB (0 = mas relevante), y
+        edge_weight es el numero de docs que mencionan la relacion.
+
+        Diferencias con el paper (HKUDS/LightRAG operate.py):
+        - El paper usa un contador descendiente `order = N - i` para
+          decay por posicion; aqui usamos `1/(1+rank)` (inverse-rank).
+          Ambos producen el mismo efecto (posiciones altas dominan)
+          pero con curva de decay distinta: inverse-rank decae mas
+          rapido (1.0, 0.5, 0.33...) que lineal (N, N-1, N-2...).
+        - Las entidades no ponderan por weight porque el Entity VDB
+          no almacena un peso equivalente al edge_weight de relaciones.
+          len(entity.source_doc_ids) seria un proxy razonable (mas docs
+          = entidad mas relevante) pero el paper no lo hace
+          explicitamente para el canal de entidades.
         """
         if self._kg is None:
             raise RuntimeError("_retrieve_via_kg llamado sin KnowledgeGraph")
