@@ -195,6 +195,117 @@ def test_structured_context_unknown_mode_defaults_hybrid():
     assert "Knowledge Graph Data (Relationship):" in result
 
 
+# =====================================================================
+# Divergencia #9: serializacion de entidades con neighbors y
+# relaciones con endpoint enrichment
+# =====================================================================
+
+
+def test_structured_context_entity_with_neighbors_serializes():
+    """Entidades con vecinos anidados serializan como JSON lines validas."""
+    entities = [
+        {
+            "entity": "Alice",
+            "type": "PERSON",
+            "description": "A researcher",
+            "neighbors": [
+                {"entity": "Bob", "relation": "works_with",
+                 "type": "PERSON", "description": "Engineer", "score": 3.5},
+                {"entity": "Carol", "relation": "supervises",
+                 "type": "PERSON", "description": "PI", "score": 2.1},
+            ],
+        },
+    ]
+    result = format_structured_context(["doc text"], entities, [], max_length=5000)
+
+    assert "Knowledge Graph Data (Entity):" in result
+
+    in_block = False
+    for line in result.split("\n"):
+        if line.startswith("```json"):
+            in_block = True
+            continue
+        if line.startswith("```"):
+            in_block = False
+            continue
+        if in_block and line.strip() and "Entity" not in line:
+            parsed = json.loads(line)
+            assert parsed["entity"] == "Alice"
+            assert len(parsed["neighbors"]) == 2
+            assert parsed["neighbors"][0]["entity"] == "Bob"
+            break
+
+
+def test_structured_context_enriched_relation_serializes():
+    """Relaciones con endpoint descriptions serializan como JSON lines validas."""
+    relations = [
+        {
+            "source": "Alice",
+            "target": "Bob",
+            "relation": "mentors",
+            "description": "academic mentorship",
+            "source_description": "A researcher at MIT",
+            "source_type": "PERSON",
+            "target_description": "A data scientist",
+            "target_type": "PERSON",
+        },
+    ]
+    result = format_structured_context(["doc text"], [], relations, max_length=5000)
+
+    assert "Knowledge Graph Data (Relationship):" in result
+
+    in_block = False
+    for line in result.split("\n"):
+        if line.startswith("```json"):
+            in_block = True
+            continue
+        if line.startswith("```"):
+            in_block = False
+            continue
+        if in_block and line.strip() and "Relationship" not in line:
+            parsed = json.loads(line)
+            assert parsed["source"] == "Alice"
+            assert parsed["source_description"] == "A researcher at MIT"
+            assert parsed["target_type"] == "PERSON"
+            break
+
+
+def test_structured_context_enriched_data_within_budget():
+    """Entidades con neighbors + relaciones enriched caben en budget sin romper."""
+    entities = [
+        {
+            "entity": f"E{i}",
+            "type": "CONCEPT",
+            "description": "x" * 50,
+            "neighbors": [
+                {"entity": f"N{i}_{j}", "relation": "r", "score": 1.0,
+                 "type": "CONCEPT", "description": "y" * 30}
+                for j in range(5)
+            ],
+        }
+        for i in range(10)
+    ]
+    relations = [
+        {
+            "source": f"A{i}", "target": f"B{i}", "relation": "r",
+            "description": "z" * 50,
+            "source_description": "sd" * 20,
+            "source_type": "T",
+            "target_description": "td" * 20,
+            "target_type": "T",
+        }
+        for i in range(10)
+    ]
+    contents = ["chunk content " * 10] * 3
+
+    result = format_structured_context(
+        contents, entities, relations, max_length=5000, mode="hybrid",
+    )
+
+    assert "Document Chunks:" in result
+    assert len(result) <= 5500
+
+
 def test_structured_context_mode_parameter_default_is_hybrid():
     """Sin mode explicito, usa hybrid (retrocompatibilidad con callers antiguos)."""
     entities = [{"entity": "A", "type": "T", "description": "d"}]

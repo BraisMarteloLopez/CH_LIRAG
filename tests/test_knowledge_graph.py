@@ -1151,3 +1151,111 @@ def test_bfs_weighted_depth_zero_unaffected():
 
     # doc1 esta asociado directamente a A (depth=0), score = confidence / (1+0) = 1.0
     assert score_map.get("doc1", 0) >= 1.0
+
+
+# =============================================================================
+# get_entity / get_neighbors_ranked (divergencia #9)
+# =============================================================================
+
+
+def test_get_entity_returns_entity():
+    """get_entity retorna KGEntity cuando existe."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
+    kg.add_entity_metadata("Alice", "PERSON", "A researcher")
+    entity = kg.get_entity("Alice")
+    assert entity is not None
+    assert entity.name == "alice"
+    assert entity.entity_type == "PERSON"
+
+
+def test_get_entity_returns_none_for_missing():
+    """get_entity retorna None para entidad inexistente."""
+    kg = KnowledgeGraph()
+    assert kg.get_entity("nonexistent") is None
+
+
+def test_get_neighbors_ranked_basic():
+    """get_neighbors_ranked retorna vecinos con score y metadata."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows", desc="A knows B"),
+        _rel("A", "C", "works_with", desc="A works with C"),
+    ])
+    kg.add_entity_metadata("B", "PERSON", "Engineer")
+    kg.add_entity_metadata("C", "PERSON", "Scientist")
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    assert len(neighbors) == 2
+    names = {n["entity"] for n in neighbors}
+    assert "b" in names
+    assert "c" in names
+    for n in neighbors:
+        assert "score" in n
+        assert n["score"] > 0
+        assert "type" in n
+        assert "description" in n
+
+
+def test_get_neighbors_ranked_sort_order():
+    """Vecinos con mayor edge_weight + degree se rankean primero."""
+    kg = KnowledgeGraph()
+    # B tiene degree=1 (solo A-B), C tiene degree=2 (A-C y C-D)
+    kg.add_triplets("doc1", [
+        _rel("A", "B", "knows"),
+        _rel("A", "C", "works_with"),
+        _rel("C", "D", "manages"),
+    ])
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    assert len(neighbors) == 2
+    # C should rank higher: same edge_weight (1 doc each) but degree(C)=2 > degree(B)=1
+    assert neighbors[0]["entity"] == "c"
+    assert neighbors[1]["entity"] == "b"
+    assert neighbors[0]["score"] > neighbors[1]["score"]
+
+
+def test_get_neighbors_ranked_max_neighbors():
+    """max_neighbors limita el numero de resultados."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [
+        _rel("Hub", "N1", "r1"),
+        _rel("Hub", "N2", "r2"),
+        _rel("Hub", "N3", "r3"),
+        _rel("Hub", "N4", "r4"),
+        _rel("Hub", "N5", "r5"),
+    ])
+
+    neighbors = kg.get_neighbors_ranked("hub", max_neighbors=3)
+    assert len(neighbors) == 3
+
+
+def test_get_neighbors_ranked_unknown_entity():
+    """Entidad desconocida retorna lista vacia."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows")])
+    assert kg.get_neighbors_ranked("nonexistent") == []
+
+
+def test_get_neighbors_ranked_includes_relation_label():
+    """Cada vecino incluye la etiqueta de relacion del edge."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "mentors")])
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    assert len(neighbors) == 1
+    assert neighbors[0]["relation"] == "mentors"
+
+
+def test_get_neighbors_ranked_edge_weight_from_multiple_docs():
+    """Edges con mas docs producen mayor edge_weight y score."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("doc1", [_rel("A", "B", "knows", doc_id="doc1")])
+    kg.add_triplets("doc2", [_rel("A", "B", "knows", doc_id="doc2")])
+    kg.add_triplets("doc3", [_rel("A", "B", "knows", doc_id="doc3")])
+    kg.add_triplets("doc1", [_rel("A", "C", "works_with", doc_id="doc1")])
+
+    neighbors = kg.get_neighbors_ranked("a", max_neighbors=5)
+    scores = {n["entity"]: n["score"] for n in neighbors}
+    # B has 3 docs on edge -> higher edge_weight than C with 1 doc
+    assert scores["b"] > scores["c"]
