@@ -190,8 +190,8 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor (abril 2026) |
 |---|---|
-| Tests unitarios | Todos pasan con `python-igraph` + `snowballstemmer` instalados; sin igraph, los tests que lo requieren se saltan limpiamente (resto pasa). Contadores exactos drift con cada PR — verificar con `pytest --collect-only -q tests/ \| tail -1` y `pytest -m "not integration" tests/`. Ultimas adiciones reseñables: `test_judge_fallback_tracker.py` (deuda #4), `test_kg_synthesis.py` (divergencia #2) |
-| Tests integracion | 3 archivos en `tests/integration/`, requieren NIM + MinIO reales. Contador via `pytest --collect-only -q tests/integration/` (solo si `.env` esta configurado) |
+| Tests unitarios | **~465 pasan**, 6 skipped con `python-igraph` + `snowballstemmer` instalados; **~392 pasan**, 7 skipped sin igraph (los tests que lo requieren se saltan limpiamente). Cifras orientativas — drift con cada PR; para el valor exacto del entorno: `pytest --collect-only -q tests/ \| tail -1` y `pytest -m "not integration" tests/`. Ultimas adiciones reseñables: `test_judge_fallback_tracker.py` (deuda #4), `test_kg_synthesis.py` (divergencia #2) |
+| Tests integracion | **~15** en 3 archivos (`tests/integration/`), requieren NIM + MinIO reales. Cifra orientativa — verificar via `pytest --collect-only -q tests/integration/` (solo si `.env` esta configurado) |
 | mypy | 0 errores nuevos en ficheros modificados; 3 errores preexistentes no relacionados (dotenv/numpy sin stubs, `retrieval_executor.py:124` union-attr) |
 
 ### Portabilidad de tests
