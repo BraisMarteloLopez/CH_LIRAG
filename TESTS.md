@@ -134,43 +134,6 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | ~~loader.py:175-176~~ | ~~Auto-conversion comparison → label~~ **Resuelto**: test_dtm4_loader_populate.py (3 tests: conversion, idempotencia, no-op para otros tipos) |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
 
-## Deuda de tests pendiente (bloques E-G)
-
-Items identificados en la auditoria de PR #32, no implementados. Ordenados de menos invasivo a mas invasivo.
-
-### Bloque E — Consolidacion por modulo (cosmetico, sin cambios funcionales)
-
-Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test. Hoy los nombres reflejan tickets historicos, no el modulo que cubren.
-
-| Item | Accion | Archivos afectados |
-|---|---|---|
-| E17 | Consolidar tests de `retrieval_executor.py` | Fusionar: `test_dt5_pre_rerank_traceability.py`, `test_dt7_05_06_rerank_status.py`, `test_dt7_07_no_reranker.py`, `test_format_context.py`, `test_structured_context.py`, parte de `test_dtm38_strategy_guardrail.py` → `test_retrieval_executor.py` |
-| E18 | Consolidar tests de `shared/metrics.py` | Fusionar: `test_metrics_reference_based.py`, `test_semantic_similarity.py`, `test_dt6_context_truncation.py`, `test_dt9_extract_score_fallback.py`, `test_judge_fallback_tracker.py` → `test_metrics.py` |
-| E19 | Consolidar tests de `shared/report.py` | Fusionar: `test_report.py`, `test_dt7_08_csv_reranked.py`, parte de `test_dtm17_generation_retrieval_metrics.py` → `test_report.py` |
-| E20 | Consolidar tests de `evaluator.py` / `result_builder.py` | Fusionar: `test_evaluator.py`, `test_dtm4_build_run_aggregation.py`, `test_dtm5_12_13_secondary_metric_errors.py` → separar en `test_evaluator.py` + `test_result_builder.py` |
-
-### Bloque F — Reducir mocking excesivo (requiere construir fixtures reales)
-
-| Item | Accion | Detalle |
-|---|---|---|
-| F21 | Mini-KG real en `test_lightrag_fusion.py` | Construir igraph real con 3-5 entidades en vez de mock de `KnowledgeGraph`. Elimina mock de KG + VDB + extractor simultaneo |
-| F22 | Reducir mocking en `test_evaluator.py` | Evaluar que se puede inyectar real (retriever fake determinista en lugar de MagicMock) |
-| F23 | Test E2E real en `test_pipeline_e2e.py` | Hoy toda la infra esta mockeada. Evaluar si debe moverse a `tests/integration/` o sustituirse por test con KG real en memoria + embeddings deterministas |
-
-### Bloque G — Desacoplar tests de internals (requiere cambios en produccion)
-
-| Item | Accion | Detalle |
-|---|---|---|
-| G24 | API publica para `_build_run` | 17 llamadas en `test_dtm4_build_run_aggregation.py`. Extraer a funcion publica en `result_builder.py` o testear solo el resultado final de `evaluator.run()` |
-| G25 | API publica para `_synthesize_kg_context_async` y `_enrich_with_graph` | Hoy testeados directamente. Considerar interfaces inyectables o testing de caja negra via `generation_executor.execute()` / `lightrag_retriever.retrieve()` |
-| G26 | API publica para `_init_components`, `_cleanup`, `_assemble_results` | `test_evaluator.py`. Similar tratamiento |
-
-### Orden de ejecucion recomendado
-
-1. **E17-E20** despues de que los bloques C/D esten estables (evita merge conflicts con refactors recientes).
-2. **F21-F23** solo si el tiempo lo permite; miden "tests que prueban comportamiento real" vs glue.
-3. **G24-G26** al final: requieren cambios en produccion y aceptar riesgo de reviews mas largos.
-
 ## Reglas para modificar tests
 
 1. **Atributo nuevo en clase con `object.__new__()`**: sincronizar los helpers `_make_X()` listados en "Patron object.__new__()". Localizar todos los usos con `grep -rn "object.__new__(ClassName)" tests/`
