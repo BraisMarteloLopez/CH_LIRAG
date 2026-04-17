@@ -100,14 +100,8 @@ def test_check_connection_failure(mock_boto3):
     )
     mock_boto3.client.return_value = mock_client
 
-    from sandbox_mteb.loader import MinIOLoader
-    loader = object.__new__(MinIOLoader)
-    loader.endpoint = "http://fake:9000"
-    loader.bucket = "test-bucket"
-    loader.prefix = "datasets/eval"
-    loader.cache_dir = Path("/tmp/test_cache")
-    loader.client = mock_client
-    loader._manifest = None
+    from tests.helpers import make_loader
+    loader = make_loader(mock_client=mock_client)
 
     assert loader.check_connection() is False
 

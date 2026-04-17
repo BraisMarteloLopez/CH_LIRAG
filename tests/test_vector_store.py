@@ -30,22 +30,7 @@ import pytest
 
 from shared.vector_store import ChromaVectorStore
 
-
-def _make_store(batch_size=0):
-    """Crea ChromaVectorStore via object.__new__() sin ChromaDB real."""
-    store = object.__new__(ChromaVectorStore)
-    store.collection_name = "test_collection"
-    store.persist_directory = None
-    store.embedding_model = MagicMock()
-    store.batch_size = batch_size
-    store._hnsw_num_threads = 1
-    store._hnsw_space = None
-    store._collection_metadata = {"hnsw:num_threads": 1}
-    store._store = MagicMock()
-    store._client = MagicMock()
-    store._document_count = 0
-    store._CHROMA_IN_BATCH_SIZE = 100
-    return store
+from tests.helpers import make_vector_store
 
 
 def _fake_doc(doc_id, content="content"):
@@ -61,7 +46,7 @@ def _fake_doc(doc_id, content="content"):
 # ---------------------------------------------------------------------------
 def test_add_documents_empty():
     """VS1: empty list -> warning, returns [], no call to _store."""
-    store = _make_store()
+    store = make_vector_store()
     result = store.add_documents([])
     assert result == []
     store._store.add_documents.assert_not_called()
@@ -72,7 +57,7 @@ def test_add_documents_empty():
 # ---------------------------------------------------------------------------
 def test_add_documents_no_batching():
     """VS2: docs <= batch_size (or batch_size=0) -> single call."""
-    store = _make_store(batch_size=0)
+    store = make_vector_store(batch_size=0)
     docs = [_fake_doc(f"d{i}") for i in range(5)]
     store._store.add_documents.return_value = ["id1", "id2", "id3", "id4", "id5"]
 
@@ -87,7 +72,7 @@ def test_add_documents_no_batching():
 # ---------------------------------------------------------------------------
 def test_add_documents_with_batching():
     """VS3: docs > batch_size -> multiple batched calls."""
-    store = _make_store(batch_size=2)
+    store = make_vector_store(batch_size=2)
     docs = [_fake_doc(f"d{i}") for i in range(5)]
     store._store.add_documents.return_value = ["id"]
 
@@ -102,7 +87,7 @@ def test_add_documents_with_batching():
 # ---------------------------------------------------------------------------
 def test_add_documents_exception_reraises():
     """VS4: _store raises -> exception propagates."""
-    store = _make_store()
+    store = make_vector_store()
     store._store.add_documents.side_effect = RuntimeError("ChromaDB error")
     with pytest.raises(RuntimeError):
         store.add_documents([_fake_doc("d1")])
@@ -113,7 +98,7 @@ def test_add_documents_exception_reraises():
 # ---------------------------------------------------------------------------
 def test_similarity_search_with_score_delegates():
     """VS5: delegates to _store.similarity_search_with_score."""
-    store = _make_store()
+    store = make_vector_store()
     expected = [(_fake_doc("d1"), 0.9)]
     store._store.similarity_search_with_score.return_value = expected
 
@@ -127,7 +112,7 @@ def test_similarity_search_with_score_delegates():
 # ---------------------------------------------------------------------------
 def test_similarity_search_exception_returns_empty():
     """VS6: _store raises -> returns empty list (bare except)."""
-    store = _make_store()
+    store = make_vector_store()
     store._store.similarity_search_with_score.side_effect = RuntimeError("DB down")
     result = store.similarity_search_with_score("query")
     assert result == []
@@ -138,7 +123,7 @@ def test_similarity_search_exception_returns_empty():
 # ---------------------------------------------------------------------------
 def test_similarity_search_by_vector():
     """VS7: vector search via _client.get_collection().query()."""
-    store = _make_store()
+    store = make_vector_store()
     mock_collection = MagicMock()
     store._client.get_collection.return_value = mock_collection
     mock_collection.query.return_value = {
@@ -168,7 +153,7 @@ def test_similarity_search_by_vector():
 # ---------------------------------------------------------------------------
 def test_similarity_search_by_vector_exception():
     """VS8: exception -> returns empty list."""
-    store = _make_store()
+    store = make_vector_store()
     store._client.get_collection.side_effect = RuntimeError("no collection")
     result = store.similarity_search_by_vector_with_score([0.1], k=5)
     assert result == []
@@ -179,7 +164,7 @@ def test_similarity_search_by_vector_exception():
 # ---------------------------------------------------------------------------
 def test_get_documents_by_ids_empty():
     """VS9: empty doc_ids -> returns {}."""
-    store = _make_store()
+    store = make_vector_store()
     assert store.get_documents_by_ids([]) == {}
 
 
@@ -188,7 +173,7 @@ def test_get_documents_by_ids_empty():
 # ---------------------------------------------------------------------------
 def test_get_documents_by_ids_batching():
     """VS10: >100 doc_ids -> multiple chunked calls."""
-    store = _make_store()
+    store = make_vector_store()
     store._CHROMA_IN_BATCH_SIZE = 100
     mock_collection = MagicMock()
     store._client.get_collection.return_value = mock_collection
@@ -218,7 +203,7 @@ def test_get_documents_by_ids_batching():
 # ---------------------------------------------------------------------------
 def test_get_documents_by_ids_exception():
     """VS11: exception -> returns empty dict."""
-    store = _make_store()
+    store = make_vector_store()
     store._client.get_collection.side_effect = RuntimeError("DB error")
     result = store.get_documents_by_ids(["d1"])
     assert result == {}
@@ -229,7 +214,7 @@ def test_get_documents_by_ids_exception():
 # ---------------------------------------------------------------------------
 def test_delete_all_documents():
     """VS12: delete + recreate collection, reset count."""
-    store = _make_store()
+    store = make_vector_store()
     store._document_count = 50
     original_store = store._store
 
@@ -247,7 +232,7 @@ def test_delete_all_documents():
 # ---------------------------------------------------------------------------
 def test_delete_all_documents_exception_resets_count():
     """VS13: exception during delete -> _document_count still reset to 0."""
-    store = _make_store()
+    store = make_vector_store()
     store._document_count = 50
     store._client.delete_collection.side_effect = RuntimeError("cannot delete")
 

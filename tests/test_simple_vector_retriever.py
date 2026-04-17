@@ -29,20 +29,7 @@ from shared.retrieval.core import (
     SimpleVectorRetriever,
 )
 
-
-def _make_retriever(with_store=False):
-    """Crea SimpleVectorRetriever via object.__new__() sin infra."""
-    r = object.__new__(SimpleVectorRetriever)
-    r.config = RetrievalConfig()
-    r._vector_store = None
-    r._is_indexed = False
-    r.embedding_model = MagicMock()
-    r.collection_name = "test_col"
-    r.embedding_batch_size = 50
-
-    if with_store:
-        r._vector_store = MagicMock()
-    return r
+from tests.helpers import make_retriever
 
 
 def _fake_doc(doc_id, content="content"):
@@ -58,7 +45,7 @@ def _fake_doc(doc_id, content="content"):
 # ---------------------------------------------------------------------------
 def test_retrieve_no_store_returns_empty():
     """SVR1: uninitialized vector store -> empty RetrievalResult."""
-    r = _make_retriever(with_store=False)
+    r = make_retriever(with_store=False)
     result = r.retrieve("query")
     assert result.doc_ids == []
     assert result.contents == []
@@ -71,7 +58,7 @@ def test_retrieve_no_store_returns_empty():
 # ---------------------------------------------------------------------------
 def test_retrieve_extracts_results():
     """SVR2: vector store returns docs -> correct doc_ids, contents, scores."""
-    r = _make_retriever(with_store=True)
+    r = make_retriever(with_store=True)
     r._vector_store.similarity_search_with_score.return_value = [
         (_fake_doc("d1", "text1"), 0.95),
         (_fake_doc("d2", "text2"), 0.80),
@@ -90,7 +77,7 @@ def test_retrieve_extracts_results():
 # ---------------------------------------------------------------------------
 def test_retrieve_exception_returns_empty_with_error():
     """SVR3: vector store raises -> empty result with error in metadata."""
-    r = _make_retriever(with_store=True)
+    r = make_retriever(with_store=True)
     r._vector_store.similarity_search_with_score.side_effect = RuntimeError("DB down")
     result = r.retrieve("query")
     assert result.doc_ids == []
@@ -102,7 +89,7 @@ def test_retrieve_exception_returns_empty_with_error():
 # ---------------------------------------------------------------------------
 def test_retrieve_by_vector_no_store_returns_empty():
     """SVR4: no vector store -> empty result."""
-    r = _make_retriever(with_store=False)
+    r = make_retriever(with_store=False)
     result = r.retrieve_by_vector("query", [0.1, 0.2, 0.3])
     assert result.doc_ids == []
     assert result.strategy_used == RetrievalStrategy.SIMPLE_VECTOR
@@ -113,7 +100,7 @@ def test_retrieve_by_vector_no_store_returns_empty():
 # ---------------------------------------------------------------------------
 def test_retrieve_by_vector_extracts_results():
     """SVR5: vector store returns docs via pre-computed embedding."""
-    r = _make_retriever(with_store=True)
+    r = make_retriever(with_store=True)
     r._vector_store.similarity_search_by_vector_with_score.return_value = [
         (_fake_doc("d3", "vec_text"), 0.88),
     ]
@@ -130,7 +117,7 @@ def test_retrieve_by_vector_extracts_results():
 @patch("shared.retrieval.core.SimpleVectorRetriever._init_vector_store")
 def test_index_documents_success(mock_init):
     """SVR6: index_documents -> creates Documents, calls add_documents, returns True."""
-    r = _make_retriever(with_store=False)
+    r = make_retriever(with_store=False)
 
     # _init_vector_store es patched; simulamos que crea el store
     def fake_init(name):
@@ -163,7 +150,7 @@ def test_index_documents_success(mock_init):
 @patch("shared.retrieval.core.SimpleVectorRetriever._init_vector_store")
 def test_index_documents_exception_returns_false(mock_init):
     """SVR7: exception during indexing -> returns False, no crash."""
-    r = _make_retriever(with_store=False)
+    r = make_retriever(with_store=False)
     mock_init.side_effect = RuntimeError("ChromaDB unavailable")
 
     result = r.index_documents([{"doc_id": "d1", "content": "text"}])
@@ -175,7 +162,7 @@ def test_index_documents_exception_returns_false(mock_init):
 # ---------------------------------------------------------------------------
 def test_clear_index_delegates_and_resets():
     """SVR8: clear_index -> calls delete_all_documents, sets _is_indexed=False."""
-    r = _make_retriever(with_store=True)
+    r = make_retriever(with_store=True)
     r._is_indexed = True
     r.clear_index()
     r._vector_store.delete_all_documents.assert_called_once()
@@ -187,7 +174,7 @@ def test_clear_index_delegates_and_resets():
 # ---------------------------------------------------------------------------
 def test_get_documents_by_ids_no_store():
     """SVR9: no vector store -> empty dict."""
-    r = _make_retriever(with_store=False)
+    r = make_retriever(with_store=False)
     assert r.get_documents_by_ids(["d1", "d2"]) == {}
 
 
@@ -196,7 +183,7 @@ def test_get_documents_by_ids_no_store():
 # ---------------------------------------------------------------------------
 def test_get_documents_by_ids_delegates():
     """SVR10: delegates to vector_store.get_documents_by_ids."""
-    r = _make_retriever(with_store=True)
+    r = make_retriever(with_store=True)
     r._vector_store.get_documents_by_ids.return_value = {"d1": "content1"}
     result = r.get_documents_by_ids(["d1"])
     assert result == {"d1": "content1"}

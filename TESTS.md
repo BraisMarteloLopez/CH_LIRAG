@@ -45,10 +45,10 @@ Helpers existentes:
 |---|---|
 | `LightRAGRetriever` | `tests/helpers.py::make_lightrag` (centralizado; `test_dtm38_strategy_guardrail.py` lo envuelve en `_make_lightrag_with_vector_results` para pre-configurar return values) |
 | `TripletExtractor` | `tests/helpers.py::make_extractor` (centralizado) |
-| `CrossEncoderReranker` | `tests/test_dt8_09_10_11_reranker_sort.py`, `tests/test_group_a_b_review.py` |
-| `SimpleVectorRetriever` | `tests/test_simple_vector_retriever.py::_make_retriever`, `tests/test_group_a_b_review.py` |
-| `ChromaVectorStore` | `tests/test_vector_store.py::_make_store`, `tests/test_group_a_b_review.py` |
-| `MinIOLoader` | `tests/test_loader.py` |
+| `CrossEncoderReranker` | `tests/helpers.py::make_reranker` (centralizado) |
+| `SimpleVectorRetriever` | `tests/helpers.py::make_retriever` (centralizado) |
+| `ChromaVectorStore` | `tests/helpers.py::make_vector_store` (centralizado) |
+| `MinIOLoader` | `tests/helpers.py::make_loader` (centralizado) |
 
 Regla de oro: si cambias el `__init__` de alguna de estas clases, abrir los helpers correspondientes y sincronizar atributos. No hay validacion automatica.
 

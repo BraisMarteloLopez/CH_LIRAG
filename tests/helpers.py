@@ -13,10 +13,14 @@ import threading
 from collections import OrderedDict
 from unittest.mock import MagicMock
 
-from shared.retrieval.core import RetrievalConfig
+from pathlib import Path
+
+from shared.retrieval.core import RetrievalConfig, SimpleVectorRetriever
 from shared.retrieval.lightrag.knowledge_graph import KnowledgeGraph
 from shared.retrieval.lightrag.retriever import LightRAGRetriever
 from shared.retrieval.lightrag.triplet_extractor import TripletExtractor
+from shared.retrieval.reranker import CrossEncoderReranker
+from shared.vector_store import ChromaVectorStore
 
 
 def make_lightrag(
@@ -86,3 +90,67 @@ def make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
         "total_entities": 0, "total_relations": 0,
     }
     return ext
+
+
+def make_reranker():
+    """Crea CrossEncoderReranker con _reranker mockeado.
+
+    El caller configura compress_documents.return_value o .side_effect
+    segun el escenario del test.
+    """
+    reranker = object.__new__(CrossEncoderReranker)
+    reranker.base_url = "mock"
+    reranker.model_name = "mock"
+    reranker._reranker = MagicMock()
+    return reranker
+
+
+def make_retriever(with_store=False):
+    """Crea SimpleVectorRetriever sin ChromaDB real.
+
+    Args:
+        with_store: Si True, _vector_store es MagicMock (ready to configure).
+                    Si False, _vector_store es None (uninitialized).
+    """
+    r = object.__new__(SimpleVectorRetriever)
+    r.config = RetrievalConfig()
+    r._vector_store = MagicMock() if with_store else None
+    r._is_indexed = False
+    r.embedding_model = MagicMock()
+    r.collection_name = "test_col"
+    r.embedding_batch_size = 50
+    return r
+
+
+def make_vector_store(batch_size=0):
+    """Crea ChromaVectorStore sin ChromaDB real."""
+    store = object.__new__(ChromaVectorStore)
+    store.collection_name = "test_collection"
+    store.persist_directory = None
+    store.embedding_model = MagicMock()
+    store.batch_size = batch_size
+    store._hnsw_num_threads = 1
+    store._hnsw_space = None
+    store._collection_metadata = {"hnsw:num_threads": 1}
+    store._store = MagicMock()
+    store._client = MagicMock()
+    store._document_count = 0
+    store._CHROMA_IN_BATCH_SIZE = 100
+    return store
+
+
+def make_loader(mock_client=None):
+    """Crea MinIOLoader sin boto3 real.
+
+    Args:
+        mock_client: boto3 client mock. Si None, crea MagicMock.
+    """
+    from sandbox_mteb.loader import MinIOLoader
+    loader = object.__new__(MinIOLoader)
+    loader.endpoint = "http://fake:9000"
+    loader.bucket = "test-bucket"
+    loader.prefix = "datasets/eval"
+    loader.cache_dir = Path("/tmp/test_cache")
+    loader.client = mock_client or MagicMock()
+    loader._manifest = None
+    return loader
