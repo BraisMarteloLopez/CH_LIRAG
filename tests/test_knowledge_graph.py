@@ -623,7 +623,6 @@ def test_co_occurrence_caps_pairs_per_doc():
     assert edges_added <= kg._MAX_COOCCURRENCE_PAIRS_PER_DOC
 
 
-
 # =============================================================================
 # get_entity / get_neighbors_ranked (divergencia #9)
 # =============================================================================
