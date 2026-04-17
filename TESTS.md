@@ -52,6 +52,18 @@ Helpers existentes:
 
 Regla de oro: si cambias el `__init__` de alguna de estas clases, abrir los helpers correspondientes y sincronizar atributos. No hay validacion automatica.
 
+## Imports privados intencionales
+
+Tres archivos importan simbolos con prefijo `_` directamente desde produccion. Son accesos deliberados, no accidentales — documentados aqui para que no se "corrijan" sin contexto.
+
+| Test | Import | Razon |
+|---|---|---|
+| `test_dt9_extract_score_fallback.py:9` | `shared.metrics._extract_score_fallback` | Funcion pura (text → float). El test es la suite dedicada de la funcion (21 casos de regex). No hay API publica equivalente; la funcion es consumida internamente por `_parse_judge_result`. Renombrarla a publica seria correcto pero no urgente |
+| `test_judge_fallback_tracker.py:74,126,152` | `shared.metrics._judge_fallback_tracker` | Singleton module-level del tracker de fallback del judge. Los tests inyectan estado (`record_invocation`, `record_default_return`) para simular el flujo del judge sin invocar el LLM real. Las stats se verifican via API publica (`get_judge_fallback_stats()`). No hay alternativa practica sin rehacer la arquitectura del tracker |
+| `test_kg_synthesis.py` | `sandbox_mteb.generation_executor._kg_synthesis_tracker` | Patron identico al anterior: singleton de instrumentacion de la capa de synthesis KG. Tests inyectan estado y verifican stats. Misma justificacion |
+
+**Regla**: no eliminar estos imports sin proporcionar una API publica equivalente que permita inyectar estado de test.
+
 ## Mapa test → produccion
 
 ### shared/ (libreria core)
