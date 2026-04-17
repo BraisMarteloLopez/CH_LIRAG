@@ -131,7 +131,7 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | Area | Detalle |
 |------|---------|
 | loader.py:_safe_str() | Utility helper para None/NaN coercion, cubierta indirectamente por test_loader |
-| loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
+| ~~loader.py:175-176~~ | ~~Auto-conversion comparison → label~~ **Resuelto**: test_dtm4_loader_populate.py (3 tests: conversion, idempotencia, no-op para otros tipos) |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
 
 ## Reglas para modificar tests

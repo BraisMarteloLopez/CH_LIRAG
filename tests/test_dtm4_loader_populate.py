@@ -221,6 +221,57 @@ def test_query_without_qrels_has_empty_relevant_ids():
     assert result.queries[0].relevant_doc_ids == []
 
 
+def test_comparison_query_auto_converts_answer_type_to_label():
+    """DTm-15: question_type=comparison fuerza answer_type=label."""
+    queries_df = MockDataFrame([
+        {"query_id": "q1", "text": "Is A taller?",
+         "answer": "yes", "answer_type": "text",
+         "question_type": "comparison"},
+    ])
+
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(
+        result, queries_df, MockDataFrame([]), None
+    )
+
+    assert result.queries[0].answer_type == "label", (
+        f"comparison query deberia forzar answer_type='label', "
+        f"obtenido: '{result.queries[0].answer_type}'"
+    )
+
+
+def test_comparison_query_already_label_unchanged():
+    """DTm-15: si ya es label, no se modifica."""
+    queries_df = MockDataFrame([
+        {"query_id": "q1", "text": "Is A taller?",
+         "answer": "yes", "answer_type": "label",
+         "question_type": "comparison"},
+    ])
+
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(
+        result, queries_df, MockDataFrame([]), None
+    )
+
+    assert result.queries[0].answer_type == "label"
+
+
+def test_non_comparison_query_preserves_answer_type():
+    """question_type!=comparison no toca answer_type."""
+    queries_df = MockDataFrame([
+        {"query_id": "q1", "text": "What is X?",
+         "answer": "some answer", "answer_type": "text",
+         "question_type": "bridge"},
+    ])
+
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(
+        result, queries_df, MockDataFrame([]), None
+    )
+
+    assert result.queries[0].answer_type == "text"
+
+
 if __name__ == "__main__":
     test_basic_populate()
     test_multiple_qrels_per_query()
@@ -231,3 +282,6 @@ if __name__ == "__main__":
     test_question_type_metadata()
     test_question_type_fallback_to_type_field()
     test_query_without_qrels_has_empty_relevant_ids()
+    test_comparison_query_auto_converts_answer_type_to_label()
+    test_comparison_query_already_label_unchanged()
+    test_non_comparison_query_preserves_answer_type()
