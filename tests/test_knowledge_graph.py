@@ -82,7 +82,7 @@ def test_add_triplets_dedup_entities():
 
     assert kg.num_entities == 3  # alice, bob, charlie
     # Alice aparece en doc1 y doc2
-    alice = kg.get_all_entities()["alice"]
+    alice = kg.get_entity("Alice")
     assert alice.source_doc_ids == {"doc1", "doc2"}
 
 
@@ -326,7 +326,7 @@ def test_add_entity_metadata():
     kg.add_triplets("doc1", [_rel("Alice", "Bob", "knows")])
 
     kg.add_entity_metadata("Alice", "PERSON", "A researcher")
-    alice = kg.get_all_entities()["alice"]
+    alice = kg.get_entity("Alice")
     assert alice.entity_type == "PERSON"
     assert alice.description == "A researcher"
 
