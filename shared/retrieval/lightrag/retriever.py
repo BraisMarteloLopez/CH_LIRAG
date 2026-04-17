@@ -807,12 +807,14 @@ class LightRAGRetriever(BaseRetriever):
     ) -> List[Dict[str, Any]]:
         """Resuelve high-level keywords a relaciones con sus descripciones.
 
-        En lugar de retornar doc_ids (como hacia _resolve_relationships_via_vdb),
-        retorna las descripciones de las relaciones encontradas para presentar
-        como seccion separada al LLM.
+        Divergencia #9: enriquece cada relacion con las descripciones y tipos
+        de sus entidades endpoint (source/target) desde el KG.
         """
         if not self._relationships_vdb or not keywords:
             return []
+
+        # Fetch entities dict once for endpoint enrichment
+        all_entities = self._kg.get_all_entities() if self._kg else {}
 
         seen: set = set()
         relations: List[Dict[str, Any]] = []
@@ -833,12 +835,21 @@ class LightRAGRetriever(BaseRetriever):
                 if key in seen:
                     continue
                 seen.add(key)
-                relations.append({
+                entry: Dict[str, Any] = {
                     "source": source,
                     "target": target,
                     "relation": relation,
                     "description": doc.page_content,
-                })
+                }
+                src_entity = all_entities.get(source)
+                if src_entity:
+                    entry["source_description"] = src_entity.description
+                    entry["source_type"] = src_entity.entity_type
+                tgt_entity = all_entities.get(target)
+                if tgt_entity:
+                    entry["target_description"] = tgt_entity.description
+                    entry["target_type"] = tgt_entity.entity_type
+                relations.append(entry)
                 if len(relations) >= self._MAX_CONTEXT_RELATIONS:
                     return relations
 

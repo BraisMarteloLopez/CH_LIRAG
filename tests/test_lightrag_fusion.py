@@ -42,6 +42,7 @@ def _make_lightrag(
     mock_kg = kg or MagicMock(spec=KnowledgeGraph)
     if not kg:
         mock_kg.get_neighbors_ranked.return_value = []
+        mock_kg.get_all_entities.return_value = {}
     retriever._kg = mock_kg
     retriever._extractor = extractor or MagicMock()
     retriever._has_graph = True
@@ -515,3 +516,86 @@ def test_enrich_preserves_vector_ranking_with_neighbors():
 
     assert result.doc_ids == ["d1", "d2", "d3"]
     assert result.scores == [0.9, 0.7, 0.5]
+
+
+# =============================================================================
+# Divergencia #9: Relation endpoint enrichment
+# =============================================================================
+
+
+def test_resolve_relations_endpoint_enrichment():
+    """Relaciones incluyen description y type de sus entidades endpoint."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "alice",
+        "target_entity": "bob",
+        "relation": "mentors",
+    }
+    mock_doc.page_content = "alice -> mentors -> bob"
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
+
+    r = _make_lightrag()
+    r._relationships_vdb = mock_vdb
+    alice = _make_entity("alice", "PERSON", "A researcher at MIT")
+    bob = _make_entity("bob", "PERSON", "A data scientist")
+    r._kg.get_all_entities.return_value = {"alice": alice, "bob": bob}
+
+    result = r._resolve_relations_for_context(["mentorship"])
+
+    assert len(result) == 1
+    assert result[0]["source"] == "alice"
+    assert result[0]["target"] == "bob"
+    assert result[0]["source_description"] == "A researcher at MIT"
+    assert result[0]["source_type"] == "PERSON"
+    assert result[0]["target_description"] == "A data scientist"
+    assert result[0]["target_type"] == "PERSON"
+
+
+def test_resolve_relations_missing_endpoint():
+    """Endpoint no encontrado en KG: campos de description/type ausentes."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "alice",
+        "target_entity": "unknown_entity",
+        "relation": "works_with",
+    }
+    mock_doc.page_content = "alice -> works_with -> unknown_entity"
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.2)]
+
+    r = _make_lightrag()
+    r._relationships_vdb = mock_vdb
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+
+    result = r._resolve_relations_for_context(["collaboration"])
+
+    assert len(result) == 1
+    assert result[0]["source_description"] == "A researcher"
+    assert result[0]["source_type"] == "PERSON"
+    assert "target_description" not in result[0]
+    assert "target_type" not in result[0]
+
+
+def test_resolve_relations_no_kg():
+    """Sin KG disponible, relaciones se resuelven sin enrichment."""
+    mock_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {
+        "source_entity": "a",
+        "target_entity": "b",
+        "relation": "r",
+    }
+    mock_doc.page_content = "a -> r -> b"
+    mock_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+
+    r = _make_lightrag()
+    r._kg = None
+    r._relationships_vdb = mock_vdb
+
+    result = r._resolve_relations_for_context(["keyword"])
+
+    assert len(result) == 1
+    assert result[0]["source"] == "a"
+    assert "source_description" not in result[0]
