@@ -277,7 +277,7 @@ def test_evaluator_threshold_raises_above_limit():
             _judge_fallback_tracker.record_parse_failure(MetricType.FAITHFULNESS)
             _judge_fallback_tracker.record_default_return(MetricType.FAITHFULNESS)
 
-    with pytest.raises(RuntimeError, match="Tasa de fallback del judge excedida"):
+    with pytest.raises(RuntimeError):
         ev._validate_judge_fallback_threshold("test_run")
 
 

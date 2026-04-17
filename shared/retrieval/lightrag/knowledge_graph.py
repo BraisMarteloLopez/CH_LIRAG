@@ -134,8 +134,13 @@ class KnowledgeGraph:
         return self._entities
 
     def get_entity(self, name: str) -> Optional["KGEntity"]:
-        """Retorna una entidad por nombre, o None si no existe."""
-        return self._entities.get(name)
+        """Retorna una entidad por nombre, o None si no existe.
+
+        Normaliza el nombre igual que `add_triplets` (lowercase + strip)
+        para que el caller pueda pasar la forma original sin conocer
+        las reglas internas de normalizacion.
+        """
+        return self._entities.get(self._normalize_name(name))
 
     def get_all_relations(self) -> List[Dict[str, Any]]:
         """Retorna lista de relaciones unicas con metadata.

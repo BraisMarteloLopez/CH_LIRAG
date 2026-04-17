@@ -49,7 +49,7 @@ sandbox_mteb/                  # Pipeline de evaluacion
   preflight.py                 # Validacion pre-run (deps, NIM, MinIO)
   subset_selection.py          # DEV_MODE: gold docs + distractores
 
-tests/                         # pytest (447 tests declarados, ver estado real abajo)
+tests/                         # pytest (contador exacto: ver seccion "Test coverage")
   conftest.py                  # Mocks condicionales de infra (boto3, langchain, chromadb)
   test_*.py                    # Unit test files
   integration/                 # 3 files, requieren NIM + MinIO reales
@@ -135,6 +135,8 @@ Runs F.5 (resultados empiricos pre-refactor y post-refactor) en "Proximos pasos 
 | 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 | 10 | Sin indexacion incremental del KG | **MEDIO** | `LightRAGRetriever.index_documents()` (`retriever.py:127-195`) siempre hace build completo del KG o carga desde cache. No hay `append_documents()` que anada docs nuevos a un KG existente sin reconstruir desde cero. `KnowledgeGraph` tiene `add_triplets()` y `add_entity_metadata()` como primitivas, pero falta el path de alto nivel que: (1) extraiga tripletas solo de docs nuevos, (2) las integre en el KG existente, (3) reconstruya solo los VDBs afectados. El paper (HKUDS/LightRAG) soporta ingestion incremental via `insert()`. Para el escenario del sistema administrador (PDFs que llegan en tandas), la falta de append obliga a re-indexar todo el corpus ante cada doc nuevo. Workaround: usar cache de disco y reconstruir | Cache de disco mitiga la re-extraccion LLM pero no el rebuild del grafo ni de VDBs. P3 (embedibilidad) requiere resolver esto |
 | 11 | Duplicacion parcial de logica de iteracion de vecinos en KG | **BAJO** | `_get_neighbors_weighted()` (`knowledge_graph.py:307`) itera `self._graph.incident(vid)` para obtener `(neighbor_name, edge_weight)`. `get_neighbors_ranked()` (divergencia #9) necesita ademas `degree_centrality` y la etiqueta de relacion del edge, asi que hace su propia iteracion sobre los mismos edges en vez de reutilizar `_get_neighbors_weighted`. La duplicacion es deliberada: `get_neighbors_ranked` accede a campos distintos del edge (`relations[0]`, `graph.degree()`) que `_get_neighbors_weighted` no expone, y extender la firma privada para cubrir ambos casos complicaria la API interna sin beneficio claro | Aceptable mientras solo haya dos consumidores. Si aparece un tercero, refactorizar ambos en un iterador comun sobre edges |
+| 12 | Tests acoplados a mensajes de error de `AsyncLLMService` | **BAJO** | `tests/test_llm.py:145` (empty-response path) y `tests/test_llm.py:252` (retry exhaustion) usan regex laxa sobre el mensaje de `RuntimeError` porque hoy no hay excepciones custom que discriminen los casos. Mejor solucion: definir excepciones especializadas en `shared/llm.py` (`EmptyResponseError`, `RetriesExhaustedError`) y asertar por tipo + `call_count` del mock | Regex laxa suficiente hoy; abrir item de refactor cuando se toque `shared/llm.py` |
+| 13 | Reranker se inicializa innecesariamente para LIGHT_RAG | **BAJO** | `evaluator.py:342-353` crea `CrossEncoderReranker` (conecta a NIM) siempre que `RERANKER_ENABLED=true`, sin verificar la estrategia. `retrieval_executor.py:102-104` lo auto-desactiva para LIGHT_RAG (`use_reranker = self._reranker and configured_strategy != RetrievalStrategy.LIGHT_RAG`), asi que nunca se usa. Resultado: conexion HTTP desperdiciada al start. No afecta metricas ni resultados | Mover el guard a `_init_components()` en `evaluator.py`: skip init si `strategy == LIGHT_RAG`. Alternativa: log WARNING al detectar la combinacion |
 
 ## Observabilidad de runs
 
@@ -189,8 +191,8 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 
 | Metrica | Valor (abril 2026) |
 |---|---|
-| Tests unitarios | **~441 pasan**, 6 skipped en entorno con igraph+snowballstemmer. Sin igraph: **382 pasan**, 7 skipped (verificado). Ultimas adiciones: +19 `test_judge_fallback_tracker.py` +13 `test_kg_synthesis.py` |
-| Tests integracion | 19 en 3 archivos, requieren NIM + MinIO reales |
+| Tests unitarios | **~465 pasan**, 6 skipped con `python-igraph` + `snowballstemmer` instalados; **~392 pasan**, 7 skipped sin igraph (los tests que lo requieren se saltan limpiamente). Cifras orientativas — drift con cada PR; para el valor exacto del entorno: `pytest --collect-only -q tests/ \| tail -1` y `pytest -m "not integration" tests/`. Ultimas adiciones reseñables: `test_judge_fallback_tracker.py` (deuda #4), `test_kg_synthesis.py` (divergencia #2) |
+| Tests integracion | **~15** en 3 archivos (`tests/integration/`), requieren NIM + MinIO reales. Cifra orientativa — verificar via `pytest --collect-only -q tests/integration/` (solo si `.env` esta configurado) |
 | mypy | 0 errores nuevos en ficheros modificados; 3 errores preexistentes no relacionados (dotenv/numpy sin stubs, `retrieval_executor.py:124` union-attr) |
 
 ### Portabilidad de tests

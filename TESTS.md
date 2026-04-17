@@ -1,6 +1,6 @@
 # TESTS.md
 
-Referencia interna para Claude Code. Describe la suite de tests, patrones de mock, atributos requeridos por `object.__new__()`, y trampas conocidas. Consultar antes de modificar tests o codigo de produccion que afecte firmas/atributos.
+Referencia interna para Claude Code. Describe la suite de tests, patrones de mock y trampas conocidas. Consultar antes de modificar tests o codigo de produccion que afecte firmas.
 
 ## Infraestructura de mocks (conftest.py)
 
@@ -33,87 +33,36 @@ markers = ["integration: requiere NIM y MinIO reales"]
 
 Ejecutar unit tests: `pytest tests/ -m "not integration"`
 
-## Patron object.__new__() — atributos requeridos
+## Patron object.__new__() — referencia a helpers
 
-Varios tests crean objetos sin pasar por `__init__` usando `object.__new__(Class)`. **Cada atributo nuevo en produccion requiere actualizar estos helpers.** Lista exhaustiva de atributos por clase:
+Varios tests crean objetos sin pasar por `__init__` usando `object.__new__(Class)` porque los `__init__` reales conectan a ChromaDB, NVIDIARerank u otra infraestructura. Es un antipatron aceptado mientras no exista dependency injection en las clases afectadas.
 
-### LightRAGRetriever
+**Fuente de verdad de atributos**: los helpers `_make_X()` en los tests. No mantener listas paralelas aqui — driftan y se descubren solo en runtime. Para escribir un test nuevo, abrir el helper del test mas proximo y copiar su set de atributos; si falta alguno, revisar el `__init__` real del modulo de produccion.
 
-Archivos: `test_lightrag_fusion.py:_make_lightrag()`, `test_dtm38_strategy_guardrail.py:_make_lightrag()`
+Helpers existentes:
 
-```python
-retriever.config = RetrievalConfig()
-retriever._kg_max_hops = 2
-retriever._kg = MagicMock(spec=KnowledgeGraph)  # o None
-retriever._extractor = MagicMock()               # o None
-retriever._has_graph = True
-retriever._lightrag_mode = "hybrid"
-retriever._query_keywords_cache = OrderedDict()
-retriever._cache_lock = threading.Lock()
-retriever._QUERY_CACHE_MAX_SIZE = 10_000
-retriever._vector_retriever = MagicMock()
-retriever._entities_vdb = None
-retriever._relationships_vdb = None
-```
+| Clase | Helper |
+|---|---|
+| `LightRAGRetriever` | `tests/helpers.py::make_lightrag` (centralizado; `test_dtm38_strategy_guardrail.py` lo envuelve en `_make_lightrag_with_vector_results` para pre-configurar return values) |
+| `TripletExtractor` | `tests/helpers.py::make_extractor` (centralizado) |
+| `CrossEncoderReranker` | `tests/helpers.py::make_reranker` (centralizado) |
+| `SimpleVectorRetriever` | `tests/helpers.py::make_retriever` (centralizado) |
+| `ChromaVectorStore` | `tests/helpers.py::make_vector_store` (centralizado) |
+| `MinIOLoader` | `tests/helpers.py::make_loader` (centralizado) |
 
-### TripletExtractor
+Regla de oro: si cambias el `__init__` de alguna de estas clases, abrir los helpers correspondientes y sincronizar atributos. No hay validacion automatica.
 
-Archivos: `test_triplet_extractor.py:_make_extractor()`, `test_gleaning.py:_make_extractor()`
+## Imports privados intencionales
 
-```python
-ext._llm_service = MagicMock()
-ext._max_text_chars = 3000
-ext._max_tokens = 4096
-ext._keyword_max_tokens = 1024
-ext._batch_docs_per_call = 5
-ext._gleaning_rounds = 0
-ext._stats = {
-    "docs_processed": 0, "docs_failed": 0,
-    "docs_empty": 0, "total_entities": 0,
-    "total_relations": 0,
-}
-```
+Tres archivos importan simbolos con prefijo `_` directamente desde produccion. Son accesos deliberados, no accidentales — documentados aqui para que no se "corrijan" sin contexto.
 
-### CrossEncoderReranker
+| Test | Import | Razon |
+|---|---|---|
+| `test_dt9_extract_score_fallback.py:9` | `shared.metrics._extract_score_fallback` | Funcion pura (text → float). El test es la suite dedicada de la funcion (21 casos de regex). No hay API publica equivalente; la funcion es consumida internamente por `_parse_judge_result`. Renombrarla a publica seria correcto pero no urgente |
+| `test_judge_fallback_tracker.py:74,126,152` | `shared.metrics._judge_fallback_tracker` | Singleton module-level del tracker de fallback del judge. Los tests inyectan estado (`record_invocation`, `record_default_return`) para simular el flujo del judge sin invocar el LLM real. Las stats se verifican via API publica (`get_judge_fallback_stats()`). No hay alternativa practica sin rehacer la arquitectura del tracker |
+| `test_kg_synthesis.py` | `sandbox_mteb.generation_executor._kg_synthesis_tracker` | Patron identico al anterior: singleton de instrumentacion de la capa de synthesis KG. Tests inyectan estado y verifican stats. Misma justificacion |
 
-Archivos: `test_dt8_09_10_11_reranker_sort.py`, `test_group_a_b_review.py`
-
-```python
-reranker._reranker = MagicMock()  # langchain NVIDIARerank mock
-reranker._top_n = 5
-```
-
-### SimpleVectorRetriever
-
-Archivo: `test_group_a_b_review.py`
-
-```python
-retriever.config = RetrievalConfig()
-retriever._vector_store = MagicMock()  # o None
-retriever._embedding_model = MagicMock()
-```
-
-### ChromaVectorStore
-
-Archivo: `test_group_a_b_review.py`
-
-```python
-store._collection = MagicMock()
-store._CHROMA_IN_BATCH_SIZE = 100
-```
-
-### MinIOLoader
-
-Archivo: `test_loader.py`
-
-```python
-loader.endpoint = "http://fake:9000"
-loader.bucket = "test-bucket"
-loader.prefix = "datasets/eval"
-loader.cache_dir = Path("/tmp/test_cache")
-loader.client = MagicMock()
-loader._manifest = None
-```
+**Regla**: no eliminar estos imports sin proporcionar una API publica equivalente que permita inyectar estado de test.
 
 ## Mapa test → produccion
 
@@ -182,12 +131,12 @@ loader._manifest = None
 | Area | Detalle |
 |------|---------|
 | loader.py:_safe_str() | Utility helper para None/NaN coercion, cubierta indirectamente por test_loader |
-| loader.py:175-176 | Auto-conversion `question_type == "comparison"` → `answer_type = "label"` no testeada |
+| ~~loader.py:175-176~~ | ~~Auto-conversion comparison → label~~ **Resuelto**: test_dtm4_loader_populate.py (3 tests: conversion, idempotencia, no-op para otros tipos) |
 | Modos lightrag en retrieve_by_vector | Solo `retrieve()` tiene tests de modo; `retrieve_by_vector()` comparte logica pero no tiene tests de modo dedicados |
 
 ## Reglas para modificar tests
 
-1. **Atributo nuevo en clase con `object.__new__()`**: actualizar TODOS los helpers listados arriba. Buscar con `grep -r "object.__new__(ClassName)" tests/`
+1. **Atributo nuevo en clase con `object.__new__()`**: sincronizar los helpers `_make_X()` listados en "Patron object.__new__()". Localizar todos los usos con `grep -rn "object.__new__(ClassName)" tests/`
 2. **Nuevo campo en RetrievalConfig**: propagado automaticamente via `RetrievalConfig()` default. Sin accion en tests salvo que el field necesite valor no-default
 3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos de campos recientes: `judge_fallback_threshold` (deuda #4), `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s` (divergencia LightRAG #2) — todos tienen defaults, no requieren tocar helpers
 4. **Nuevo campo en QueryRetrievalDetail o QueryEvaluationResult**: actualizar `_make_qr()` en test_checkpoint.py si el field es required

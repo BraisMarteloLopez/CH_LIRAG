@@ -6,7 +6,8 @@ Test DT-8 #11: Doc sin relevance_score -> default 0.0, queda al final.
 from unittest.mock import MagicMock
 
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy
-from shared.retrieval.reranker import CrossEncoderReranker
+
+from tests.helpers import make_reranker
 
 
 class FakeDocument:
@@ -17,11 +18,8 @@ class FakeDocument:
 
 
 def _make_reranker_with_mock_compress(fake_docs):
-    """Construye CrossEncoderReranker con compress_documents mockeado."""
-    reranker = object.__new__(CrossEncoderReranker)
-    reranker.base_url = "mock"
-    reranker.model_name = "mock"
-    reranker._reranker = MagicMock()
+    """Construye CrossEncoderReranker con compress_documents pre-configurado."""
+    reranker = make_reranker()
     reranker._reranker.compress_documents = MagicMock(return_value=fake_docs)
     return reranker
 
