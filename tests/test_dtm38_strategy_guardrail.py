@@ -26,29 +26,16 @@ from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
 from sandbox_mteb.retrieval_executor import RetrievalExecutor
 from sandbox_mteb.result_builder import build_run
 
+from tests.helpers import make_lightrag
+
 
 # =============================================================================
 # Helpers
 # =============================================================================
 
-def _make_lightrag(has_graph=True):
-    """Crea LightRAGRetriever con dependencias mockeadas."""
-    retriever = object.__new__(LightRAGRetriever)
-    retriever.config = RetrievalConfig()
-    retriever._kg_max_hops = 2
-    retriever._kg = MagicMock(spec=KnowledgeGraph) if has_graph else None
-    retriever._extractor = MagicMock() if has_graph else None
-    retriever._has_graph = has_graph
-    import threading
-    from collections import OrderedDict
-    retriever._query_keywords_cache = OrderedDict()
-    retriever._cache_lock = threading.Lock()
-    retriever._QUERY_CACHE_MAX_SIZE = 10_000
-    retriever._entities_vdb = None
-    retriever._relationships_vdb = None
-    retriever._lightrag_mode = "hybrid"
-    retriever._vector_retriever = MagicMock()
-    # Vector retriever returns 20 docs
+def _make_lightrag_with_vector_results(has_graph=True):
+    """Crea LightRAGRetriever con vector retriever pre-configurado."""
+    retriever = make_lightrag(has_graph=has_graph)
     retriever._vector_retriever.retrieve.return_value = RetrievalResult(
         doc_ids=[f"d{i}" for i in range(20)],
         contents=[f"c{i}" for i in range(20)],
@@ -105,7 +92,7 @@ def _make_executor(strategy=RetrievalStrategy.LIGHT_RAG, retrieval_k=20, reranke
 
 def test_strategy_simple_vector_when_no_graph():
     """Sin grafo activo, strategy_used debe ser SIMPLE_VECTOR."""
-    r = _make_lightrag(has_graph=False)
+    r = _make_lightrag_with_vector_results(has_graph=False)
     result = r.retrieve("test query", top_k=5)
     assert result.strategy_used == RetrievalStrategy.SIMPLE_VECTOR
 
@@ -116,7 +103,7 @@ def test_strategy_simple_vector_when_no_graph():
 
 def test_strategy_light_rag_when_graph_active():
     """Con grafo activo, strategy_used debe ser LIGHT_RAG."""
-    r = _make_lightrag(has_graph=True)
+    r = _make_lightrag_with_vector_results(has_graph=True)
     # Mock keyword extraction y graph queries
     r._extractor.extract_query_keywords.return_value = (["alice"], ["research"])
     r._kg.query_entities.return_value = [("d0", 0.9)]
@@ -132,14 +119,14 @@ def test_strategy_light_rag_when_graph_active():
 
 def test_graph_active_metadata_false():
     """metadata['graph_active']=False cuando no hay grafo."""
-    r = _make_lightrag(has_graph=False)
+    r = _make_lightrag_with_vector_results(has_graph=False)
     result = r.retrieve("test query", top_k=5)
     assert result.metadata["graph_active"] is False
 
 
 def test_graph_active_metadata_true():
     """metadata['graph_active']=True cuando hay grafo."""
-    r = _make_lightrag(has_graph=True)
+    r = _make_lightrag_with_vector_results(has_graph=True)
     r._extractor.extract_query_keywords.return_value = (["x"], [])
     r._kg.query_entities.return_value = []
     r._kg.query_by_keywords.return_value = []
