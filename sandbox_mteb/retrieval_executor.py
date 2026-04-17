@@ -300,11 +300,19 @@ def format_structured_context(
     use_entities, use_relations = _LIGHTRAG_MODE_SECTIONS.get(
         mode, _LIGHTRAG_MODE_SECTIONS["hybrid"]
     )
-    # Budgets fijos del paper, capeados al max_length disponible.
-    # Chunks siempre reciben al menos 50% del budget total.
+    # Budgets fijos del paper, capeados proporcionalmente si exceden 50%
+    # del max_length (chunks siempre reciben al menos 50%).
+    entity_raw = KG_MAX_ENTITY_CONTEXT_CHARS if use_entities else 0
+    relation_raw = KG_MAX_RELATION_CONTEXT_CHARS if use_relations else 0
+    total_kg_raw = entity_raw + relation_raw
     kg_budget_cap = max_length // 2
-    entity_budget = min(KG_MAX_ENTITY_CONTEXT_CHARS, kg_budget_cap) if use_entities else 0
-    relation_budget = min(KG_MAX_RELATION_CONTEXT_CHARS, kg_budget_cap - entity_budget) if use_relations else 0
+    if total_kg_raw > kg_budget_cap and total_kg_raw > 0:
+        scale = kg_budget_cap / total_kg_raw
+        entity_budget = int(entity_raw * scale)
+        relation_budget = int(relation_raw * scale)
+    else:
+        entity_budget = entity_raw
+        relation_budget = relation_raw
     base_chunk_budget = max_length - entity_budget - relation_budget - 100  # buffer separadores
 
     parts: List[str] = []

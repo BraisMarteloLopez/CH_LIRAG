@@ -269,3 +269,58 @@ def test_fetch_k_at_least_retrieval_k():
     # Generation should have top_n=5
     assert len(detail.generation_doc_ids) == 5
     assert reranked_ok is True
+
+
+# =============================================================================
+# S7: LIGHTRAG_GENERATION_TOP_N separates metric docs from generation docs
+# =============================================================================
+
+def test_lightrag_generation_top_n_separates_docs():
+    """With generation_top_n=5, LIGHT_RAG sends top-5 KG-scored to generation."""
+    config = MTEBConfig(
+        infra=InfraConfig(),
+        storage=MinIOStorageConfig(),
+        retrieval=RetrievalConfig(
+            strategy=RetrievalStrategy.LIGHT_RAG,
+            retrieval_k=20,
+            lightrag_generation_top_n=5,
+        ),
+        reranker=RerankerConfig(enabled=False),
+    )
+    executor = RetrievalExecutor(
+        retriever=_MockRetrieverWithStrategy(RetrievalStrategy.LIGHT_RAG),
+        reranker=None,
+        config=config,
+    )
+
+    detail, _ = executor.execute("test query", ["doc_0"])
+
+    assert len(detail.retrieved_doc_ids) == 20
+    assert len(detail.generation_doc_ids) == 5
+    assert detail.generation_doc_ids == detail.retrieved_doc_ids[:5]
+    assert detail.get_generation_contents() == detail.generation_contents
+
+
+def test_lightrag_generation_top_n_zero_sends_all():
+    """With generation_top_n=0 (default), all retrieval_k docs go to generation."""
+    config = MTEBConfig(
+        infra=InfraConfig(),
+        storage=MinIOStorageConfig(),
+        retrieval=RetrievalConfig(
+            strategy=RetrievalStrategy.LIGHT_RAG,
+            retrieval_k=20,
+            lightrag_generation_top_n=0,
+        ),
+        reranker=RerankerConfig(enabled=False),
+    )
+    executor = RetrievalExecutor(
+        retriever=_MockRetrieverWithStrategy(RetrievalStrategy.LIGHT_RAG),
+        reranker=None,
+        config=config,
+    )
+
+    detail, _ = executor.execute("test query", ["doc_0"])
+
+    assert len(detail.retrieved_doc_ids) == 20
+    assert detail.generation_doc_ids == []
+    assert detail.get_generation_contents() == detail.retrieved_contents
