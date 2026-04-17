@@ -39,10 +39,14 @@ def _make_lightrag(
     retriever = object.__new__(LightRAGRetriever)
     retriever.config = RetrievalConfig()
     retriever._kg_max_hops = 2
-    retriever._kg = kg or MagicMock(spec=KnowledgeGraph)
+    mock_kg = kg or MagicMock(spec=KnowledgeGraph)
+    if not kg:
+        mock_kg.get_neighbors_ranked.return_value = []
+    retriever._kg = mock_kg
     retriever._extractor = extractor or MagicMock()
     retriever._has_graph = True
     retriever._lightrag_mode = lightrag_mode
+    retriever._max_neighbors_per_entity = 5
     import threading
     from collections import OrderedDict
     retriever._query_keywords_cache = OrderedDict()
@@ -403,3 +407,111 @@ def test_corpus_fingerprint_changes_with_max_text_chars():
     fp_5000 = LightRAGRetriever._corpus_fingerprint(docs, max_text_chars=5000)
     assert fp_default != fp_3000
     assert fp_3000 != fp_5000
+
+
+# =============================================================================
+# Divergencia #9: 1-hop neighbor expansion en _enrich_with_graph
+# =============================================================================
+
+
+def test_enrich_entity_with_neighbors():
+    """Entidades resueltas incluyen vecinos 1-hop cuando get_neighbors_ranked retorna datos."""
+    r = _make_lightrag(lightrag_mode="hybrid")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.return_value = [
+        {"entity": "bob", "type": "PERSON", "description": "Engineer", "relation": "works_with", "score": 3.5},
+        {"entity": "carol", "type": "PERSON", "description": "PI", "relation": "supervises", "score": 2.1},
+    ]
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._enrich_with_graph("query about alice", vr, top_k=5)
+
+    entity = result.metadata["kg_entities"][0]
+    assert entity["entity"] == "alice"
+    assert "neighbors" in entity
+    assert len(entity["neighbors"]) == 2
+    assert entity["neighbors"][0]["entity"] == "bob"
+    assert entity["neighbors"][1]["entity"] == "carol"
+
+
+def test_enrich_entity_no_neighbors():
+    """Sin vecinos, el dict de entidad no tiene clave 'neighbors'."""
+    r = _make_lightrag(lightrag_mode="local")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.return_value = []
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._enrich_with_graph("query", vr, top_k=5)
+
+    entity = result.metadata["kg_entities"][0]
+    assert entity["entity"] == "alice"
+    assert "neighbors" not in entity
+
+
+def test_enrich_entity_neighbor_fallback():
+    """Si get_neighbors_ranked lanza excepcion, la entidad aparece sin vecinos."""
+    r = _make_lightrag(lightrag_mode="hybrid")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.side_effect = RuntimeError("graph error")
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1"], ["c1"], [0.9])
+    result = r._enrich_with_graph("query", vr, top_k=5)
+
+    entity = result.metadata["kg_entities"][0]
+    assert entity["entity"] == "alice"
+    assert "neighbors" not in entity
+
+
+def test_enrich_preserves_vector_ranking_with_neighbors():
+    """Neighbor expansion no altera el ranking vectorial."""
+    r = _make_lightrag(lightrag_mode="hybrid")
+
+    mock_entity_vdb = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"entity_name": "alice"}
+    mock_entity_vdb.similarity_search_with_score.return_value = [(mock_doc, 0.1)]
+    r._entities_vdb = mock_entity_vdb
+
+    alice = _make_entity("alice", "PERSON", "A researcher")
+    r._kg.get_all_entities.return_value = {"alice": alice}
+    r._kg.get_neighbors_ranked.return_value = [
+        {"entity": "bob", "type": "PERSON", "description": "Engineer", "score": 3.5},
+    ]
+
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    vr = _make_vector_result(["d1", "d2", "d3"], ["c1", "c2", "c3"], [0.9, 0.7, 0.5])
+    result = r._enrich_with_graph("query", vr, top_k=5)
+
+    assert result.doc_ids == ["d1", "d2", "d3"]
+    assert result.scores == [0.9, 0.7, 0.5]

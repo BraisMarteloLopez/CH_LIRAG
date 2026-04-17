@@ -82,6 +82,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
         self._kg_gleaning_rounds = config.kg_gleaning_rounds
         self._lightrag_mode = config.lightrag_mode
+        self._max_neighbors_per_entity = config.kg_max_neighbors_per_entity
 
         # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
@@ -750,6 +751,8 @@ class LightRAGRetriever(BaseRetriever):
         use_global = self._lightrag_mode in ("global", "hybrid")
 
         # Paso 2: Recopilar entidades relevantes a la query (low-level)
+        # Divergencia #9: cada entidad incluye vecinos 1-hop ranked por
+        # edge_weight + degree_centrality (paper-aligned).
         kg_entities: List[Dict[str, Any]] = []
         if use_local and low_level:
             resolved_names = self._resolve_entities_via_vdb(low_level)
@@ -758,11 +761,24 @@ class LightRAGRetriever(BaseRetriever):
                 for name in resolved_names:
                     entity = entities.get(name)
                     if entity:
-                        kg_entities.append({
+                        entry: Dict[str, Any] = {
                             "entity": entity.name,
                             "type": entity.entity_type,
                             "description": entity.description,
-                        })
+                        }
+                        try:
+                            neighbors = self._kg.get_neighbors_ranked(
+                                name,
+                                max_neighbors=self._max_neighbors_per_entity,
+                            )
+                            if neighbors:
+                                entry["neighbors"] = neighbors
+                        except Exception:
+                            logger.debug(
+                                f"Neighbor lookup failed for {name}, "
+                                f"continuing without"
+                            )
+                        kg_entities.append(entry)
                     if len(kg_entities) >= self._MAX_CONTEXT_ENTITIES:
                         break
 
