@@ -1,0 +1,2831 @@
+{
+  "run_id": "mteb_hotpotqa_20260418_223530",
+  "dataset_name": "hotpotqa",
+  "embedding_model": "llama-embed-nemotron-8b",
+  "retrieval_strategy": "LIGHT_RAG",
+  "config_snapshot": {
+    "infra": {
+      "llm_base_url": "http://172.30.79.99:8000/v1",
+      "llm_model_name": "nvidia/nemotron-3-nano",
+      "embedding_base_url": "http://172.30.79.103:8000/v1",
+      "embedding_model_name": "llama-embed-nemotron-8b",
+      "embedding_model_type": "asymmetric",
+      "embedding_batch_size": 5,
+      "nim_max_concurrent": 16,
+      "nim_timeout": 120,
+      "nim_max_retries": 3
+    },
+    "storage": {
+      "minio_endpoint": "http://172.30.79.110:9000",
+      "minio_access_key": "minioadmin",
+      "minio_secret_key": "minio123",
+      "minio_bucket": "lakehouse",
+      "s3_datasets_prefix": "datasets/evaluation",
+      "datasets_cache_dir": "data/datasets_cache",
+      "evaluation_results_dir": "data/results",
+      "vector_db_dir": "data/vector_db"
+    },
+    "retrieval": {
+      "strategy": "LIGHT_RAG",
+      "retrieval_k": 20,
+      "hnsw_num_threads": 1,
+      "kg_max_hops": 1,
+      "kg_max_text_chars": 3000,
+      "kg_max_entities": 0,
+      "kg_cache_dir": "",
+      "kg_keyword_max_tokens": 1024,
+      "kg_extraction_max_tokens": 4096,
+      "kg_batch_docs_per_call": 5,
+      "kg_gleaning_rounds": 0,
+      "lightrag_mode": "hybrid",
+      "kg_max_neighbors_per_entity": 5,
+      "lightrag_generation_top_n": 10,
+      "kg_description_synthesis": false,
+      "kg_synthesis_char_threshold": 200,
+      "kg_chunk_keywords_enabled": true,
+      "kg_chunk_keywords_top_k": 20
+    },
+    "reranker": {
+      "enabled": true,
+      "base_url": "http://172.30.79.98:9000/v1",
+      "model_name": "nvidia/llama-3.2-nv-rerankqa-1b-v2",
+      "top_n": 5,
+      "fetch_k": 0
+    },
+    "dataset_name": "hotpotqa",
+    "max_queries": 50,
+    "max_corpus": 1000,
+    "generation_enabled": true,
+    "generation_max_context_chars": 0,
+    "corpus_shuffle_seed": 42,
+    "dev_mode": true,
+    "dev_queries": 35,
+    "dev_corpus_size": 1000,
+    "judge_fallback_threshold": 0.02,
+    "kg_synthesis_enabled": true,
+    "kg_synthesis_max_chars": 0,
+    "kg_synthesis_timeout_s": 90.0,
+    "_runtime": {
+      "max_context_chars": 192512,
+      "rerank_failures": 0,
+      "strategy_mismatches": 0,
+      "corpus_total_available": 66576,
+      "corpus_indexed": 1000,
+      "gen_zero_count": 9,
+      "gen_nonzero_count": 25,
+      "strategy_actual": "LIGHT_RAG",
+      "judge_fallback_stats": {
+        "faithfulness": {
+          "invocations": 34,
+          "parse_failures": 0,
+          "default_returns": 0,
+          "parse_failure_rate": 0.0,
+          "default_return_rate": 0.0
+        }
+      },
+      "kg_synthesis_stats": {
+        "invocations": 35,
+        "successes": 15,
+        "errors": 0,
+        "empty_returns": 0,
+        "truncations": 0,
+        "timeouts": 20,
+        "fallback_rate": 0.5714285714285714
+      }
+    }
+  },
+  "num_queries_evaluated": 34,
+  "num_queries_failed": 1,
+  "total_documents": 1000,
+  "avg_hit_rate_at_5": 0.8824,
+  "avg_mrr": 0.7742,
+  "avg_recall_at_k": {
+    "1": 0.3382,
+    "3": 0.6618,
+    "5": 0.7059,
+    "10": 0.75,
+    "20": 0.8382
+  },
+  "avg_ndcg_at_k": {
+    "1": 0.6765,
+    "3": 0.6438,
+    "5": 0.6671,
+    "10": 0.6847,
+    "20": 0.7131
+  },
+  "retrieval_complement_recall_at_k": {
+    "1": 0.6618,
+    "3": 0.3382,
+    "5": 0.2941,
+    "10": 0.25,
+    "20": 0.1618
+  },
+  "avg_retrieved_count": 20.0,
+  "avg_expected_count": 2.0,
+  "avg_generation_recall": 0.75,
+  "avg_generation_hit": 0.8824,
+  "reranker_rescue_count": 0,
+  "avg_generation_score": 0.6514,
+  "execution_time_seconds": 2820.24,
+  "timestamp": "2026-04-18T23:22:30.374571",
+  "status": "completed",
+  "query_results": [
+    {
+      "query_id": "q_1547",
+      "query_text": "What was Iqbal F. Qadir on when he participated in an attack on a radar station located on western shore of the Okhamandal Peninsula?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_4faa4bf92caa",
+        "doc_667e76d29dc0",
+        "doc_0686fac4a330",
+        "doc_1d474f2bcb62",
+        "doc_450208e7e37c",
+        "doc_9db730b3a64f",
+        "doc_cbd9be410bf1",
+        "doc_b87ea900dc26",
+        "doc_1561e323d4fa",
+        "doc_64b77d77338b",
+        "doc_b42a6b21f246",
+        "doc_3231b838a26d",
+        "doc_fd050464aa6b",
+        "doc_185623c11415",
+        "doc_fadfd6a4ebf6",
+        "doc_6b7faf7c8843",
+        "doc_0196be19532c",
+        "doc_c0caa46ee536",
+        "doc_d5f72874c011",
+        "doc_6d2805b8ba49"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.6131471927654584,
+        "20": 0.7841802768331765
+      },
+      "mrr": 1.0,
+      "generated_response": "Retired admiral",
+      "expected_response": "flotilla",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_4faa4bf92caa",
+        "doc_667e76d29dc0",
+        "doc_0686fac4a330",
+        "doc_1d474f2bcb62",
+        "doc_450208e7e37c",
+        "doc_9db730b3a64f",
+        "doc_cbd9be410bf1",
+        "doc_b87ea900dc26",
+        "doc_1561e323d4fa",
+        "doc_64b77d77338b"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_2054",
+      "query_text": "When did the park at which Tivolis Koncertsal is located open?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_01f29574fc84",
+        "doc_b64e944e7fed",
+        "doc_9d6641c9858b",
+        "doc_e11a904b7bd9",
+        "doc_39df414cff3f",
+        "doc_25cb71e89b58",
+        "doc_e9ccab0fc1cd",
+        "doc_f68031b49ba0",
+        "doc_ed23deaadf1f",
+        "doc_7eaa5759c2de",
+        "doc_817641c65068",
+        "doc_31588690b0f9",
+        "doc_c3f1088787bf",
+        "doc_59f9f77a0dfe",
+        "doc_3c09741ca3a4",
+        "doc_db071aeb4918",
+        "doc_09c0476408d1",
+        "doc_397498dc3bef",
+        "doc_35d97e145cb8",
+        "doc_3ec9f0e210cb"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.1710330840677181
+      },
+      "mrr": 0.09090909090909091,
+      "generated_response": "1843",
+      "expected_response": "15 August 1843",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.5,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_01f29574fc84",
+        "doc_b64e944e7fed",
+        "doc_9d6641c9858b",
+        "doc_e11a904b7bd9",
+        "doc_39df414cff3f",
+        "doc_25cb71e89b58",
+        "doc_e9ccab0fc1cd",
+        "doc_f68031b49ba0",
+        "doc_ed23deaadf1f",
+        "doc_7eaa5759c2de"
+      ],
+      "generation_recall": 0.0,
+      "generation_hit": 0.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_478",
+      "query_text": "What is the shared country of ancestry between Art Laboe and Scout Tufankjian?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_9564b5b3acad",
+        "doc_76e7fe9e5486",
+        "doc_503819841ccb",
+        "doc_6a2b9a974ec9",
+        "doc_7407e08fdc2b",
+        "doc_7a97d4e5cc71",
+        "doc_ba4ea8da1d07",
+        "doc_7c9719fd2a65",
+        "doc_ef840d62986c",
+        "doc_bfa120b9fe2e",
+        "doc_56cf0e543003",
+        "doc_552470698597",
+        "doc_02972b222a09",
+        "doc_d5f72874c011",
+        "doc_337dbd130aef",
+        "doc_c843279b6ae8",
+        "doc_a4725d4cdea2",
+        "doc_ed23deaadf1f",
+        "doc_cedee3e46058",
+        "doc_884e95df94ce"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.6131471927654584,
+        "20": 0.6131471927654584
+      },
+      "mrr": 1.0,
+      "generated_response": "Armenia",
+      "expected_response": "Armenian",
+      "primary_metric_type": "accuracy",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "f1_score": 0.0,
+        "exact_match": 0.0,
+        "faithfulness": 0.2
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_9564b5b3acad",
+        "doc_76e7fe9e5486",
+        "doc_503819841ccb",
+        "doc_6a2b9a974ec9",
+        "doc_7407e08fdc2b",
+        "doc_7a97d4e5cc71",
+        "doc_ba4ea8da1d07",
+        "doc_7c9719fd2a65",
+        "doc_ef840d62986c",
+        "doc_bfa120b9fe2e"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "comparison",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_3245",
+      "query_text": "The school in which the Wilmslow Show is held is designated as what?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_6e4bf38ff873",
+        "doc_67b9a1e6b986",
+        "doc_8cfb695c2fb4",
+        "doc_e1092efdb44c",
+        "doc_3f5703ce3831",
+        "doc_d2641cda0f2b",
+        "doc_3c09741ca3a4",
+        "doc_869ae1eeb3a0",
+        "doc_87b0d85d9c51",
+        "doc_086f29f1f1ab",
+        "doc_ac13a8b534df",
+        "doc_a5542f617c5a",
+        "doc_fd010adc2e30",
+        "doc_1463c9b474e5",
+        "doc_1434da20fcdf",
+        "doc_901eb0c320a0",
+        "doc_c12c0c526f89",
+        "doc_a4247055dbff",
+        "doc_d869b4afec65",
+        "doc_25cb71e89b58"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.38685280723454163,
+        "5": 0.38685280723454163,
+        "10": 0.38685280723454163,
+        "20": 0.38685280723454163
+      },
+      "mrr": 0.5,
+      "generated_response": "Centre of Excellence",
+      "expected_response": "Centre of Excellence",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_6e4bf38ff873",
+        "doc_67b9a1e6b986",
+        "doc_8cfb695c2fb4",
+        "doc_e1092efdb44c",
+        "doc_3f5703ce3831",
+        "doc_d2641cda0f2b",
+        "doc_3c09741ca3a4",
+        "doc_869ae1eeb3a0",
+        "doc_87b0d85d9c51",
+        "doc_086f29f1f1ab"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_1119",
+      "query_text": "Who will Billy Howle be seen opposite in the upcoming British drama film directed by Dominic Cooke?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_4cb1bf79a1cd",
+        "doc_c5f2f93c5482",
+        "doc_14519ccf77ed",
+        "doc_463971e20958",
+        "doc_004a67180a3b",
+        "doc_dd0030a4cd51",
+        "doc_ee90b4c359d1",
+        "doc_c4326e988152",
+        "doc_0500869431ed",
+        "doc_dbbe76138fd4",
+        "doc_c7c91e479169",
+        "doc_331cef95460b",
+        "doc_a3625ed02a56",
+        "doc_c79df9a1cdc9",
+        "doc_52d9ca87919d",
+        "doc_d9545712cac8",
+        "doc_fabdb5236673",
+        "doc_02972b222a09",
+        "doc_ef6bbfcbf890",
+        "doc_afb77097a95a"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.9197207891481876,
+        "5": 0.9197207891481876,
+        "10": 0.9197207891481876,
+        "20": 0.9197207891481876
+      },
+      "mrr": 1.0,
+      "generated_response": "Saoirse Ronan",
+      "expected_response": "Saoirse Ronan",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_4cb1bf79a1cd",
+        "doc_c5f2f93c5482",
+        "doc_14519ccf77ed",
+        "doc_463971e20958",
+        "doc_004a67180a3b",
+        "doc_dd0030a4cd51",
+        "doc_ee90b4c359d1",
+        "doc_c4326e988152",
+        "doc_0500869431ed",
+        "doc_dbbe76138fd4"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_3575",
+      "query_text": "What animated movie, starring Danny Devito, featured music written and produced by Kool Kojak?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_5e62eba85459",
+        "doc_7eaa5759c2de",
+        "doc_3ec9f0e210cb",
+        "doc_822d58ca2b4f",
+        "doc_8a87234b9843",
+        "doc_236a18cfcea4",
+        "doc_52d9ca87919d",
+        "doc_6e493e9d454a",
+        "doc_65bd932a8763",
+        "doc_91315a885e12",
+        "doc_6c62bb4c82a4",
+        "doc_ba4ea8da1d07",
+        "doc_5c772e0cc9ef",
+        "doc_9f4b7dacd3fa",
+        "doc_39f3fa45faed",
+        "doc_f0e30e429fe6",
+        "doc_d19a23601a9a",
+        "doc_a3625ed02a56",
+        "doc_d164af513542",
+        "doc_195404833d39"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.16104282508920814
+      },
+      "mrr": 0.07692307692307693,
+      "generated_response": "The Lorax",
+      "expected_response": "The Lorax",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 0.1
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_5e62eba85459",
+        "doc_7eaa5759c2de",
+        "doc_3ec9f0e210cb",
+        "doc_822d58ca2b4f",
+        "doc_8a87234b9843",
+        "doc_236a18cfcea4",
+        "doc_52d9ca87919d",
+        "doc_6e493e9d454a",
+        "doc_65bd932a8763",
+        "doc_91315a885e12"
+      ],
+      "generation_recall": 0.0,
+      "generation_hit": 0.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_978",
+      "query_text": "Out of the actors who have played the role of Luc Deveraux in the Universal Soldier franchise, which actor has also starred in the movies Holby City, Doctor Strange, the Bourne Ultimatum and Zero Dark Thirty?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_d929f815af19",
+        "doc_5a5d924e5297",
+        "doc_fb71e007235a",
+        "doc_b87ea900dc26",
+        "doc_9c37c1b457ca",
+        "doc_91315a885e12",
+        "doc_331cef95460b",
+        "doc_b5401baec9ba",
+        "doc_f9d632d2eb39",
+        "doc_fabdb5236673",
+        "doc_ca92fdd48290",
+        "doc_3fa11c6c7ca1",
+        "doc_88b953f6b657",
+        "doc_fdfafcac4fc0",
+        "doc_4cb1bf79a1cd",
+        "doc_a79b30303bee",
+        "doc_53bc1cd787af",
+        "doc_a3625ed02a56",
+        "doc_aeb5df0b6c76",
+        "doc_0fa06a4c5917"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.8503449055347546,
+        "10": 0.8503449055347546,
+        "20": 0.8503449055347546
+      },
+      "mrr": 1.0,
+      "generated_response": "",
+      "expected_response": null,
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {},
+      "status": "failed",
+      "generation_doc_ids": [
+        "doc_d929f815af19",
+        "doc_5a5d924e5297",
+        "doc_fb71e007235a",
+        "doc_b87ea900dc26",
+        "doc_9c37c1b457ca",
+        "doc_91315a885e12",
+        "doc_331cef95460b",
+        "doc_b5401baec9ba",
+        "doc_f9d632d2eb39",
+        "doc_fabdb5236673"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_1668",
+      "query_text": "Tommy's Honour was a drama film that included the actor who found success with what 2016 BBC miniseries?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_c79df9a1cdc9",
+        "doc_c5f2f93c5482",
+        "doc_52d9ca87919d",
+        "doc_004a67180a3b",
+        "doc_4cb1bf79a1cd",
+        "doc_ee90b4c359d1",
+        "doc_0fa06a4c5917",
+        "doc_fb71e007235a",
+        "doc_02972b222a09",
+        "doc_33a1a794e3f0",
+        "doc_3fa11c6c7ca1",
+        "doc_ef6bbfcbf890",
+        "doc_ff5290c4700a",
+        "doc_c7c91e479169",
+        "doc_5dcde96af804",
+        "doc_afb77097a95a",
+        "doc_a3625ed02a56",
+        "doc_d164af513542",
+        "doc_51294a8ce854",
+        "doc_5a5d924e5297"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.6131471927654584,
+        "20": 0.7550160946314525
+      },
+      "mrr": 1.0,
+      "generated_response": "War & Peace",
+      "expected_response": "War & Peace",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_c79df9a1cdc9",
+        "doc_c5f2f93c5482",
+        "doc_52d9ca87919d",
+        "doc_004a67180a3b",
+        "doc_4cb1bf79a1cd",
+        "doc_ee90b4c359d1",
+        "doc_0fa06a4c5917",
+        "doc_fb71e007235a",
+        "doc_02972b222a09",
+        "doc_33a1a794e3f0"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_6149",
+      "query_text": "Which rock band chose its name by drawing it out of a hat, Switchfoot or Midnight Oil?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_bbc866fee46a",
+        "doc_bbbeceae437d",
+        "doc_c5ec1b09c2d9",
+        "doc_fba8f9e8f49f",
+        "doc_791ffa7c1b88",
+        "doc_7cba4fa47ebb",
+        "doc_a812a5c4302a",
+        "doc_578c760cb8d3",
+        "doc_37a99ab63c62",
+        "doc_96ce48a32bed",
+        "doc_04a75a48b7c5",
+        "doc_1d2fde289508",
+        "doc_60c2b5fd62ba",
+        "doc_6fdaf9cc8041",
+        "doc_a4725d4cdea2",
+        "doc_98bd4c64eb96",
+        "doc_6a85e67c8880",
+        "doc_1463c9b474e5",
+        "doc_aec012044557",
+        "doc_aeb28f28e0e0"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.8065735963827293,
+        "20": 0.8065735963827293
+      },
+      "mrr": 1.0,
+      "generated_response": "Midnight Oil",
+      "expected_response": "Midnight Oil",
+      "primary_metric_type": "accuracy",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "f1_score": 1.0,
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_bbc866fee46a",
+        "doc_bbbeceae437d",
+        "doc_c5ec1b09c2d9",
+        "doc_fba8f9e8f49f",
+        "doc_791ffa7c1b88",
+        "doc_7cba4fa47ebb",
+        "doc_a812a5c4302a",
+        "doc_578c760cb8d3",
+        "doc_37a99ab63c62",
+        "doc_96ce48a32bed"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "comparison",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4237",
+      "query_text": "\"Tunak\", is a bhangra/pop love song by an artist born in which year ?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_4e76ad8d3b34",
+        "doc_6b7faf7c8843",
+        "doc_2c4168fffedc",
+        "doc_c34ef6da3f39",
+        "doc_a5542f617c5a",
+        "doc_0fa06a4c5917",
+        "doc_117e2642533f",
+        "doc_aec012044557",
+        "doc_cd49d0191618",
+        "doc_bd8633da554a",
+        "doc_4942adabd374",
+        "doc_5d09792ec701",
+        "doc_35d97e145cb8",
+        "doc_f9aa62cf3dc3",
+        "doc_b6f76329a990",
+        "doc_2432decead96",
+        "doc_f6fb2b329c72",
+        "doc_03fe32964633",
+        "doc_bfa120b9fe2e",
+        "doc_d735cea9df20"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "1967",
+      "expected_response": "1967",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 0.2
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_4e76ad8d3b34",
+        "doc_6b7faf7c8843",
+        "doc_2c4168fffedc",
+        "doc_c34ef6da3f39",
+        "doc_a5542f617c5a",
+        "doc_0fa06a4c5917",
+        "doc_117e2642533f",
+        "doc_aec012044557",
+        "doc_cd49d0191618",
+        "doc_bd8633da554a"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_1106",
+      "query_text": "Which Captain launched the attack which led to more casualties than any other incident in the war fought between the settlers of the nascent colony of New Netherland and the native Lenape population?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_ac3554456786",
+        "doc_e23beb1b5290",
+        "doc_8f36bdb5be6a",
+        "doc_88b953f6b657",
+        "doc_185623c11415",
+        "doc_3231b838a26d",
+        "doc_f28176fb9e45",
+        "doc_667e76d29dc0",
+        "doc_5169828aec2d",
+        "doc_c843279b6ae8",
+        "doc_ebc4f5884bdc",
+        "doc_cbd9be410bf1",
+        "doc_2e62b57c94d2",
+        "doc_450208e7e37c",
+        "doc_2360b4679f13",
+        "doc_bfa120b9fe2e",
+        "doc_35d97e145cb8",
+        "doc_d5f72874c011",
+        "doc_d55f6d40d743",
+        "doc_c5f2f93c5482"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "John Underhill",
+      "expected_response": "Captain John Underhill",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.8,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_ac3554456786",
+        "doc_e23beb1b5290",
+        "doc_8f36bdb5be6a",
+        "doc_88b953f6b657",
+        "doc_185623c11415",
+        "doc_3231b838a26d",
+        "doc_f28176fb9e45",
+        "doc_667e76d29dc0",
+        "doc_5169828aec2d",
+        "doc_c843279b6ae8"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_6953",
+      "query_text": "In which film did Emilio Estevez star in in the same year as Nightmares",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_5e3ddd9b8e42",
+        "doc_ac13a8b534df",
+        "doc_4d9704d6db79",
+        "doc_331cef95460b",
+        "doc_53bc1cd787af",
+        "doc_b6ad5cb74fc1",
+        "doc_a3625ed02a56",
+        "doc_c34ef6da3f39",
+        "doc_99da925f3d98",
+        "doc_5a5d924e5297",
+        "doc_52d9ca87919d",
+        "doc_fdfafcac4fc0",
+        "doc_fcb70bcc3009",
+        "doc_0686fac4a330",
+        "doc_39f3fa45faed",
+        "doc_b64e944e7fed",
+        "doc_b2631a6a862e",
+        "doc_637b42feb0c2",
+        "doc_98bd4c64eb96",
+        "doc_91315a885e12"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.9197207891481876,
+        "5": 0.9197207891481876,
+        "10": 0.9197207891481876,
+        "20": 0.9197207891481876
+      },
+      "mrr": 1.0,
+      "generated_response": "The Outsiders",
+      "expected_response": "The Outsiders",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_5e3ddd9b8e42",
+        "doc_ac13a8b534df",
+        "doc_4d9704d6db79",
+        "doc_331cef95460b",
+        "doc_53bc1cd787af",
+        "doc_b6ad5cb74fc1",
+        "doc_a3625ed02a56",
+        "doc_c34ef6da3f39",
+        "doc_99da925f3d98",
+        "doc_5a5d924e5297"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_2375",
+      "query_text": "What was the concept of the business Eric S .Pistorius worked for after being an attorney?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_164f802cdde6",
+        "doc_aafbb46413d0",
+        "doc_791ffa7c1b88",
+        "doc_a0ab4db7f09b",
+        "doc_a64ddf332512",
+        "doc_4e53d43d4fb7",
+        "doc_fcb70bcc3009",
+        "doc_f68031b49ba0",
+        "doc_cb5d27a83b13",
+        "doc_af6db8d6011e",
+        "doc_029766df1569",
+        "doc_d164af513542",
+        "doc_99355a382820",
+        "doc_9d6641c9858b",
+        "doc_1739e6076d23",
+        "doc_1a4a018891ac",
+        "doc_552470698597",
+        "doc_4cc4ade38ddf",
+        "doc_445211f09c1e",
+        "doc_ec625a62af42"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.0
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.0
+      },
+      "mrr": 0.0,
+      "generated_response": "business partnership",
+      "expected_response": "to ensure wide visibility and understanding of cases in a region",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_164f802cdde6",
+        "doc_aafbb46413d0",
+        "doc_791ffa7c1b88",
+        "doc_a0ab4db7f09b",
+        "doc_a64ddf332512",
+        "doc_4e53d43d4fb7",
+        "doc_fcb70bcc3009",
+        "doc_f68031b49ba0",
+        "doc_cb5d27a83b13",
+        "doc_af6db8d6011e"
+      ],
+      "generation_recall": 0.0,
+      "generation_hit": 0.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_5129",
+      "query_text": "Which port city lies approximately 25 km north of the Lingnan Fine Arts Museum?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_ac13a8b534df",
+        "doc_8e4f30f0e782",
+        "doc_73d92f62deff",
+        "doc_76ec15f72159",
+        "doc_3c1214e16c85",
+        "doc_69245cbbcbc2",
+        "doc_929934662f7c",
+        "doc_dde147cfc967",
+        "doc_cf387d023d82",
+        "doc_f2518fe90016",
+        "doc_dbb5bf98a740",
+        "doc_7a97d4e5cc71",
+        "doc_ba4ea8da1d07",
+        "doc_3f5703ce3831",
+        "doc_2d20ffc40fc7",
+        "doc_fd00fd201eae",
+        "doc_f68031b49ba0",
+        "doc_f2af68418658",
+        "doc_bfa120b9fe2e",
+        "doc_aafbb46413d0"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.2640681225725909,
+        "10": 0.2640681225725909,
+        "20": 0.2640681225725909
+      },
+      "mrr": 0.25,
+      "generated_response": "none",
+      "expected_response": "Keelung",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 0.2
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_ac13a8b534df",
+        "doc_8e4f30f0e782",
+        "doc_73d92f62deff",
+        "doc_76ec15f72159",
+        "doc_3c1214e16c85",
+        "doc_69245cbbcbc2",
+        "doc_929934662f7c",
+        "doc_dde147cfc967",
+        "doc_cf387d023d82",
+        "doc_f2518fe90016"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4491",
+      "query_text": "Has Stefan Edberg won more events than  Édouard Roger-Vasselin?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_9b67791da6a1",
+        "doc_4dac32507544",
+        "doc_e068ddd2a2bf",
+        "doc_501ebdc6d35b",
+        "doc_164f802cdde6",
+        "doc_5969ada1f919",
+        "doc_381e5aab6eb5",
+        "doc_e305382bac4b",
+        "doc_233cd5f8443c",
+        "doc_302780af1cbb",
+        "doc_9b504f26fa23",
+        "doc_d53ecc010a9d",
+        "doc_282ae8d69f69",
+        "doc_975ee82c8e6c",
+        "doc_e9534a0d9501",
+        "doc_d78b5d080b49",
+        "doc_7336b9abc44d",
+        "doc_91d156cdc261",
+        "doc_2d2ca1b37f9b",
+        "doc_2ec99ce8eebf"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.8772153153380493,
+        "10": 0.8772153153380493,
+        "20": 0.8772153153380493
+      },
+      "mrr": 1.0,
+      "generated_response": "yes",
+      "expected_response": "yes",
+      "primary_metric_type": "accuracy",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "f1_score": 1.0,
+        "exact_match": 1.0,
+        "faithfulness": 0.1
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_9b67791da6a1",
+        "doc_4dac32507544",
+        "doc_e068ddd2a2bf",
+        "doc_501ebdc6d35b",
+        "doc_164f802cdde6",
+        "doc_5969ada1f919",
+        "doc_381e5aab6eb5",
+        "doc_e305382bac4b",
+        "doc_233cd5f8443c",
+        "doc_302780af1cbb"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "comparison",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_720",
+      "query_text": " Jason Regler, stated that he had the idea for the flashing wristbands during a song built around which instrument ?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_e361928bea97",
+        "doc_49a125e697ea",
+        "doc_4ff9dffe7361",
+        "doc_8cfb695c2fb4",
+        "doc_2432decead96",
+        "doc_c34ef6da3f39",
+        "doc_6b7faf7c8843",
+        "doc_9f9b4ff707d0",
+        "doc_7f39d21fb071",
+        "doc_0a9edcc306f5",
+        "doc_aec012044557",
+        "doc_236a18cfcea4",
+        "doc_35d97e145cb8",
+        "doc_af6db8d6011e",
+        "doc_b32c35ed31b3",
+        "doc_f55749ea5a69",
+        "doc_f853fee64ddc",
+        "doc_b0f756730ca9",
+        "doc_ee90b4c359d1",
+        "doc_c79df9a1cdc9"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.6131471927654584,
+        "20": 0.6131471927654584
+      },
+      "mrr": 1.0,
+      "generated_response": "piano",
+      "expected_response": "an organ",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 0.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_e361928bea97",
+        "doc_49a125e697ea",
+        "doc_4ff9dffe7361",
+        "doc_8cfb695c2fb4",
+        "doc_2432decead96",
+        "doc_c34ef6da3f39",
+        "doc_6b7faf7c8843",
+        "doc_9f9b4ff707d0",
+        "doc_7f39d21fb071",
+        "doc_0a9edcc306f5"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_1205",
+      "query_text": " The Soul of Buddha is a 1918 American silent romance film shot in a borough  that is the western terminus of what?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_05504765ccd1",
+        "doc_a3625ed02a56",
+        "doc_51294a8ce854",
+        "doc_51e79f8d8f69",
+        "doc_cd28d55c895c",
+        "doc_6d7873c75235",
+        "doc_8a36be2ef894",
+        "doc_39df414cff3f",
+        "doc_d20e90d7ac3d",
+        "doc_0ff20ca049b8",
+        "doc_0a9edcc306f5",
+        "doc_463971e20958",
+        "doc_7a97d4e5cc71",
+        "doc_869ec99e4399",
+        "doc_b87ea900dc26",
+        "doc_0fa06a4c5917",
+        "doc_f723481c95fb",
+        "doc_7f39d21fb071",
+        "doc_43b9801cfa58",
+        "doc_2bd96c457802"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.15693994437792994
+      },
+      "mrr": 0.07142857142857142,
+      "generated_response": "none",
+      "expected_response": "the George Washington Bridge",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 0.1
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_05504765ccd1",
+        "doc_a3625ed02a56",
+        "doc_51294a8ce854",
+        "doc_51e79f8d8f69",
+        "doc_cd28d55c895c",
+        "doc_6d7873c75235",
+        "doc_8a36be2ef894",
+        "doc_39df414cff3f",
+        "doc_d20e90d7ac3d",
+        "doc_0ff20ca049b8"
+      ],
+      "generation_recall": 0.0,
+      "generation_hit": 0.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_5136",
+      "query_text": "Which \"Blackzilians\" fighter is currently competing in the Middleweight division of Ultimate Fighting Championship?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_779c28df935e",
+        "doc_53ef462d6b9a",
+        "doc_9eacd8ef3f75",
+        "doc_05a342326cd3",
+        "doc_c2a2e53e2a16",
+        "doc_ad03759bac7a",
+        "doc_76ab73f6b02b",
+        "doc_55e25c77380e",
+        "doc_d4209183df53",
+        "doc_b34b8778600c",
+        "doc_b6d496ab23c2",
+        "doc_c3020be64b56",
+        "doc_584313537544",
+        "doc_af6db8d6011e",
+        "doc_4f0fea2fb0ee",
+        "doc_bbe49660ad8b",
+        "doc_233cd5f8443c",
+        "doc_25cb71e89b58",
+        "doc_5eb9ec81d60f",
+        "doc_9c37c1b457ca"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.9197207891481876,
+        "5": 0.9197207891481876,
+        "10": 0.9197207891481876,
+        "20": 0.9197207891481876
+      },
+      "mrr": 1.0,
+      "generated_response": "Rashad Evans",
+      "expected_response": "Vitor Belfort",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_779c28df935e",
+        "doc_53ef462d6b9a",
+        "doc_9eacd8ef3f75",
+        "doc_05a342326cd3",
+        "doc_c2a2e53e2a16",
+        "doc_ad03759bac7a",
+        "doc_76ab73f6b02b",
+        "doc_55e25c77380e",
+        "doc_d4209183df53",
+        "doc_b34b8778600c"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4151",
+      "query_text": "Were was the Mexican state after which there is Villa Unión, Sinaloa located? ",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_162397d634da",
+        "doc_585748c5a10f",
+        "doc_3c1214e16c85",
+        "doc_fa666583f0c2",
+        "doc_0f117b9c3f2e",
+        "doc_3f5703ce3831",
+        "doc_621621cd5a0f",
+        "doc_fd010adc2e30",
+        "doc_3b27c46a17b2",
+        "doc_e362ce9f96fe",
+        "doc_e30243f38eb6",
+        "doc_cd8616aca5c8",
+        "doc_fa44445c3014",
+        "doc_6dde822a8b32",
+        "doc_87b0d85d9c51",
+        "doc_bde3914f30da",
+        "doc_ac13a8b534df",
+        "doc_d11f8cc0cdcf",
+        "doc_c12c0c526f89",
+        "doc_9f5981feb418"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.3065735963827292,
+        "5": 0.3065735963827292,
+        "10": 0.3065735963827292,
+        "20": 0.3065735963827292
+      },
+      "mrr": 0.3333333333333333,
+      "generated_response": "Sinaloa",
+      "expected_response": "tip of the Baja California",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_162397d634da",
+        "doc_585748c5a10f",
+        "doc_3c1214e16c85",
+        "doc_fa666583f0c2",
+        "doc_0f117b9c3f2e",
+        "doc_3f5703ce3831",
+        "doc_621621cd5a0f",
+        "doc_fd010adc2e30",
+        "doc_3b27c46a17b2",
+        "doc_e362ce9f96fe"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4456",
+      "query_text": "What language, traditionally written with the ancient Libyco-Berber script, is closely related to the Tumzabt and Teggargrent languages?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_ebc4f5884bdc",
+        "doc_8f36bdb5be6a",
+        "doc_84b01e2fdcbc",
+        "doc_ed23deaadf1f",
+        "doc_5169828aec2d",
+        "doc_53e5cabffa22",
+        "doc_e50306f81cc7",
+        "doc_11558d9a58d1",
+        "doc_bfa120b9fe2e",
+        "doc_6a6ab8397125",
+        "doc_3f75baee3905",
+        "doc_8c485875e6e6",
+        "doc_02b0b6ec4191",
+        "doc_82d0537626a4",
+        "doc_dbb5bf98a740",
+        "doc_5d09792ec701",
+        "doc_6b7faf7c8843",
+        "doc_6538b259f16e",
+        "doc_59f9f77a0dfe",
+        "doc_822d58ca2b4f"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.9197207891481876,
+        "5": 0.9197207891481876,
+        "10": 0.9197207891481876,
+        "20": 0.9197207891481876
+      },
+      "mrr": 1.0,
+      "generated_response": "Tugurt",
+      "expected_response": "The Tugurt language",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.5,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_ebc4f5884bdc",
+        "doc_8f36bdb5be6a",
+        "doc_84b01e2fdcbc",
+        "doc_ed23deaadf1f",
+        "doc_5169828aec2d",
+        "doc_53e5cabffa22",
+        "doc_e50306f81cc7",
+        "doc_11558d9a58d1",
+        "doc_bfa120b9fe2e",
+        "doc_6a6ab8397125"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_6054",
+      "query_text": "Who is the fictional head of a British Secret Service division and for which a one-time missionary was the inspiration for?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_31d6ca949522",
+        "doc_5169828aec2d",
+        "doc_93305ba72093",
+        "doc_6b2f2e5fb49e",
+        "doc_9f9b4ff707d0",
+        "doc_efeebe340ffc",
+        "doc_f68031b49ba0",
+        "doc_c3f1088787bf",
+        "doc_52d9ca87919d",
+        "doc_98e522c9680e",
+        "doc_d0c505ae8b16",
+        "doc_667e76d29dc0",
+        "doc_e15d0ed3874b",
+        "doc_67658efabe6c",
+        "doc_2c4168fffedc",
+        "doc_858e2f14c5f6",
+        "doc_6538b259f16e",
+        "doc_99da925f3d98",
+        "doc_463971e20958",
+        "doc_1a964172c9f8"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "Q",
+      "expected_response": "Q",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_31d6ca949522",
+        "doc_5169828aec2d",
+        "doc_93305ba72093",
+        "doc_6b2f2e5fb49e",
+        "doc_9f9b4ff707d0",
+        "doc_efeebe340ffc",
+        "doc_f68031b49ba0",
+        "doc_c3f1088787bf",
+        "doc_52d9ca87919d",
+        "doc_98e522c9680e"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_7110",
+      "query_text": "Phillip Pullman's book set in a parallel universe featuring a character named Lyra Belacqua was put into audio in what year?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_afb77097a95a",
+        "doc_cb104c80e257",
+        "doc_33a1a794e3f0",
+        "doc_b0f756730ca9",
+        "doc_ee90b4c359d1",
+        "doc_6538b259f16e",
+        "doc_02972b222a09",
+        "doc_ef6bbfcbf890",
+        "doc_445211f09c1e",
+        "doc_aec012044557",
+        "doc_10b0f67cef04",
+        "doc_9f9b4ff707d0",
+        "doc_236a18cfcea4",
+        "doc_ba4ea8da1d07",
+        "doc_98bd4c64eb96",
+        "doc_d801820e3c11",
+        "doc_164f802cdde6",
+        "doc_5d09792ec701",
+        "doc_3ec9f0e210cb",
+        "doc_c3f1088787bf"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "2002",
+      "expected_response": "2002",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_afb77097a95a",
+        "doc_cb104c80e257",
+        "doc_33a1a794e3f0",
+        "doc_b0f756730ca9",
+        "doc_ee90b4c359d1",
+        "doc_6538b259f16e",
+        "doc_02972b222a09",
+        "doc_ef6bbfcbf890",
+        "doc_445211f09c1e",
+        "doc_aec012044557"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4166",
+      "query_text": "Who directed the second film in a British series of action comedy film parodying the James Bond secret agent genre with comedy similar to Rowan Atkinson's Mr. Bean character?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_93305ba72093",
+        "doc_6b2f2e5fb49e",
+        "doc_efeebe340ffc",
+        "doc_31d6ca949522",
+        "doc_5169828aec2d",
+        "doc_9f9b4ff707d0",
+        "doc_22832dacf6a3",
+        "doc_c3f1088787bf",
+        "doc_3ec9f0e210cb",
+        "doc_d20e90d7ac3d",
+        "doc_214f3ebaaa72",
+        "doc_9c37c1b457ca",
+        "doc_1739e6076d23",
+        "doc_0bdad11371df",
+        "doc_56cf0e543003",
+        "doc_d929f815af19",
+        "doc_fd050464aa6b",
+        "doc_08282542be06",
+        "doc_52d9ca87919d",
+        "doc_f68031b49ba0"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.6934264036172708,
+        "5": 0.6934264036172708,
+        "10": 0.6934264036172708,
+        "20": 0.6934264036172708
+      },
+      "mrr": 0.5,
+      "generated_response": "Oliver Parker",
+      "expected_response": "Oliver Parker",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_93305ba72093",
+        "doc_6b2f2e5fb49e",
+        "doc_efeebe340ffc",
+        "doc_31d6ca949522",
+        "doc_5169828aec2d",
+        "doc_9f9b4ff707d0",
+        "doc_22832dacf6a3",
+        "doc_c3f1088787bf",
+        "doc_3ec9f0e210cb",
+        "doc_d20e90d7ac3d"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_1564",
+      "query_text": "George Gershwin is an American Composer and Judith Weir is a composer from which country?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_30044ac84f30",
+        "doc_445211f09c1e",
+        "doc_a84ce549483b",
+        "doc_a46fe551d532",
+        "doc_ee90b4c359d1",
+        "doc_a64ddf332512",
+        "doc_fab5f1876b28",
+        "doc_e11a904b7bd9",
+        "doc_9f9b4ff707d0",
+        "doc_2432decead96",
+        "doc_236a18cfcea4",
+        "doc_de06dae205de",
+        "doc_6c62bb4c82a4",
+        "doc_4cb1bf79a1cd",
+        "doc_3ec9f0e210cb",
+        "doc_ed23deaadf1f",
+        "doc_b0f756730ca9",
+        "doc_b87ea900dc26",
+        "doc_b9b081ef06b8",
+        "doc_35d97e145cb8"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.9197207891481876,
+        "5": 0.9197207891481876,
+        "10": 0.9197207891481876,
+        "20": 0.9197207891481876
+      },
+      "mrr": 1.0,
+      "generated_response": "British",
+      "expected_response": "a British composer",
+      "primary_metric_type": "accuracy",
+      "primary_metric_value": 0.0,
+      "secondary_metrics": {
+        "f1_score": 0.5,
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_30044ac84f30",
+        "doc_445211f09c1e",
+        "doc_a84ce549483b",
+        "doc_a46fe551d532",
+        "doc_ee90b4c359d1",
+        "doc_a64ddf332512",
+        "doc_fab5f1876b28",
+        "doc_e11a904b7bd9",
+        "doc_9f9b4ff707d0",
+        "doc_2432decead96"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "comparison",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_6694",
+      "query_text": "What Was the name of Juan Manuel Márquez's  WBO champion holding younger brother?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_b6d496ab23c2",
+        "doc_584313537544",
+        "doc_d4209183df53",
+        "doc_9eacd8ef3f75",
+        "doc_779c28df935e",
+        "doc_c3c66bef18dc",
+        "doc_56bd9bd71b92",
+        "doc_233cd5f8443c",
+        "doc_3afceaf600d9",
+        "doc_ad03759bac7a",
+        "doc_884e95df94ce",
+        "doc_d400b9e762ab",
+        "doc_53ef462d6b9a",
+        "doc_05a342326cd3",
+        "doc_173a8d61c431",
+        "doc_5eb9ec81d60f",
+        "doc_a79b30303bee",
+        "doc_ab664fc0e32a",
+        "doc_55e25c77380e",
+        "doc_0201da717f04"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.9197207891481876,
+        "5": 0.9197207891481876,
+        "10": 0.9197207891481876,
+        "20": 0.9197207891481876
+      },
+      "mrr": 1.0,
+      "generated_response": "Rafael Márquez Méndez",
+      "expected_response": "Rafael Márquez",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.8,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_b6d496ab23c2",
+        "doc_584313537544",
+        "doc_d4209183df53",
+        "doc_9eacd8ef3f75",
+        "doc_779c28df935e",
+        "doc_c3c66bef18dc",
+        "doc_56bd9bd71b92",
+        "doc_233cd5f8443c",
+        "doc_3afceaf600d9",
+        "doc_ad03759bac7a"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_3802",
+      "query_text": "The Running Man Brothers is a South Korean pop duo. Kim Jong-kook is one member and he is from what country?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_791ffa7c1b88",
+        "doc_554029cc0bfd",
+        "doc_49a125e697ea",
+        "doc_d966845ed38a",
+        "doc_f9aa62cf3dc3",
+        "doc_4ff9dffe7361",
+        "doc_6538b259f16e",
+        "doc_60c2b5fd62ba",
+        "doc_aec012044557",
+        "doc_473ae988a390",
+        "doc_47025df0149d",
+        "doc_31588690b0f9",
+        "doc_6fdaf9cc8041",
+        "doc_ee90b4c359d1",
+        "doc_e361928bea97",
+        "doc_7f39d21fb071",
+        "doc_35d97e145cb8",
+        "doc_b0f756730ca9",
+        "doc_baa0081301bb",
+        "doc_b32c35ed31b3"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.5,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.38685280723454163,
+        "5": 0.6509209298071326,
+        "10": 0.6509209298071326,
+        "20": 0.6509209298071326
+      },
+      "mrr": 0.5,
+      "generated_response": "South Korea",
+      "expected_response": "South Korea",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_791ffa7c1b88",
+        "doc_554029cc0bfd",
+        "doc_49a125e697ea",
+        "doc_d966845ed38a",
+        "doc_f9aa62cf3dc3",
+        "doc_4ff9dffe7361",
+        "doc_6538b259f16e",
+        "doc_60c2b5fd62ba",
+        "doc_aec012044557",
+        "doc_473ae988a390"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_7043",
+      "query_text": "Ruddles Brewery is owned by a pub retailer and brewer based in what city?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_f47338c9996b",
+        "doc_cb5d27a83b13",
+        "doc_aafbb46413d0",
+        "doc_ad2aafd44e20",
+        "doc_b3085f271cc6",
+        "doc_03b3b30c344f",
+        "doc_9564b5b3acad",
+        "doc_2815bead4942",
+        "doc_8cfb695c2fb4",
+        "doc_f68031b49ba0",
+        "doc_6e4bf38ff873",
+        "doc_667e76d29dc0",
+        "doc_098086965383",
+        "doc_03a0044ffde5",
+        "doc_c3f1088787bf",
+        "doc_3f5703ce3831",
+        "doc_c16965a32aa9",
+        "doc_d9ce4909711b",
+        "doc_49a125e697ea",
+        "doc_09c0476408d1"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.8315546295836225,
+        "20": 0.8315546295836225
+      },
+      "mrr": 1.0,
+      "generated_response": "Bury St Edmunds",
+      "expected_response": "Bury St Edmunds",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_f47338c9996b",
+        "doc_cb5d27a83b13",
+        "doc_aafbb46413d0",
+        "doc_ad2aafd44e20",
+        "doc_b3085f271cc6",
+        "doc_03b3b30c344f",
+        "doc_9564b5b3acad",
+        "doc_2815bead4942",
+        "doc_8cfb695c2fb4",
+        "doc_f68031b49ba0"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4109",
+      "query_text": "The creator of the Lisa Simpson character was born in what year?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_7ec40fdf159a",
+        "doc_d0c505ae8b16",
+        "doc_31d6ca949522",
+        "doc_5169828aec2d",
+        "doc_93305ba72093",
+        "doc_6b2f2e5fb49e",
+        "doc_9f9b4ff707d0",
+        "doc_efeebe340ffc",
+        "doc_7cba4fa47ebb",
+        "doc_1e4d03c14a11",
+        "doc_a4725d4cdea2",
+        "doc_6e493e9d454a",
+        "doc_dbbe76138fd4",
+        "doc_ca92fdd48290",
+        "doc_a0ab4db7f09b",
+        "doc_858e2f14c5f6",
+        "doc_3cff03845f8e",
+        "doc_6538b259f16e",
+        "doc_f0e30e429fe6",
+        "doc_3ec9f0e210cb"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.6131471927654584,
+        "20": 0.778842958530688
+      },
+      "mrr": 1.0,
+      "generated_response": "1954",
+      "expected_response": "1954",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 0.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_7ec40fdf159a",
+        "doc_d0c505ae8b16",
+        "doc_31d6ca949522",
+        "doc_5169828aec2d",
+        "doc_93305ba72093",
+        "doc_6b2f2e5fb49e",
+        "doc_9f9b4ff707d0",
+        "doc_efeebe340ffc",
+        "doc_7cba4fa47ebb",
+        "doc_1e4d03c14a11"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4368",
+      "query_text": "Where is the international airport which Eagle Aviation wet lease operations were based in located ",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_08587edcd195",
+        "doc_3001b694602a",
+        "doc_a7ae162d3f84",
+        "doc_125da49ceead",
+        "doc_fd010adc2e30",
+        "doc_9ed0b6c628bb",
+        "doc_096c4974e64e",
+        "doc_3382103fb97d",
+        "doc_026449f07249",
+        "doc_f68031b49ba0",
+        "doc_ee23e2ba3860",
+        "doc_c3f1088787bf",
+        "doc_84ce3bf6623e",
+        "doc_3ec9f0e210cb",
+        "doc_ca92fdd48290",
+        "doc_667e76d29dc0",
+        "doc_dde147cfc967",
+        "doc_77ca7c69d98f",
+        "doc_ebed3f1895cd",
+        "doc_aafbb46413d0"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.6934264036172708,
+        "5": 0.6934264036172708,
+        "10": 0.6934264036172708,
+        "20": 0.6934264036172708
+      },
+      "mrr": 0.5,
+      "generated_response": "Charles de Gaulle Airport, located in Paris, France.",
+      "expected_response": "France.",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.2222,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 0.9
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_08587edcd195",
+        "doc_3001b694602a",
+        "doc_a7ae162d3f84",
+        "doc_125da49ceead",
+        "doc_fd010adc2e30",
+        "doc_9ed0b6c628bb",
+        "doc_096c4974e64e",
+        "doc_3382103fb97d",
+        "doc_026449f07249",
+        "doc_f68031b49ba0"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_150",
+      "query_text": "What occupation was shared by David Yates and Pietro Germi?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_02b0b6ec4191",
+        "doc_a3625ed02a56",
+        "doc_b3085f271cc6",
+        "doc_14519ccf77ed",
+        "doc_282ae8d69f69",
+        "doc_2360b4679f13",
+        "doc_6c62bb4c82a4",
+        "doc_20c44f6f788e",
+        "doc_d9545712cac8",
+        "doc_5bd4748cf610",
+        "doc_450208e7e37c",
+        "doc_ca92fdd48290",
+        "doc_10eea520a01f",
+        "doc_667e76d29dc0",
+        "doc_5a5d924e5297",
+        "doc_1739e6076d23",
+        "doc_5104e1508643",
+        "doc_ae2e7c76a41d",
+        "doc_05504765ccd1",
+        "doc_3d365c15dd62"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "director",
+      "expected_response": "director",
+      "primary_metric_type": "accuracy",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "f1_score": 1.0,
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_02b0b6ec4191",
+        "doc_a3625ed02a56",
+        "doc_b3085f271cc6",
+        "doc_14519ccf77ed",
+        "doc_282ae8d69f69",
+        "doc_2360b4679f13",
+        "doc_6c62bb4c82a4",
+        "doc_20c44f6f788e",
+        "doc_d9545712cac8",
+        "doc_5bd4748cf610"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "comparison",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_6058",
+      "query_text": "Who sang lead vocals on the Oasis hit single which had an acoustic debut in drummer Tony McCarroll's last concert ? ",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_7a7fed2afee6",
+        "doc_c494a31f6ca1",
+        "doc_0f10a86268a5",
+        "doc_37a99ab63c62",
+        "doc_2432decead96",
+        "doc_aec012044557",
+        "doc_b9e702fcb367",
+        "doc_97ab2e265630",
+        "doc_47025df0149d",
+        "doc_373ba3a08095",
+        "doc_e11a904b7bd9",
+        "doc_ed23deaadf1f",
+        "doc_31588690b0f9",
+        "doc_735b1a612d8b",
+        "doc_f9aa62cf3dc3",
+        "doc_a5542f617c5a",
+        "doc_b0f756730ca9",
+        "doc_bf93edf93edc",
+        "doc_5d09792ec701",
+        "doc_bbc866fee46a"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "Noel Gallagher",
+      "expected_response": "Noel Gallagher",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_7a7fed2afee6",
+        "doc_c494a31f6ca1",
+        "doc_0f10a86268a5",
+        "doc_37a99ab63c62",
+        "doc_2432decead96",
+        "doc_aec012044557",
+        "doc_b9e702fcb367",
+        "doc_97ab2e265630",
+        "doc_47025df0149d",
+        "doc_373ba3a08095"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_1653",
+      "query_text": "St. John's College, Belize offers an education in a tradition in which what three subjects were the core?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_966e81a344ab",
+        "doc_f853fee64ddc",
+        "doc_8f36bdb5be6a",
+        "doc_c9d122339adf",
+        "doc_c12c0c526f89",
+        "doc_4f0fea2fb0ee",
+        "doc_a68a56bd75a0",
+        "doc_ea6b02d1bc5b",
+        "doc_5853461a5065",
+        "doc_dbb4589b8e2f",
+        "doc_302780af1cbb",
+        "doc_c3f1088787bf",
+        "doc_39bb6052294f",
+        "doc_445211f09c1e",
+        "doc_66a84ae091ad",
+        "doc_2c4168fffedc",
+        "doc_3fa11c6c7ca1",
+        "doc_02b0b6ec4191",
+        "doc_f032f418ae03",
+        "doc_0a9edcc306f5"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "grammar, logic, rhetoric",
+      "expected_response": "Grammar, logic, and rhetoric",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.8571,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_966e81a344ab",
+        "doc_f853fee64ddc",
+        "doc_8f36bdb5be6a",
+        "doc_c9d122339adf",
+        "doc_c12c0c526f89",
+        "doc_4f0fea2fb0ee",
+        "doc_a68a56bd75a0",
+        "doc_ea6b02d1bc5b",
+        "doc_5853461a5065",
+        "doc_dbb4589b8e2f"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_4619",
+      "query_text": "Robert Earl Holding owned an oil company that was originally founded by who?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_47e2d4a9357d",
+        "doc_ec625a62af42",
+        "doc_ba4ea8da1d07",
+        "doc_aafbb46413d0",
+        "doc_84ce3bf6623e",
+        "doc_8ef544ac29d7",
+        "doc_53bc1cd787af",
+        "doc_82d49f429b3e",
+        "doc_613c238739e2",
+        "doc_f68031b49ba0",
+        "doc_df23a671b3d1",
+        "doc_301b37a05ac6",
+        "doc_026449f07249",
+        "doc_b9fede16b1e7",
+        "doc_4e53d43d4fb7",
+        "doc_c3f1088787bf",
+        "doc_c16965a32aa9",
+        "doc_aec012044557",
+        "doc_557bc88d1465",
+        "doc_667e76d29dc0"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "mrr": 1.0,
+      "generated_response": "Harry F. Sinclair",
+      "expected_response": "Harry F. Sinclair",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 1.0,
+      "secondary_metrics": {
+        "exact_match": 1.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_47e2d4a9357d",
+        "doc_ec625a62af42",
+        "doc_ba4ea8da1d07",
+        "doc_aafbb46413d0",
+        "doc_84ce3bf6623e",
+        "doc_8ef544ac29d7",
+        "doc_53bc1cd787af",
+        "doc_82d49f429b3e",
+        "doc_613c238739e2",
+        "doc_f68031b49ba0"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_2179",
+      "query_text": "What instrument does Duff McKagan play on Macy Gray's single, Kissed It?",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_a4247055dbff",
+        "doc_60c2b5fd62ba",
+        "doc_aec012044557",
+        "doc_a812a5c4302a",
+        "doc_fd050464aa6b",
+        "doc_b0f756730ca9",
+        "doc_31588690b0f9",
+        "doc_8c53778b172d",
+        "doc_d5cd0c8e5830",
+        "doc_2432decead96",
+        "doc_7eaa5759c2de",
+        "doc_45736d518b6b",
+        "doc_4ff9dffe7361",
+        "doc_c79e178eba59",
+        "doc_cd456deb2a3f",
+        "doc_d26e570a78af",
+        "doc_98bd4c64eb96",
+        "doc_0bdad11371df",
+        "doc_49a125e697ea",
+        "doc_35d97e145cb8"
+      ],
+      "hit_at_k": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.0,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "ndcg_at_k": {
+        "1": 0.0,
+        "3": 0.38685280723454163,
+        "5": 0.38685280723454163,
+        "10": 0.5714285040141098,
+        "20": 0.5714285040141098
+      },
+      "mrr": 0.5,
+      "generated_response": "bass guitar",
+      "expected_response": "bass",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.6667,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_a4247055dbff",
+        "doc_60c2b5fd62ba",
+        "doc_aec012044557",
+        "doc_a812a5c4302a",
+        "doc_fd050464aa6b",
+        "doc_b0f756730ca9",
+        "doc_31588690b0f9",
+        "doc_8c53778b172d",
+        "doc_d5cd0c8e5830",
+        "doc_2432decead96"
+      ],
+      "generation_recall": 1.0,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    },
+    {
+      "query_id": "q_6444",
+      "query_text": "Which American popular music and country music singer recorded J. D. Souther song ",
+      "dataset_name": "hotpotqa",
+      "dataset_type": "HYBRID",
+      "retrieved_doc_ids": [
+        "doc_2432decead96",
+        "doc_05504765ccd1",
+        "doc_93305ba72093",
+        "doc_6c62bb4c82a4",
+        "doc_f9aa62cf3dc3",
+        "doc_d735cea9df20",
+        "doc_31588690b0f9",
+        "doc_7eaa5759c2de",
+        "doc_fd050464aa6b",
+        "doc_82d49f429b3e",
+        "doc_613c238739e2",
+        "doc_bfa120b9fe2e",
+        "doc_37a99ab63c62",
+        "doc_01f29574fc84",
+        "doc_f24a54a09e67",
+        "doc_4ff9dffe7361",
+        "doc_d2641cda0f2b",
+        "doc_3c09741ca3a4",
+        "doc_869ae1eeb3a0",
+        "doc_87b0d85d9c51"
+      ],
+      "hit_at_k": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0,
+        "10": 1.0,
+        "20": 1.0
+      },
+      "recall_at_k": {
+        "1": 0.5,
+        "3": 0.5,
+        "5": 0.5,
+        "10": 0.5,
+        "20": 0.5
+      },
+      "ndcg_at_k": {
+        "1": 1.0,
+        "3": 0.6131471927654584,
+        "5": 0.6131471927654584,
+        "10": 0.6131471927654584,
+        "20": 0.6131471927654584
+      },
+      "mrr": 1.0,
+      "generated_response": "Linda Ronstadt",
+      "expected_response": "Linda Maria Ronstadt",
+      "primary_metric_type": "f1_score",
+      "primary_metric_value": 0.8,
+      "secondary_metrics": {
+        "exact_match": 0.0,
+        "faithfulness": 1.0
+      },
+      "status": "completed",
+      "generation_doc_ids": [
+        "doc_2432decead96",
+        "doc_05504765ccd1",
+        "doc_93305ba72093",
+        "doc_6c62bb4c82a4",
+        "doc_f9aa62cf3dc3",
+        "doc_d735cea9df20",
+        "doc_31588690b0f9",
+        "doc_7eaa5759c2de",
+        "doc_fd050464aa6b",
+        "doc_82d49f429b3e"
+      ],
+      "generation_recall": 0.5,
+      "generation_hit": 1.0,
+      "metadata": {
+        "question_type": "bridge",
+        "level": "hard"
+      }
+    }
+  ]
+}
