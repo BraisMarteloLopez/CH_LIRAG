@@ -203,9 +203,16 @@ class GenerationExecutor:
         # contra este para penalizar cualquier alucinacion introducida por
         # la propia capa de synthesis.
         if has_kg_data and self._kg_synthesis_enabled:
-            generation_context = await self._synthesize_kg_context_async(
+            generation_context, synth_error = await self._synthesize_kg_context_async(
                 query.query_text, structured_context
             )
+            # Deuda #15: persistir outcome per-query para auditoria en JSON/CSV.
+            # synth_error is None => la narrativa fue la entregada al LLM.
+            retrieval_detail.retrieval_metadata["kg_synthesis_used"] = (
+                synth_error is None
+            )
+            if synth_error is not None:
+                retrieval_detail.retrieval_metadata["kg_synthesis_error"] = synth_error
         else:
             generation_context = structured_context
 
@@ -266,20 +273,26 @@ class GenerationExecutor:
         self,
         query_text: str,
         structured_context: str,
-    ) -> str:
+    ) -> Tuple[str, Optional[str]]:
         """Reescribe el contexto KG multi-seccion como narrativa coherente.
 
         Divergencia LightRAG #2. Usa el LLM (`self._llm_service`) con un
         prompt query-aware que pide narrativa con citas [ref:N] preservadas.
 
         Degradacion graceful: si el LLM falla, devuelve string vacio o
-        excede el budget, hacemos fallback al `structured_context` original.
-        El run nunca se rompe por culpa de la synthesis. Todos los modos de
-        fallo se contabilizan en `_kg_synthesis_tracker`.
+        timeout, hacemos fallback al `structured_context` original. El run
+        nunca se rompe por culpa de la synthesis. Todos los modos de fallo
+        se contabilizan en `_kg_synthesis_tracker`.
 
         Returns:
-            Narrativa sintetizada (puede estar truncada al budget) o el
-            structured_context original como fallback.
+            Tupla (contexto_para_generacion, error_code):
+              - contexto_para_generacion: narrativa sintetizada (puede estar
+                truncada) o el `structured_context` original como fallback.
+              - error_code: None en caso de exito o truncacion; en fallback
+                uno de "timeout" | "error" | "empty". Usado por
+                `_process_single_async` para poblar
+                `retrieval_metadata.kg_synthesis_used` /
+                `kg_synthesis_error` per-query (deuda #15).
         """
         _kg_synthesis_tracker.record("invocations")
 
@@ -305,7 +318,7 @@ class GenerationExecutor:
                 self._kg_synthesis_timeout_s,
                 query_text[:60],
             )
-            return structured_context
+            return structured_context, "timeout"
         except Exception as e:
             _kg_synthesis_tracker.record("errors")
             logger.warning(
@@ -314,7 +327,7 @@ class GenerationExecutor:
                 e,
                 query_text[:60],
             )
-            return structured_context
+            return structured_context, "error"
 
         narrative = str(response).strip()
         if not narrative:
@@ -324,14 +337,14 @@ class GenerationExecutor:
                 "usando contexto estructurado.",
                 query_text[:60],
             )
-            return structured_context
+            return structured_context, "empty"
 
         if len(narrative) > max_chars:
             _kg_synthesis_tracker.record("truncations")
             narrative = narrative[:max_chars]
 
         _kg_synthesis_tracker.record("successes")
-        return narrative
+        return narrative, None
 
     async def _calculate_metrics_async(
         self,

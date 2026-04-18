@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from shared.types import EvaluationRun
+from shared.types import EvaluationRun, extract_retrieval_metadata_subset
 
 logger = logging.getLogger(__name__)
 
@@ -197,19 +197,29 @@ class RunExporter:
         # Secondary metric columns
         for sk in sorted_secondary_keys:
             fieldnames.append(f"sec_{sk}")
-        # LIGHT_RAG graph diagnostics
-        has_lightrag = any(
-            qr.retrieval.retrieval_metadata.get("graph_candidates")
+        # LIGHT_RAG per-query diagnostics (deuda #15 cerrada).
+        # Guard anterior buscaba `graph_candidates`, clave eliminada con la
+        # resolucion de la divergencia #8. Usamos el subset compartido con
+        # QueryEvaluationResult.to_dict() como unica fuente de verdad: si
+        # alguna query tiene claves LightRAG (entidades, relaciones,
+        # fallback, synthesis...), activamos las columnas.
+        lightrag_subsets = [
+            extract_retrieval_metadata_subset(qr.retrieval.retrieval_metadata)
             for qr in run.query_results
-        )
+        ]
+        has_lightrag = any(lightrag_subsets)
+        lightrag_columns: list[str] = []
         if has_lightrag:
-            fieldnames.extend([
-                "graph_candidates",
-                "vector_candidates",
-                "graph_only_candidates",
-                "graph_resolved",
-                "query_keywords",
-            ])
+            lightrag_columns = [
+                "lightrag_mode",
+                "kg_fallback",
+                "kg_entities_count",
+                "kg_relations_count",
+                "kg_chunk_keyword_matches",
+                "kg_synthesis_used",
+                "kg_synthesis_error",
+            ]
+            fieldnames.extend(lightrag_columns)
         fieldnames.extend([
             "expected_response",
             "generated_response",
@@ -219,7 +229,7 @@ class RunExporter:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
 
-            for qr in run.query_results:
+            for qr, lightrag_subset in zip(run.query_results, lightrag_subsets):
                 row = {
                     "query_id": qr.query_id,
                     "query_text": qr.query_text[:200],
@@ -264,15 +274,15 @@ class RunExporter:
                     value = qr.secondary_metrics.get(sk)
                     row[f"sec_{sk}"] = round(value, 4) if value is not None else ""
                 if has_lightrag:
-                    ret_meta = qr.retrieval.retrieval_metadata
-                    row["graph_candidates"] = ret_meta.get("graph_candidates", "")
-                    row["vector_candidates"] = ret_meta.get("vector_candidates", "")
-                    row["graph_only_candidates"] = ret_meta.get("graph_only_candidates", "")
-                    row["graph_resolved"] = ret_meta.get("graph_resolved", "")
-                    kw = ret_meta.get("query_keywords", {})
-                    row["query_keywords"] = (
-                        json.dumps(kw, ensure_ascii=False) if kw else ""
-                    )
+                    # lightrag_subset es el mismo bloque que va al JSON via
+                    # QueryEvaluationResult.to_dict(). Claves ausentes
+                    # (p.ej. queries SIMPLE_VECTOR dentro de un run mixto
+                    # o queries KG sin synthesis activa) se emiten vacias.
+                    for col in lightrag_columns:
+                        value = lightrag_subset.get(col, "")
+                        if isinstance(value, bool):
+                            value = "true" if value else "false"
+                        row[col] = value
                 row["expected_response"] = (
                     (qr.expected_response or "")[:200]
                 )

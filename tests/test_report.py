@@ -40,7 +40,14 @@ def _make_retrieval(doc_ids=None, expected=None) -> QueryRetrievalDetail:
     )
 
 
-def _make_qr(query_id="q1", with_gen=True, reranked=False, graph_meta=False) -> QueryEvaluationResult:
+def _make_qr(
+    query_id="q1",
+    with_gen=True,
+    reranked=False,
+    graph_meta=False,
+    kg_fallback=None,
+    synthesis_error=None,
+) -> QueryEvaluationResult:
     gen = GenerationResult("answer text", 42.0) if with_gen else None
     metadata = {}
     if reranked:
@@ -48,13 +55,21 @@ def _make_qr(query_id="q1", with_gen=True, reranked=False, graph_meta=False) -> 
 
     retrieval = _make_retrieval()
     if graph_meta:
+        # Claves actuales emitidas por LightRAGRetriever post-#8/#10 y por
+        # GenerationExecutor.synthesis. Antes del fix de deuda #15 se usaban
+        # claves legacy (graph_candidates, etc.) que el retriever actual no
+        # emite — el guard quedaba muerto y el CSV no tenia columnas KG.
         retrieval.retrieval_metadata = {
-            "graph_candidates": 5,
-            "vector_candidates": 10,
-            "graph_only_candidates": 2,
-            "graph_resolved": 2,
-            "query_keywords": {"low": ["physics"]},
+            "lightrag_mode": "hybrid",
+            "kg_entities": [{"name": "physics"}, {"name": "quantum"}],
+            "kg_relations": [{"source": "physics", "target": "quantum"}],
+            "kg_chunk_keyword_matches": 3,
+            "kg_synthesis_used": synthesis_error is None,
         }
+        if kg_fallback is not None:
+            retrieval.retrieval_metadata["kg_fallback"] = kg_fallback
+        if synthesis_error is not None:
+            retrieval.retrieval_metadata["kg_synthesis_error"] = synthesis_error
 
     return QueryEvaluationResult(
         query_id=query_id,
@@ -126,6 +141,48 @@ class TestToJson:
         run = _make_run()
         path = exporter.to_json(run, filename="custom.json")
         assert path.name == "custom.json"
+
+    def test_retrieval_metadata_serialized_when_lightrag(self, tmp_path):
+        """Deuda #15 cerrada: el JSON serializa el subset de retrieval_metadata
+        con conteos de entidades/relaciones + flags de synthesis."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qrs = [_make_qr("q1", graph_meta=True, synthesis_error="timeout")]
+        run = _make_run(query_results=qrs)
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        qr_json = data["query_results"][0]
+        assert "retrieval_metadata" in qr_json
+        rm = qr_json["retrieval_metadata"]
+        assert rm["lightrag_mode"] == "hybrid"
+        assert rm["kg_entities_count"] == 2
+        assert rm["kg_relations_count"] == 1
+        assert rm["kg_chunk_keyword_matches"] == 3
+        assert rm["kg_synthesis_used"] is False
+        assert rm["kg_synthesis_error"] == "timeout"
+
+    def test_retrieval_metadata_absent_for_simple_vector(self, tmp_path):
+        """Regresion guard: sin retrieval_metadata LightRAG, la clave
+        retrieval_metadata no aparece en el JSON de la query."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qrs = [_make_qr("q1", graph_meta=False)]
+        run = _make_run(query_results=qrs)
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        qr_json = data["query_results"][0]
+        assert "retrieval_metadata" not in qr_json
+
+    def test_retrieval_metadata_with_kg_fallback(self, tmp_path):
+        """kg_fallback (p.ej. 'no_doc_ids') se preserva per-query en JSON."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qrs = [_make_qr("q1", graph_meta=True, kg_fallback="no_doc_ids")]
+        run = _make_run(query_results=qrs)
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        assert rm["kg_fallback"] == "no_doc_ids"
 
 
 class TestToSummaryCsv:
@@ -204,6 +261,8 @@ class TestToDetailCsv:
         assert row["sec_exact_match"] == "1.0"
 
     def test_lightrag_columns_when_graph_meta(self, tmp_path):
+        """Con retrieval_metadata LightRAG presente, detail.csv expone las
+        columnas KG actuales (deuda #15 cerrada)."""
         exporter = RunExporter(output_dir=tmp_path)
         qrs = [_make_qr("q1", graph_meta=True), _make_qr("q2", graph_meta=True)]
         run = _make_run(query_results=qrs)
@@ -211,9 +270,61 @@ class TestToDetailCsv:
 
         with open(path) as f:
             reader = csv.DictReader(f)
-            row = next(reader)
-        assert "graph_candidates" in row
-        assert row["graph_candidates"] == "5"
+            rows = list(reader)
+        # Claves actuales del retriever/synthesis
+        assert "lightrag_mode" in rows[0]
+        assert "kg_entities_count" in rows[0]
+        assert "kg_relations_count" in rows[0]
+        assert "kg_chunk_keyword_matches" in rows[0]
+        assert "kg_synthesis_used" in rows[0]
+        assert "kg_synthesis_error" in rows[0]
+        assert "kg_fallback" in rows[0]
+        assert rows[0]["lightrag_mode"] == "hybrid"
+        assert rows[0]["kg_entities_count"] == "2"
+        assert rows[0]["kg_relations_count"] == "1"
+        assert rows[0]["kg_chunk_keyword_matches"] == "3"
+        assert rows[0]["kg_synthesis_used"] == "true"
+        # Claves legacy eliminadas: `graph_candidates` ya no aparece.
+        assert "graph_candidates" not in rows[0]
+
+    def test_lightrag_columns_absent_for_simple_vector_run(self, tmp_path):
+        """Regresion guard: sin retrieval_metadata LightRAG, ninguna columna KG
+        aparece en el header (SIMPLE_VECTOR run)."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qrs = [_make_qr("q1", graph_meta=False), _make_qr("q2", graph_meta=False)]
+        run = _make_run(query_results=qrs)
+        path = exporter.to_detail_csv(run)
+
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+        assert "lightrag_mode" not in fieldnames
+        assert "kg_fallback" not in fieldnames
+        assert "kg_entities_count" not in fieldnames
+
+    def test_lightrag_fallback_and_error_serialized(self, tmp_path):
+        """kg_fallback y kg_synthesis_error se escriben en el CSV cuando existen."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qrs = [
+            _make_qr(
+                "q_timeout", graph_meta=True,
+                kg_fallback=None, synthesis_error="timeout",
+            ),
+            _make_qr(
+                "q_fallback", graph_meta=True,
+                kg_fallback="no_doc_ids", synthesis_error=None,
+            ),
+        ]
+        run = _make_run(query_results=qrs)
+        path = exporter.to_detail_csv(run)
+
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        assert rows[0]["kg_synthesis_error"] == "timeout"
+        assert rows[0]["kg_synthesis_used"] == "false"
+        assert rows[1]["kg_fallback"] == "no_doc_ids"
+        assert rows[1]["kg_synthesis_used"] == "true"
 
 
 class TestExport:

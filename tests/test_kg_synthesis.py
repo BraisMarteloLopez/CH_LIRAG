@@ -393,3 +393,102 @@ class TestSynthesisTracker:
 
         reset_kg_synthesis_stats()
         assert get_kg_synthesis_stats()["invocations"] == 0
+
+
+# =============================================================================
+# Per-query metadata (deuda #15 cerrada)
+# =============================================================================
+
+
+class TestPerQuerySynthesisMetadata:
+    """_process_single_async debe persistir outcome de synthesis en
+    retrieval_metadata para que JSON/CSV lo puedan auditar per-query."""
+
+    def test_success_writes_kg_synthesis_used_true(self):
+        executor = _make_executor(synthesis_enabled=True, llm_response="narrative")
+        ds_config = get_dataset_config("hotpotqa")
+        retrieval = _make_retrieval(kg_meta=True)
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is True
+        assert "kg_synthesis_error" not in retrieval.retrieval_metadata
+
+    def test_timeout_writes_error_code(self):
+        executor = _make_executor(
+            synthesis_enabled=True, synthesis_timeout_s=0.05,
+        )
+
+        async def _slow(prompt, system_prompt=None, **kw):
+            if "context-synthesis" in (system_prompt or ""):
+                await asyncio.sleep(1.0)
+                return "never"
+            return "gen_ok"
+
+        executor._llm_service.invoke_async = AsyncMock(side_effect=_slow)
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is False
+        assert retrieval.retrieval_metadata.get("kg_synthesis_error") == "timeout"
+
+    def test_empty_response_writes_error_code_empty(self):
+        executor = _make_executor(synthesis_enabled=True, llm_response="   ")
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is False
+        assert retrieval.retrieval_metadata.get("kg_synthesis_error") == "empty"
+
+    def test_llm_exception_writes_error_code_error(self):
+        executor = _make_executor(synthesis_enabled=True)
+
+        async def _side(prompt, system_prompt=None, **kw):
+            if "context-synthesis" in (system_prompt or ""):
+                raise RuntimeError("synthesis LLM down")
+            return "gen_ok"
+
+        executor._llm_service.invoke_async = AsyncMock(side_effect=_side)
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is False
+        assert retrieval.retrieval_metadata.get("kg_synthesis_error") == "error"
+
+    def test_no_kg_data_leaves_metadata_untouched(self):
+        """Sin KG data, no se escribe kg_synthesis_* en retrieval_metadata
+        (queries SIMPLE_VECTOR no deben inflar el JSON)."""
+        executor = _make_executor(synthesis_enabled=True)
+        retrieval = _make_retrieval(kg_meta=False)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert "kg_synthesis_used" not in retrieval.retrieval_metadata
+        assert "kg_synthesis_error" not in retrieval.retrieval_metadata

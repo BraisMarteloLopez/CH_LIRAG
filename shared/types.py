@@ -345,6 +345,48 @@ class GenerationResult:
     model_name: str = "unknown"
 
 
+# Claves de retrieval_metadata que se serializan per-query en JSON/CSV.
+# Conteos para kg_entities/kg_relations (listas completas son pesadas) +
+# flags diagnosticos. Deuda #15 (cerrada).
+_RETRIEVAL_METADATA_PASSTHROUGH_KEYS = (
+    "kg_fallback",
+    "kg_chunk_keyword_matches",
+    "kg_synthesis_used",
+    "kg_synthesis_error",
+    "lightrag_mode",
+    "graph_active",
+)
+
+_RETRIEVAL_METADATA_COUNT_KEYS = (
+    "kg_entities",
+    "kg_relations",
+)
+
+
+def extract_retrieval_metadata_subset(
+    retrieval_metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Devuelve el subconjunto per-query que se exporta a JSON/CSV.
+
+    Aplica a LIGHT_RAG. Listas de entidades/relaciones se colapsan a
+    conteos (`kg_entities_count`, `kg_relations_count`). Claves no
+    presentes se omiten silenciosamente para que queries SIMPLE_VECTOR
+    no inflen el JSON con keys vacias. Retorna `{}` si no hay nada que
+    serializar, para que el caller pueda omitir el bloque entero.
+    """
+    if not retrieval_metadata:
+        return {}
+    subset: Dict[str, Any] = {}
+    for key in _RETRIEVAL_METADATA_PASSTHROUGH_KEYS:
+        if key in retrieval_metadata:
+            subset[key] = retrieval_metadata[key]
+    for key in _RETRIEVAL_METADATA_COUNT_KEYS:
+        if key in retrieval_metadata:
+            value = retrieval_metadata[key]
+            subset[f"{key}_count"] = len(value) if value is not None else 0
+    return subset
+
+
 @dataclass
 class QueryEvaluationResult:
     """Resultado completo de evaluacion para una query individual."""
@@ -398,6 +440,16 @@ class QueryEvaluationResult:
         # FIX DT-7: incluir metadata (contiene reranked status, etc.)
         if self.metadata:
             result["metadata"] = self.metadata
+        # Deuda #15 (cerrada): bloque filtrado de retrieval_metadata para
+        # auditar per-query el comportamiento LIGHT_RAG. Entidades y
+        # relaciones se serializan como conteos (listas completas son
+        # pesadas en JSON); kg_fallback/kg_synthesis_used/_error permiten
+        # discriminar en que capa degrado cada query.
+        ret_meta_subset = extract_retrieval_metadata_subset(
+            self.retrieval.retrieval_metadata
+        )
+        if ret_meta_subset:
+            result["retrieval_metadata"] = ret_meta_subset
         return result
 
 
@@ -609,4 +661,5 @@ __all__ = [
     "get_dataset_config",
     "LLMJudgeProtocol",
     "EmbeddingModelProtocol",
+    "extract_retrieval_metadata_subset",
 ]
