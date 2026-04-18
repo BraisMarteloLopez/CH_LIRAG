@@ -1,0 +1,124 @@
+=== MTEB Sandbox Config ===
+  Dataset:    hotpotqa
+  Embedding:  llama-embed-nemotron-8b (asymmetric)
+  Strategy:   LIGHT_RAG
+  Reranker:   ON
+  Generation: ON
+  DEV_MODE:   ON (35 queries, 1000 corpus, gold docs garantizados)
+  KG mode:    hybrid
+  KG tokens:  extraction=4096, keyword=1024
+  KG batch:   5 docs/call
+  KG synth:   ON (max_chars=auto, timeout=90.0s)
+  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento para construir el knowledge graph (concurrencia=16)
+  Shuffle:    seed=42
+  MinIO:      http://172.30.79.110:9000/lakehouse
+  Results:    data/results
+Console log: data/results/console_log_light_rag_20260419_004640.txt
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator: ============================================================
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator: MTEB EVALUATION RUN
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator:   Run ID:     mteb_hotpotqa_20260419_004640
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator:   Dataset:    hotpotqa
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator:   Embedding:  llama-embed-nemotron-8b
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator:   Strategy:   LIGHT_RAG
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator:   Mode:       DEV_MODE (35 queries, 1000 corpus)
+2026-04-19 00:46:40,609 INFO sandbox_mteb.evaluator: ============================================================
+2026-04-19 00:46:40,609 INFO shared.structured_logging: [run_start] run_id=mteb_hotpotqa_20260419_004640, dataset=hotpotqa, embedding=llama-embed-nemotron-8b, strategy=LIGHT_RAG, dev_mode=True
+2026-04-19 00:46:40,610 INFO shared.llm: Cargando embedding NIM: llama-embed-nemotron-8b @ http://172.30.79.103:8000/v1 [tipo=asymmetric]
+2026-04-19 00:46:40,610 INFO sandbox_mteb.evaluator:   Embedding cargado: llama-embed-nemotron-8b
+2026-04-19 00:46:40,610 INFO shared.llm: AsyncLLMService: nvidia/nemotron-3-nano @ http://172.30.79.99:8000/v1 (max_concurrent=16)
+2026-04-19 00:46:40,610 INFO shared.retrieval.reranker: CrossEncoderReranker: nvidia/llama-3.2-nv-rerankqa-1b-v2 @ http://172.30.79.98:9000/v1
+2026-04-19 00:46:40,610 INFO sandbox_mteb.evaluator:   Reranker activo: nvidia/llama-3.2-nv-rerankqa-1b-v2
+2026-04-19 00:46:40,631 INFO sandbox_mteb.embedding_service:   LLM context window: 49152 tokens (modelo: nvidia/nemotron-3-nano)
+2026-04-19 00:46:40,631 INFO sandbox_mteb.embedding_service:   Context chars: 192512 (derivado: 49152 tokens - 1024 overhead = 48128 tokens * 4.0 chars/token)
+2026-04-19 00:46:40,714 INFO sandbox_mteb.loader: MinIOLoader: http://172.30.79.110:9000/lakehouse/datasets/evaluation
+2026-04-19 00:46:44,321 INFO sandbox_mteb.loader: Dataset 'hotpotqa' cargado desde cache
+2026-04-19 00:46:44,321 INFO sandbox_mteb.evaluator:   DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS
+2026-04-19 00:46:44,340 INFO sandbox_mteb.subset_selection:   DEV_MODE: 35 queries, 70 gold docs, 930 distractores, 1000 corpus total
+2026-04-19 00:46:44,341 INFO sandbox_mteb.evaluator:   Usando 35 queries, 1000 docs
+2026-04-19 00:46:44,341 INFO shared.retrieval: Factory: creando retriever LIGHT_RAG
+2026-04-19 00:46:44,342 WARNING sandbox_mteb.evaluator:   LIGHT_RAG: indexacion hara ~1000 llamadas LLM para extraccion de tripletas. Estimacion: ~2 min (1000 docs, 16 concurrentes, ~2s/llamada). Tip: configura KG_CACHE_DIR para persistir el grafo entre runs.
+2026-04-19 00:46:44,342 INFO sandbox_mteb.evaluator:   Indexando 1000 documentos...
+2026-04-19 00:46:44,342 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: indexando 1000 documentos...
+2026-04-19 00:46:44,670 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 00:46:44,678 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 00:47:07,999 INFO shared.retrieval.core: Indexados 1000 documentos en 'eval_mteb_hotpotqa_20260419_004640'
+2026-04-19 00:52:26,115 WARNING shared.retrieval.lightrag.triplet_extractor: Batch parse failed for 5 docs, falling back to single-doc extraction
+2026-04-19 00:53:14,781 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 00:54:24,036 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 00:54:28,542 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 00:57:16,872 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 00:57:20,184 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:01:53,400 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:03:33,410 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:03:57,348 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:07:24,708 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:09:53,439 WARNING shared.llm: Intento 2/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 2s...
+2026-04-19 01:14:18,919 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:14:18,935 WARNING shared.retrieval.lightrag.triplet_extractor: Batch parse failed for 5 docs, falling back to single-doc extraction
+2026-04-19 01:17:42,354 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:18:10,711 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:18:35,371 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:19:40,914 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:20:59,596 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:21:00,174 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:23:33,148 WARNING shared.llm: Intento 2/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 2s...
+2026-04-19 01:26:52,616 WARNING shared.retrieval.lightrag.triplet_extractor: Batch parse failed for 5 docs, falling back to single-doc extraction
+2026-04-19 01:27:28,981 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:28:25,261 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:28:50,066 INFO shared.retrieval.lightrag.triplet_extractor: TripletExtractor: batch 1000 docs en 2502064ms. 7736 entidades, 5279 relaciones, 6024 chunk keywords (988 docs con keywords). | 0 fallidos, 0 input vacio, 12 resultado vacio
+2026-04-19 01:28:51,264 INFO shared.retrieval.lightrag.knowledge_graph: KnowledgeGraph: 7445 co-occurrence edges added (DTm-73), 647 connected components
+2026-04-19 01:28:51,264 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: 7445 co-occurrence edges creadas
+2026-04-19 01:28:51,265 INFO shared.retrieval.lightrag.knowledge_graph: KnowledgeGraph: descripciones mergeadas para 293 entidades (multi-doc)
+2026-04-19 01:28:51,265 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: 293 entidades con descripciones consolidadas
+2026-04-19 01:28:51,266 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:28:51,267 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:29:27,620 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: entity VDB construido en 36355ms (5976 entidades indexadas)
+2026-04-19 01:29:27,646 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:29:27,647 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:30:59,947 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: relationship VDB construido en 92302ms (12722 relaciones indexadas)
+2026-04-19 01:30:59,952 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:30:59,953 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:31:06,299 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: chunk keywords VDB construida en 6347ms (988 docs indexados)
+2026-04-19 01:31:06,300 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: KG construido en 2638300ms. 5279 tripletas de 1000 docs.
+2026-04-19 01:31:06,305 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: indexacion 2661960ms. Graph: True. KG stats: {'num_entities': 5976, 'num_relations': 12626, 'num_docs_with_entities': 985, 'avg_entities_per_doc': 6.456852791878172, 'graph_connected_components': 647, 'entities_dropped': 0, 'entities_evicted': 0, 'triplets_dropped_by_cap': 0, 'max_entities': 100000, 'approx_memory_mb': 2.4, 'num_docs_with_keywords': 988, 'total_chunk_keywords': 6024}
+2026-04-19 01:31:06,305 INFO sandbox_mteb.evaluator:   Indexacion completada
+2026-04-19 01:31:06,306 INFO sandbox_mteb.embedding_service:   Pre-embedding 35 queries (batch=5, type=asymmetric)...
+2026-04-19 01:31:06,721 INFO sandbox_mteb.embedding_service:   Queries embebidas: 35/35
+2026-04-19 01:31:06,721 INFO sandbox_mteb.embedding_service:   Pre-embedding completado: 35 queries en 0.4s (84 queries/s)
+2026-04-19 01:31:06,721 INFO sandbox_mteb.evaluator:   Pre-extrayendo keywords de 35 queries (batch LLM)...
+2026-04-19 01:31:06,722 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: pre-extrayendo keywords de 35 queries...
+2026-04-19 01:31:24,336 INFO shared.retrieval.lightrag.triplet_extractor: TripletExtractor: query keywords batch 35 queries (35 unicas) en 17614ms
+2026-04-19 01:31:24,336 INFO sandbox_mteb.evaluator:   Keywords pre-extraidas en 17.6s
+2026-04-19 01:31:24,336 INFO sandbox_mteb.evaluator:   Chunk 1: queries 1-35/35 (35 queries)
+2026-04-19 01:31:24,370 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:31:24,476 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:31:24,546 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:31:24,588 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:33:02,172 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query ' The Soul of Buddha is a 1918 American silent romance film s...'; usando contexto estructurado.
+2026-04-19 01:33:02,174 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'Were was the Mexican state after which there is Villa Unión,...'; usando contexto estructurado.
+2026-04-19 01:33:02,178 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'Who directed the second film in a British series of action c...'; usando contexto estructurado.
+2026-04-19 01:33:02,179 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'What Was the name of Juan Manuel Márquez's  WBO champion hol...'; usando contexto estructurado.
+2026-04-19 01:33:02,182 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'Ruddles Brewery is owned by a pub retailer and brewer based ...'; usando contexto estructurado.
+2026-04-19 01:33:02,182 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'The creator of the Lisa Simpson character was born in what y...'; usando contexto estructurado.
+2026-04-19 01:33:02,185 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'Who sang lead vocals on the Oasis hit single which had an ac...'; usando contexto estructurado.
+2026-04-19 01:33:02,186 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'St. John's College, Belize offers an education in a traditio...'; usando contexto estructurado.
+2026-04-19 01:33:02,188 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'Robert Earl Holding owned an oil company that was originally...'; usando contexto estructurado.
+2026-04-19 01:33:02,189 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'What instrument does Duff McKagan play on Macy Gray's single...'; usando contexto estructurado.
+2026-04-19 01:33:02,190 WARNING sandbox_mteb.generation_executor: KG synthesis timeout (90.0s) para query 'Which American popular music and country music singer record...'; usando contexto estructurado.
+2026-04-19 01:34:11,199 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:34:11,199 WARNING shared.llm: Intento 1/4 fallo: LLM returned empty content after stripping reasoning tags. Reintentando en 1s...
+2026-04-19 01:34:38,975 INFO sandbox_mteb.checkpoint:   Checkpoint guardado: 35 queries → mteb_hotpotqa_20260419_004640_checkpoint.json
+2026-04-19 01:34:38,975 INFO sandbox_mteb.checkpoint:   Checkpoint eliminado: mteb_hotpotqa_20260419_004640_checkpoint.json
+2026-04-19 01:34:38,978 INFO sandbox_mteb.evaluator: RUN COMPLETADO en 2878.4s | Hit@5=0.9429 | MRR=0.8242
+2026-04-19 01:34:38,978 INFO sandbox_mteb.evaluator:   Judge fallback (faithfulness): invocations=35, parse_failure_rate=0.00%, default_return_rate=0.00%
+2026-04-19 01:34:38,978 INFO sandbox_mteb.evaluator:   KG synthesis: invocations=35, successes=24, errors=0, empty=0, truncations=0, timeouts=11, fallback_rate=31.43%
+2026-04-19 01:34:38,978 INFO shared.structured_logging: [run_complete] run_id=mteb_hotpotqa_20260419_004640, elapsed_s=2878.37, queries_evaluated=35, queries_failed=0, hit_at_5=0.9429, mrr=0.8242, avg_generation_score=0.6423, judge_fallback_stats={'faithfulness': {'invocations': 35, 'parse_failures': 0, 'default_returns': 0, 'parse_failure_rate': 0.0, 'default_return_rate': 0.0}}, kg_synthesis_stats={'invocations': 35, 'successes': 24, 'errors': 0, 'empty_returns': 0, 'truncations': 0, 'timeouts': 11, 'fallback_rate': 0.3142857142857143, 'p50_total_ms': 78832.2, 'p95_total_ms': 90002.2, 'max_total_ms': 90002.6, 'n_total_samples': 35, 'p50_queue_ms': 28949.5, 'p95_queue_ms': 78821.1, 'max_queue_ms': 79899.4, 'n_queue_samples': 35, 'p50_llm_ms': 41905.6, 'p95_llm_ms': 79924.2, 'max_llm_ms': 80993.4, 'n_llm_samples': 24}
+2026-04-19 01:34:39,000 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:34:39,102 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:34:39,282 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-04-19 01:34:39,380 INFO shared.report: Run mteb_hotpotqa_20260419_004640 exportado a data/results: mteb_hotpotqa_20260419_004640.json, mteb_hotpotqa_20260419_004640_summary.csv, mteb_hotpotqa_20260419_004640_detail.csv
+
+Resultados exportados:
+  json: data/results/mteb_hotpotqa_20260419_004640.json
+  summary_csv: data/results/mteb_hotpotqa_20260419_004640_summary.csv
+  detail_csv: data/results/mteb_hotpotqa_20260419_004640_detail.csv
