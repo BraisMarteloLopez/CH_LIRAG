@@ -66,6 +66,9 @@ def make_lightrag(
     retriever._vector_retriever = vector_retriever or MagicMock()
     retriever._entities_vdb = None
     retriever._relationships_vdb = None
+    # Divergencia #10: Chunk Keywords VDB (tercer canal high-level).
+    # None por defecto; tests que quieran ejercitar el canal lo setean.
+    retriever._chunk_keywords_vdb = None
     return retriever
 
 
@@ -88,6 +91,8 @@ def make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
         "docs_empty_input": 0, "docs_empty_result": 0,
         "docs_json_recovered": 0,
         "total_entities": 0, "total_relations": 0,
+        # Divergencia #10
+        "docs_with_keywords": 0, "total_chunk_keywords": 0,
     }
     return ext
 

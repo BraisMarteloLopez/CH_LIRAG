@@ -7,11 +7,11 @@ Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de 
 | Estrategia | Indexacion | Busqueda | Reranker |
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
-| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding (chunks, entidades, relaciones) | Chunks via KG (`source_doc_ids` de entidades/relaciones resueltas por Entity/Relationship VDB) con fallback a vector search; LLM synthesis del contexto | Off (auto-desactivado) |
+| `LIGHT_RAG` | LLM triplet extraction + chunk keywords + KG + Embedding (chunks, entidades, relaciones) | Chunks via KG: tres canales (Entity VDB, Relationship VDB, Chunk Keywords VDB) agregados al mismo scoring; fallback a vector search; LLM synthesis del contexto | Off (auto-desactivado) |
 
-**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina knowledge graph construido via LLM con busqueda vectorial. Entity VDB + Relationship VDB para resolucion semantica; chunks seleccionados via `source_doc_ids` del KG (paper-aligned) con fallback a vector search directo cuando el KG no produce doc_ids. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
+**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina knowledge graph construido via LLM con busqueda vectorial. Tres VDBs dedicadas para resolucion semantica: Entity VDB (entidades), Relationship VDB (relaciones) y Chunk Keywords VDB (temas high-level por chunk, divergencia #10). Chunks seleccionados via `source_doc_ids` del KG y matching directo a temas (paper-aligned), con fallback a vector search directo cuando el KG no produce doc_ids. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
 
-> **Estado frente al paper**: divergencia #8 (chunks via KG) resuelta opcion A; divergencias #2, #4+5, #6, #7, #9 tambien resueltas. Queda abierta #10 (keywords high-level por chunk durante indexacion). Detalle y criticidad en [CLAUDE.md — Divergencias con el paper original](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad). La validacion empirica del conjunto sobre un benchmark donde el paper muestre ventaja (P0) es el gate activo — ver [CLAUDE.md — Proximos pasos · P0](CLAUDE.md#p0--replicacion-empirica-del-paper--activo-desbloqueado).
+> **Estado frente al paper**: divergencias #2, #4+5, #6, #7, #8, #9 resueltas. **#10 (keywords high-level por chunk durante indexacion) implementada en codigo y con tests unitarios, pendiente validacion end-to-end con NIM + MinIO reales** antes de marcarse como "Resuelta". Detalle y criticidad en [CLAUDE.md — Divergencias con el paper original](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad). El gate activo es Pre-P0 (completitud arquitectural + ejecucion estable) antes de P0 (replicacion empirica) — ver [CLAUDE.md — Proximos pasos](CLAUDE.md#proximos-pasos).
 
 ## Arquitectura
 
@@ -121,6 +121,10 @@ KG_CACHE_DIR=                         # Directorio para persistir KG (vacio = si
 KG_DESCRIPTION_SYNTHESIS=false        # LLM synthesis para descripciones multi-doc (DAM-4)
 KG_SYNTHESIS_CHAR_THRESHOLD=200       # Chars minimos para trigger LLM synthesis (DAM-4)
 
+# Chunk high-level keywords (divergencia LightRAG #10)
+KG_CHUNK_KEYWORDS_ENABLED=true        # Piggyback extraccion de temas por chunk + 3er canal en retrieval
+KG_CHUNK_KEYWORDS_TOP_K=20            # Top-K devueltos por keyword al consultar Chunk Keywords VDB
+
 # KG context synthesis en generacion (divergencia LightRAG #2)
 KG_SYNTHESIS_ENABLED=true             # LLM reescribe contexto multi-seccion como narrativa
 KG_SYNTHESIS_MAX_CHARS=0              # 0 = usar max_context_chars del run
@@ -189,7 +193,7 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 
 **Audit Fases 1-5:** 8 bugfixes, 48 tests nuevos, DAM-4 LLM synthesis, eviction con score compuesto. 447 tests, 0 fallos.
 
-**Post-refactor (abril 2026):** instrumentacion de tasa de fallback del LLM judge (+19 tests, threshold enforcement via `JUDGE_FALLBACK_THRESHOLD`) + capa de synthesis KG en generacion (divergencia LightRAG #2, +13 tests, prompt query-aware con citas `[ref:N]`, faithfulness contra structured_context original para penalizar hallucinations de la propia synthesis) + resolucion divergencia #8 opcion A (chunks via `source_doc_ids` del KG con fallback a vector search, eliminacion de codigo muerto) + resolucion divergencia #9 (enriquecimiento con vecinos 1-hop y endpoints). Divergencias arquitectonicas resueltas con el paper: #2, #4+5, #6, #7, #8, #9. Queda abierta #10 (keywords high-level por chunk durante indexacion).
+**Post-refactor (abril 2026):** instrumentacion de tasa de fallback del LLM judge (+19 tests, threshold enforcement via `JUDGE_FALLBACK_THRESHOLD`) + capa de synthesis KG en generacion (divergencia LightRAG #2, +13 tests, prompt query-aware con citas `[ref:N]`, faithfulness contra structured_context original para penalizar hallucinations de la propia synthesis) + resolucion divergencia #8 opcion A (chunks via `source_doc_ids` del KG con fallback a vector search, eliminacion de codigo muerto) + resolucion divergencia #9 (enriquecimiento con vecinos 1-hop y endpoints) + implementacion de divergencia #10 (high-level keywords por chunk durante indexacion via piggyback en triplet extraction, tercera VDB `Chunk Keywords VDB`, canal adicional en el path high-level de `_retrieve_via_kg` con scoring simetrico; 29 tests nuevos; serializacion KG v2→v3 con rechazo explicito de caches viejos; `KG_CHUNK_KEYWORDS_ENABLED`/`KG_CHUNK_KEYWORDS_TOP_K` en `.env`). Divergencias arquitectonicas resueltas: #2, #4+5, #6, #7, #8, #9. **#10 implementada, pendiente validacion end-to-end con NIM + MinIO reales antes de marcarse "Resuelta"**.
 
 80+ issues resueltos. Ver historial git.
 

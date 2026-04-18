@@ -49,7 +49,7 @@ def test_parse_valid_json():
         ]
     }'''
 
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
+    entities, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 2
     assert len(relations) == 1
     assert entities[0].name == "Alice"
@@ -73,7 +73,7 @@ def test_parse_json_with_markdown():
 }
 ```'''
 
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
+    entities, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
     assert entities[0].name == "Bob"
     assert relations == []
@@ -106,7 +106,7 @@ def test_parse_missing_relations():
     """JSON sin 'relations' -> entities ok, relations=[]."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "Alice", "type": "PERSON"}]}'
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
+    entities, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
     assert relations == []
 
@@ -115,7 +115,7 @@ def test_parse_missing_entities():
     """JSON sin 'entities' -> entities=[], relations ok."""
     ext = make_extractor()
     raw = '{"relations": [{"source": "A", "target": "B", "relation": "knows"}]}'
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
+    entities, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert entities == []
     assert len(relations) == 1
 
@@ -124,7 +124,7 @@ def test_parse_entity_without_name():
     """Entity sin 'name' se ignora (isinstance check)."""
     ext = make_extractor()
     raw = '{"entities": [{"type": "PERSON"}, {"name": "Alice", "type": "ORG"}], "relations": []}'
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
+    entities, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
     assert entities[0].name == "Alice"
 
@@ -133,7 +133,7 @@ def test_parse_relation_without_source():
     """Relation sin 'source' se ignora."""
     ext = make_extractor()
     raw = '{"entities": [], "relations": [{"target": "B", "relation": "knows"}]}'
-    entities, relations = ext._parse_extraction_json(raw, "doc1")
+    entities, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert relations == []
 
 
@@ -145,7 +145,7 @@ def test_parse_invalid_entity_type_normalized_to_other():
     """Entity con type invalido se normaliza a OTHER (DTm-16)."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "SomeThing", "type": "CUSTOM_TYPE"}], "relations": []}'
-    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    entities, _, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
     assert entities[0].entity_type == "OTHER"
 
@@ -182,11 +182,12 @@ def test_extract_from_doc_llm_error():
     mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("API down"))
     ext = make_extractor(mock_llm=mock_llm)
 
-    entities, relations = asyncio.run(
+    entities, relations, keywords = asyncio.run(
         ext.extract_from_doc_async("doc1", "some text")
     )
     assert entities == []
     assert relations == []
+    assert keywords == []
 
 
 # =============================================================================
@@ -199,11 +200,12 @@ def test_extract_from_doc_empty_text():
     mock_llm.invoke_async = AsyncMock()
     ext = make_extractor(mock_llm=mock_llm)
 
-    entities, relations = asyncio.run(
+    entities, relations, keywords = asyncio.run(
         ext.extract_from_doc_async("doc1", "")
     )
     assert entities == []
     assert relations == []
+    assert keywords == []
     mock_llm.invoke_async.assert_not_called()
 
 
@@ -213,11 +215,12 @@ def test_extract_from_doc_whitespace_only():
     mock_llm.invoke_async = AsyncMock()
     ext = make_extractor(mock_llm=mock_llm)
 
-    entities, relations = asyncio.run(
+    entities, relations, keywords = asyncio.run(
         ext.extract_from_doc_async("doc1", "   \n  ")
     )
     assert entities == []
     assert relations == []
+    assert keywords == []
     mock_llm.invoke_async.assert_not_called()
 
 
@@ -263,7 +266,7 @@ def test_entity_name_min_length_accepted():
     """Entity con nombre de 1 char se acepta (DTm-27: MIN_ENTITY_NAME_LEN=1)."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "A", "type": "PERSON"}, {"name": "Bob", "type": "PERSON"}], "relations": []}'
-    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    entities, _, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 2
     assert entities[0].name == "A"
     assert entities[1].name == "Bob"
@@ -273,7 +276,7 @@ def test_entity_empty_name_rejected():
     """Entity con nombre vacio se rechaza (DTm-16)."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "", "type": "PERSON"}, {"name": "  ", "type": "PERSON"}], "relations": []}'
-    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    entities, _, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 0
 
 
@@ -282,7 +285,7 @@ def test_entity_description_truncated():
     ext = make_extractor()
     long_desc = "x" * 500
     raw = f'{{"entities": [{{"name": "Alice", "type": "PERSON", "description": "{long_desc}"}}], "relations": []}}'
-    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    entities, _, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(entities) == 1
     assert len(entities[0].description) == 200
 
@@ -292,7 +295,7 @@ def test_relation_description_truncated():
     ext = make_extractor()
     long_desc = "y" * 500
     raw = f'{{"entities": [], "relations": [{{"source": "AA", "target": "BB", "relation": "knows", "description": "{long_desc}"}}]}}'
-    _, relations = ext._parse_extraction_json(raw, "doc1")
+    _, relations, _ = ext._parse_extraction_json(raw, "doc1")
     assert len(relations) == 1
     assert len(relations[0].description) == 200
 
@@ -303,7 +306,7 @@ def test_valid_entity_types_accepted():
     from shared.retrieval.lightrag.triplet_extractor import VALID_ENTITY_TYPES
     for etype in VALID_ENTITY_TYPES:
         raw = f'{{"entities": [{{"name": "Test Entity", "type": "{etype}"}}], "relations": []}}'
-        entities, _ = ext._parse_extraction_json(raw, "doc1")
+        entities, _, _ = ext._parse_extraction_json(raw, "doc1")
         assert entities[0].entity_type == etype
 
 
@@ -311,8 +314,120 @@ def test_entity_type_case_insensitive():
     """Entity type se normaliza a uppercase (DTm-16)."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "Alice", "type": "person"}], "relations": []}'
-    entities, _ = ext._parse_extraction_json(raw, "doc1")
+    entities, _, _ = ext._parse_extraction_json(raw, "doc1")
     assert entities[0].entity_type == "PERSON"
+
+
+# =============================================================================
+# Divergencia #10: extraccion de high-level keywords por chunk
+# =============================================================================
+
+def test_chunk_keywords_parsed_from_field():
+    """#10: `high_level_keywords` del JSON se devuelve como tercer elemento."""
+    ext = make_extractor()
+    raw = (
+        '{"entities": [], "relations": [], '
+        '"high_level_keywords": ["financial regulation", "methodology"]}'
+    )
+    entities, relations, keywords = ext._parse_extraction_json(raw, "doc1")
+    assert entities == []
+    assert relations == []
+    assert keywords == ["financial regulation", "methodology"]
+
+
+def test_chunk_keywords_absent_field_returns_empty():
+    """#10: si el JSON no incluye `high_level_keywords`, keywords=[]."""
+    ext = make_extractor()
+    raw = '{"entities": [], "relations": []}'
+    _, _, keywords = ext._parse_extraction_json(raw, "doc1")
+    assert keywords == []
+
+
+def test_chunk_keywords_deduplicated_case_insensitive():
+    """#10: dedup case-insensitive preservando casing inicial y cap=10."""
+    ext = make_extractor()
+    # 3 duplicados por casing + 10 unicos + 2 muy cortos -> cap 10, dedup a 10
+    keywords_in = [
+        "Quantum mechanics", "QUANTUM MECHANICS", "quantum mechanics",
+        "Methodology", "Limitations", "Results", "Discussion",
+        "Background", "Data", "Analysis", "Conclusion",
+        "Prior work", "Future work",  # los dos ultimos no caben
+        "x",  # longitud < 2 -> rechazado
+    ]
+    raw = (
+        '{"entities": [], "relations": [], '
+        f'"high_level_keywords": {keywords_in!r}'
+        '}'
+    ).replace("'", '"')
+    _, _, keywords = ext._parse_extraction_json(raw, "doc1")
+    # dedup preserva el primer casing
+    assert keywords[0] == "Quantum mechanics"
+    # cap = 10
+    assert len(keywords) == 10
+    # "x" (1 char) rechazada
+    assert "x" not in keywords
+
+
+def test_chunk_keywords_length_cap():
+    """#10: keywords >80 chars se rechazan."""
+    ext = make_extractor()
+    long_kw = "a" * 100
+    keywords_in = [long_kw, "valid theme"]
+    raw = (
+        '{"entities": [], "relations": [], '
+        f'"high_level_keywords": {keywords_in!r}'
+        '}'
+    ).replace("'", '"')
+    _, _, keywords = ext._parse_extraction_json(raw, "doc1")
+    assert keywords == ["valid theme"]
+
+
+def test_chunk_keywords_non_string_entries_skipped():
+    """#10: entradas no-str en la lista no explotan, se saltan."""
+    ext = make_extractor()
+    raw = (
+        '{"entities": [], "relations": [], '
+        '"high_level_keywords": ["ok", 42, null, {"a": 1}, "also ok"]}'
+    )
+    _, _, keywords = ext._parse_extraction_json(raw, "doc1")
+    assert keywords == ["ok", "also ok"]
+
+
+def test_chunk_keywords_updates_stats():
+    """#10: docs_with_keywords y total_chunk_keywords suben cuando hay keywords."""
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value=(
+        '{"entities": [], "relations": [], '
+        '"high_level_keywords": ["a theme", "another theme"]}'
+    ))
+    ext = make_extractor(mock_llm=mock_llm)
+
+    _, _, keywords = asyncio.run(
+        ext.extract_from_doc_async("doc1", "some text with themes")
+    )
+    assert keywords == ["a theme", "another theme"]
+
+    stats = ext.get_stats()
+    assert stats["docs_with_keywords"] == 1
+    assert stats["total_chunk_keywords"] == 2
+
+
+def test_chunk_keywords_no_keywords_no_stats_bump():
+    """#10: docs sin keywords no incrementan docs_with_keywords."""
+    mock_llm = MagicMock()
+    mock_llm.invoke_async = AsyncMock(return_value=(
+        '{"entities": [], "relations": [], "high_level_keywords": []}'
+    ))
+    ext = make_extractor(mock_llm=mock_llm)
+
+    _, _, keywords = asyncio.run(
+        ext.extract_from_doc_async("doc1", "text")
+    )
+    assert keywords == []
+
+    stats = ext.get_stats()
+    assert stats["docs_with_keywords"] == 0
+    assert stats["total_chunk_keywords"] == 0
 
 
 # =============================================================================
