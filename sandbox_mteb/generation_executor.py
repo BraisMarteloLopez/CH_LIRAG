@@ -53,16 +53,69 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 
 
+def _percentile(values: List[float], p: float) -> float:
+    """Percentil simple (nearest-rank). Retorna 0.0 si la lista esta vacia.
+
+    Implementacion local para evitar dependencia en `statistics.quantiles`
+    (requiere n>=2) y tratar el caso vacio como 0 en vez de excepcion.
+    """
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    idx = min(len(sorted_vals) - 1, int(p * len(sorted_vals)))
+    return sorted_vals[idx]
+
+
 class _KGSynthesisTracker:
-    """Contador thread-safe de eventos de KG synthesis."""
+    """Contador + timing thread-safe de eventos de KG synthesis.
+
+    Timing (deuda #16): ademas de contadores, acumula tres listas paralelas
+    de duraciones por invocacion:
+      - `total_ms`: tiempo total de `_synthesize_kg_context_async` desde
+        que entra a `asyncio.wait_for` hasta que decide el outcome
+        (exito/truncacion/empty/error/timeout). Incluye cola + LLM + parsing.
+      - `queue_ms`: tiempo esperando el semaforo de concurrencia de
+        `AsyncLLMService`. Solo presente si el intento llego a acquire.
+      - `llm_ms`: tiempo desde acquire hasta respuesta del LLM. Solo
+        presente si la llamada retorno (puede faltar en timeouts).
+
+    `snapshot()` expone p50/p95/max para cada lista — permite discriminar
+    saturacion de cola vs llamadas LLM lentas en runs con `fallback_rate`
+    alto (ver HANDOFF paso 3).
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._counters: Counter = Counter()
+        self._timings: Dict[str, List[float]] = {
+            "total_ms": [],
+            "queue_ms": [],
+            "llm_ms": [],
+        }
 
     def record(self, event: str) -> None:
         with self._lock:
             self._counters[event] += 1
+
+    def record_timing(
+        self,
+        total_ms: float,
+        queue_ms: Optional[float],
+        llm_ms: Optional[float],
+    ) -> None:
+        """Registra timing de una invocacion individual.
+
+        Los valores opcionales (`queue_ms`, `llm_ms`) pueden faltar cuando
+        la invocacion cayo antes de poblar la clave correspondiente (p.ej.
+        timeout mientras aun estaba esperando el semaforo => solo
+        `total_ms` disponible).
+        """
+        with self._lock:
+            self._timings["total_ms"].append(total_ms)
+            if queue_ms is not None:
+                self._timings["queue_ms"].append(queue_ms)
+            if llm_ms is not None:
+                self._timings["llm_ms"].append(llm_ms)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
@@ -72,7 +125,7 @@ class _KGSynthesisTracker:
                 + self._counters.get("empty_returns", 0)
                 + self._counters.get("timeouts", 0)
             )
-            return {
+            stats: Dict[str, Any] = {
                 "invocations": n,
                 "successes": self._counters.get("successes", 0),
                 "errors": self._counters.get("errors", 0),
@@ -81,10 +134,28 @@ class _KGSynthesisTracker:
                 "timeouts": self._counters.get("timeouts", 0),
                 "fallback_rate": (fallbacks / n) if n else 0.0,
             }
+            # Timing por categoria (deuda #16). `n_samples` expone cuantas
+            # invocaciones poblaron cada lista (queue/llm pueden faltar en
+            # timeouts segun donde haya sido cancelada la call).
+            for key, values in self._timings.items():
+                prefix = key.replace("_ms", "")
+                stats[f"p50_{prefix}_ms"] = round(
+                    _percentile(values, 0.50), 1
+                )
+                stats[f"p95_{prefix}_ms"] = round(
+                    _percentile(values, 0.95), 1
+                )
+                stats[f"max_{prefix}_ms"] = round(
+                    max(values) if values else 0.0, 1
+                )
+                stats[f"n_{prefix}_samples"] = len(values)
+            return stats
 
     def reset(self) -> None:
         with self._lock:
             self._counters.clear()
+            for values in self._timings.values():
+                values.clear()
 
 
 _kg_synthesis_tracker = _KGSynthesisTracker()
@@ -203,9 +274,16 @@ class GenerationExecutor:
         # contra este para penalizar cualquier alucinacion introducida por
         # la propia capa de synthesis.
         if has_kg_data and self._kg_synthesis_enabled:
-            generation_context = await self._synthesize_kg_context_async(
+            generation_context, synth_error = await self._synthesize_kg_context_async(
                 query.query_text, structured_context
             )
+            # Deuda #15: persistir outcome per-query para auditoria en JSON/CSV.
+            # synth_error is None => la narrativa fue la entregada al LLM.
+            retrieval_detail.retrieval_metadata["kg_synthesis_used"] = (
+                synth_error is None
+            )
+            if synth_error is not None:
+                retrieval_detail.retrieval_metadata["kg_synthesis_error"] = synth_error
         else:
             generation_context = structured_context
 
@@ -266,20 +344,26 @@ class GenerationExecutor:
         self,
         query_text: str,
         structured_context: str,
-    ) -> str:
+    ) -> Tuple[str, Optional[str]]:
         """Reescribe el contexto KG multi-seccion como narrativa coherente.
 
         Divergencia LightRAG #2. Usa el LLM (`self._llm_service`) con un
         prompt query-aware que pide narrativa con citas [ref:N] preservadas.
 
         Degradacion graceful: si el LLM falla, devuelve string vacio o
-        excede el budget, hacemos fallback al `structured_context` original.
-        El run nunca se rompe por culpa de la synthesis. Todos los modos de
-        fallo se contabilizan en `_kg_synthesis_tracker`.
+        timeout, hacemos fallback al `structured_context` original. El run
+        nunca se rompe por culpa de la synthesis. Todos los modos de fallo
+        se contabilizan en `_kg_synthesis_tracker`.
 
         Returns:
-            Narrativa sintetizada (puede estar truncada al budget) o el
-            structured_context original como fallback.
+            Tupla (contexto_para_generacion, error_code):
+              - contexto_para_generacion: narrativa sintetizada (puede estar
+                truncada) o el `structured_context` original como fallback.
+              - error_code: None en caso de exito o truncacion; en fallback
+                uno de "timeout" | "error" | "empty". Usado por
+                `_process_single_async` para poblar
+                `retrieval_metadata.kg_synthesis_used` /
+                `kg_synthesis_error` per-query (deuda #15).
         """
         _kg_synthesis_tracker.record("invocations")
 
@@ -290,48 +374,68 @@ class GenerationExecutor:
             structured_context=structured_context,
         )
 
+        # Deuda #16: timing per-invocacion para discriminar saturacion de
+        # cola vs llamada LLM lenta. `timing_out` se popula dentro de
+        # invoke_async cuando llega al semaforo / completa la llamada.
+        timing_out: Dict[str, float] = {}
+        t_start = time.perf_counter()
+
+        def _record_timing() -> None:
+            total_ms = (time.perf_counter() - t_start) * 1000
+            _kg_synthesis_tracker.record_timing(
+                total_ms,
+                timing_out.get("queue_wait_ms"),
+                timing_out.get("llm_ms"),
+            )
+
         try:
             response = await asyncio.wait_for(
                 self._llm_service.invoke_async(
-                    user_prompt, system_prompt=system_prompt
+                    user_prompt,
+                    system_prompt=system_prompt,
+                    timing_out=timing_out,
                 ),
                 timeout=self._kg_synthesis_timeout_s,
             )
         except asyncio.TimeoutError:
             _kg_synthesis_tracker.record("timeouts")
+            _record_timing()
             logger.warning(
                 "KG synthesis timeout (%.1fs) para query '%s...'; "
                 "usando contexto estructurado.",
                 self._kg_synthesis_timeout_s,
                 query_text[:60],
             )
-            return structured_context
+            return structured_context, "timeout"
         except Exception as e:
             _kg_synthesis_tracker.record("errors")
+            _record_timing()
             logger.warning(
                 "KG synthesis error: %s (query: '%s...'); "
                 "usando contexto estructurado.",
                 e,
                 query_text[:60],
             )
-            return structured_context
+            return structured_context, "error"
 
         narrative = str(response).strip()
         if not narrative:
             _kg_synthesis_tracker.record("empty_returns")
+            _record_timing()
             logger.warning(
                 "KG synthesis devolvio respuesta vacia para query '%s...'; "
                 "usando contexto estructurado.",
                 query_text[:60],
             )
-            return structured_context
+            return structured_context, "empty"
 
         if len(narrative) > max_chars:
             _kg_synthesis_tracker.record("truncations")
             narrative = narrative[:max_chars]
 
         _kg_synthesis_tracker.record("successes")
-        return narrative
+        _record_timing()
+        return narrative, None
 
     async def _calculate_metrics_async(
         self,

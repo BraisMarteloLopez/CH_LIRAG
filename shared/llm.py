@@ -23,7 +23,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Coroutine, Optional, TypeVar
+from typing import Any, Coroutine, Dict, Optional, TypeVar
 
 from shared.types import EmbeddingModelProtocol
 
@@ -273,20 +273,42 @@ class AsyncLLMService:
     # -------------------------------------------------------------------------
 
     async def _invoke_with_retry(
-        self, messages: list, max_tokens: int = 4096
+        self, messages: list, max_tokens: int = 4096,
+        timing_out: Optional[Dict[str, float]] = None,
     ) -> str:
+        """Invoca el LLM con reintentos y reporta timing opcional.
+
+        Si `timing_out` (dict) se proporciona, se popula incrementalmente:
+          - `queue_wait_ms`: tiempo desde inicio del intento hasta adquirir
+            el semaforo de concurrencia. Se escribe justo tras el acquire.
+          - `llm_ms`: tiempo desde el acquire hasta el retorno de
+            `client.ainvoke`. Se escribe tras completar la llamada.
+        Con reintentos, el dict refleja los valores del **ultimo intento**
+        completado. Si `wait_for(...)` cancela esta coroutine mid-call, las
+        claves presentes indican hasta donde llego (util para diagnosticar
+        timeouts: `queue_wait_ms` presente sin `llm_ms` => cancelada dentro
+        de la llamada al LLM; ambas ausentes => cancelada antes del acquire).
+        """
         last_error = None
         retries = 0
 
         for attempt in range(self.max_retries + 1):
             start_time = time.perf_counter()
             try:
-                async with self._get_semaphore():
+                semaphore = self._get_semaphore()
+                async with semaphore:
+                    queue_ms = (time.perf_counter() - start_time) * 1000
+                    if timing_out is not None:
+                        timing_out["queue_wait_ms"] = queue_ms
+                    llm_start = time.perf_counter()
                     response = await self._client.ainvoke(
                         messages,
                         max_tokens=max_tokens,
                         temperature=self.temperature,
                     )
+                    llm_ms = (time.perf_counter() - llm_start) * 1000
+                    if timing_out is not None:
+                        timing_out["llm_ms"] = llm_ms
 
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 await self.metrics.record_request(True, latency_ms, retries)
@@ -359,13 +381,22 @@ class AsyncLLMService:
         prompt: str,
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
+        timing_out: Optional[Dict[str, float]] = None,
     ) -> str:
-        """API async principal."""
+        """API async principal.
+
+        `timing_out`: si se proporciona, el dict se popula con
+        `queue_wait_ms` y `llm_ms` del ultimo intento completado
+        (ver `_invoke_with_retry` para semantica exacta bajo cancelaciones
+        y reintentos).
+        """
         messages = []
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))
         messages.append(HumanMessage(content=prompt))
-        return await self._invoke_with_retry(messages, max_tokens)
+        return await self._invoke_with_retry(
+            messages, max_tokens, timing_out=timing_out,
+        )
 
     def invoke(
         self,

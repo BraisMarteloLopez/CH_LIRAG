@@ -393,3 +393,214 @@ class TestSynthesisTracker:
 
         reset_kg_synthesis_stats()
         assert get_kg_synthesis_stats()["invocations"] == 0
+
+
+# =============================================================================
+# Per-query metadata (deuda #15 cerrada)
+# =============================================================================
+
+
+class TestPerQuerySynthesisMetadata:
+    """_process_single_async debe persistir outcome de synthesis en
+    retrieval_metadata para que JSON/CSV lo puedan auditar per-query."""
+
+    def test_success_writes_kg_synthesis_used_true(self):
+        executor = _make_executor(synthesis_enabled=True, llm_response="narrative")
+        ds_config = get_dataset_config("hotpotqa")
+        retrieval = _make_retrieval(kg_meta=True)
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is True
+        assert "kg_synthesis_error" not in retrieval.retrieval_metadata
+
+    def test_timeout_writes_error_code(self):
+        executor = _make_executor(
+            synthesis_enabled=True, synthesis_timeout_s=0.05,
+        )
+
+        async def _slow(prompt, system_prompt=None, **kw):
+            if "context-synthesis" in (system_prompt or ""):
+                await asyncio.sleep(1.0)
+                return "never"
+            return "gen_ok"
+
+        executor._llm_service.invoke_async = AsyncMock(side_effect=_slow)
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is False
+        assert retrieval.retrieval_metadata.get("kg_synthesis_error") == "timeout"
+
+    def test_empty_response_writes_error_code_empty(self):
+        executor = _make_executor(synthesis_enabled=True, llm_response="   ")
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is False
+        assert retrieval.retrieval_metadata.get("kg_synthesis_error") == "empty"
+
+    def test_llm_exception_writes_error_code_error(self):
+        executor = _make_executor(synthesis_enabled=True)
+
+        async def _side(prompt, system_prompt=None, **kw):
+            if "context-synthesis" in (system_prompt or ""):
+                raise RuntimeError("synthesis LLM down")
+            return "gen_ok"
+
+        executor._llm_service.invoke_async = AsyncMock(side_effect=_side)
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert retrieval.retrieval_metadata.get("kg_synthesis_used") is False
+        assert retrieval.retrieval_metadata.get("kg_synthesis_error") == "error"
+
+    def test_no_kg_data_leaves_metadata_untouched(self):
+        """Sin KG data, no se escribe kg_synthesis_* en retrieval_metadata
+        (queries SIMPLE_VECTOR no deben inflar el JSON)."""
+        executor = _make_executor(synthesis_enabled=True)
+        retrieval = _make_retrieval(kg_meta=False)
+        ds_config = get_dataset_config("hotpotqa")
+
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), retrieval, ds_config, "hotpotqa",
+            )
+        )
+
+        assert "kg_synthesis_used" not in retrieval.retrieval_metadata
+        assert "kg_synthesis_error" not in retrieval.retrieval_metadata
+
+
+# =============================================================================
+# Timing instrumentation (deuda #16)
+# =============================================================================
+
+
+class TestSynthesisTiming:
+    """Deuda #16: p50/p95/max por categoria (total/queue/llm) en snapshot."""
+
+    def test_empty_tracker_reports_zero_timings(self):
+        """Tracker sin invocaciones expone p50/p95/max=0 y n_samples=0."""
+        stats = get_kg_synthesis_stats()
+        for prefix in ("total", "queue", "llm"):
+            assert stats[f"p50_{prefix}_ms"] == 0.0
+            assert stats[f"p95_{prefix}_ms"] == 0.0
+            assert stats[f"max_{prefix}_ms"] == 0.0
+            assert stats[f"n_{prefix}_samples"] == 0
+
+    def test_success_records_total_queue_llm_timings(self):
+        """Synthesis exitosa => todas las listas de timing reciben una entrada."""
+        async def _delayed(prompt, system_prompt=None, **kw):
+            # Poblar timing_out como lo hace el AsyncLLMService real.
+            out = kw.get("timing_out")
+            if out is not None:
+                out["queue_wait_ms"] = 1.5
+                out["llm_ms"] = 25.0
+            await asyncio.sleep(0.01)
+            return "narrative"
+
+        executor = _make_executor(synthesis_enabled=True)
+        executor._llm_service.invoke_async = AsyncMock(side_effect=_delayed)
+        ds_config = get_dataset_config("hotpotqa")
+
+        # Ejecutamos 3 queries para tener muestras suficientes para p50/p95
+        for _ in range(3):
+            asyncio.run(
+                executor._process_single_async(
+                    _make_query(), _make_retrieval(kg_meta=True),
+                    ds_config, "hotpotqa",
+                )
+            )
+
+        stats = get_kg_synthesis_stats()
+        assert stats["n_total_samples"] == 3
+        assert stats["n_queue_samples"] == 3
+        assert stats["n_llm_samples"] == 3
+        # queue_ms / llm_ms vienen del timing_out que popula el servicio
+        # (en este mock los inyectamos a mano) => deben reflejar los valores
+        # inyectados, no el tiempo del mock.
+        assert stats["p50_queue_ms"] == 1.5
+        assert stats["p50_llm_ms"] == 25.0
+        # total_ms es wall-clock real de `_synthesize_kg_context_async`
+        # (sleep(0.01) del mock + overhead async). > 5ms como sanity check;
+        # NO suma queue+llm porque esos son valores inyectados, no reales.
+        assert stats["p50_total_ms"] >= 5.0
+
+    def test_timeout_records_partial_timing(self):
+        """Timeout => timing_out puede quedar parcialmente poblado segun
+        donde cancelo wait_for. `n_total_samples` siempre cuenta, pero
+        queue/llm pueden tener menos muestras."""
+        executor = _make_executor(
+            synthesis_enabled=True, synthesis_timeout_s=0.05,
+        )
+
+        async def _slow(prompt, system_prompt=None, **kw):
+            # No poblamos timing_out (simulamos cancelacion antes del
+            # semaphore acquire); el tracker debe seguir registrando total_ms.
+            await asyncio.sleep(1.0)
+            return "never"
+
+        executor._llm_service.invoke_async = AsyncMock(side_effect=_slow)
+        ds_config = get_dataset_config("hotpotqa")
+        asyncio.run(
+            executor._process_single_async(
+                _make_query(), _make_retrieval(kg_meta=True),
+                ds_config, "hotpotqa",
+            )
+        )
+
+        stats = get_kg_synthesis_stats()
+        assert stats["timeouts"] == 1
+        # total_ms registrado (siempre se calcula al salir del except)
+        assert stats["n_total_samples"] == 1
+        # total_ms refleja el timeout (~50ms), no el sleep(1.0) completo
+        assert 40.0 <= stats["max_total_ms"] <= 500.0
+        # queue/llm no se poblaron porque el mock no los establece
+        assert stats["n_queue_samples"] == 0
+        assert stats["n_llm_samples"] == 0
+
+    def test_percentile_ordering(self):
+        """p50 <= p95 <= max en cualquier distribucion no-vacia."""
+        from sandbox_mteb.generation_executor import _kg_synthesis_tracker
+
+        for ms in [10.0, 50.0, 100.0, 200.0, 500.0, 1000.0]:
+            _kg_synthesis_tracker.record_timing(ms, ms * 0.1, ms * 0.9)
+
+        stats = get_kg_synthesis_stats()
+        assert stats["p50_total_ms"] <= stats["p95_total_ms"] <= stats["max_total_ms"]
+        assert stats["p50_queue_ms"] <= stats["p95_queue_ms"] <= stats["max_queue_ms"]
+        assert stats["p50_llm_ms"] <= stats["p95_llm_ms"] <= stats["max_llm_ms"]
+
+    def test_reset_clears_timings(self):
+        from sandbox_mteb.generation_executor import _kg_synthesis_tracker
+
+        _kg_synthesis_tracker.record_timing(100.0, 5.0, 80.0)
+        assert get_kg_synthesis_stats()["n_total_samples"] == 1
+
+        reset_kg_synthesis_stats()
+        stats = get_kg_synthesis_stats()
+        assert stats["n_total_samples"] == 0
+        assert stats["p50_total_ms"] == 0.0

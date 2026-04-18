@@ -234,6 +234,106 @@ def test_load_embedding_model_invalid_type():
 # L9: Retry logic
 # =============================================================================
 
+# =============================================================================
+# L10: timing_out hook (deuda #16)
+# =============================================================================
+
+@patch("shared.llm.HAS_NVIDIA", True)
+@patch("shared.llm.ChatNVIDIA")
+def test_timing_out_populated_on_success(mock_chat_cls):
+    """invoke_async con timing_out popula queue_wait_ms y llm_ms al completar."""
+    from shared.llm import AsyncLLMService
+
+    mock_response = MagicMock()
+    mock_response.content = "response"
+
+    async def _slow_ainvoke(*args, **kwargs):
+        # Simulamos latencia minima verificable
+        await asyncio.sleep(0.02)
+        return mock_response
+
+    mock_client = AsyncMock()
+    mock_client.ainvoke = AsyncMock(side_effect=_slow_ainvoke)
+    mock_chat_cls.return_value = mock_client
+
+    service = AsyncLLMService(
+        base_url="http://fake:8000/v1",
+        model_name="test",
+        max_retries=0,
+    )
+    timing: dict = {}
+    result = run_sync(service.invoke_async("prompt", timing_out=timing))
+    assert result == "response"
+    # queue_wait_ms < 1ms tipicamente (no hay contencion);
+    # llm_ms debe reflejar el sleep(0.02) => ~20ms
+    assert "queue_wait_ms" in timing
+    assert "llm_ms" in timing
+    assert timing["llm_ms"] >= 15.0  # margen para CI lenta
+
+
+@patch("shared.llm.HAS_NVIDIA", True)
+@patch("shared.llm.ChatNVIDIA")
+def test_timing_out_omitted_backward_compat(mock_chat_cls):
+    """Sin timing_out, invoke_async se comporta como antes (no crash)."""
+    from shared.llm import AsyncLLMService
+
+    mock_response = MagicMock()
+    mock_response.content = "response"
+
+    mock_client = AsyncMock()
+    mock_client.ainvoke = AsyncMock(return_value=mock_response)
+    mock_chat_cls.return_value = mock_client
+
+    service = AsyncLLMService(
+        base_url="http://fake:8000/v1",
+        model_name="test",
+        max_retries=0,
+    )
+    # Sin kwarg timing_out: debe funcionar igual que antes
+    result = run_sync(service.invoke_async("prompt"))
+    assert result == "response"
+
+
+@patch("shared.llm.HAS_NVIDIA", True)
+@patch("shared.llm.ChatNVIDIA")
+def test_timing_out_queue_wait_reflects_semaphore_contention(mock_chat_cls):
+    """Con max_concurrent=1 y una call ya corriendo, la segunda mide queue_wait."""
+    from shared.llm import AsyncLLMService
+
+    mock_response = MagicMock()
+    mock_response.content = "response"
+
+    async def _slow_ainvoke(*args, **kwargs):
+        await asyncio.sleep(0.03)
+        return mock_response
+
+    mock_client = AsyncMock()
+    mock_client.ainvoke = AsyncMock(side_effect=_slow_ainvoke)
+    mock_chat_cls.return_value = mock_client
+
+    service = AsyncLLMService(
+        base_url="http://fake:8000/v1",
+        model_name="test",
+        max_concurrent=1,
+        max_retries=0,
+    )
+
+    async def _drive():
+        t1: dict = {}
+        t2: dict = {}
+        # Arrancamos dos calls concurrentes con max_concurrent=1:
+        # la segunda debe esperar al semaforo y reflejarlo en queue_wait_ms.
+        coro1 = service.invoke_async("p1", timing_out=t1)
+        coro2 = service.invoke_async("p2", timing_out=t2)
+        await asyncio.gather(coro1, coro2)
+        return t1, t2
+
+    t1, t2 = run_sync(_drive())
+    # Al menos una de las dos tuvo que esperar >10ms en cola
+    max_queue = max(t1.get("queue_wait_ms", 0.0), t2.get("queue_wait_ms", 0.0))
+    assert max_queue >= 10.0
+
+
 @patch("shared.llm.HAS_NVIDIA", True)
 @patch("shared.llm.ChatNVIDIA")
 def test_retry_exhaustion(mock_chat_cls):

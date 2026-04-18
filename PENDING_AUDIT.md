@@ -23,10 +23,10 @@ Estado por item. Valores posibles:
 
 | # | Item | Estado |
 |---|---|---|
-| A | `error_message` vacio en queries fallidas | `open` |
+| A | `error_message` vacio en queries fallidas | `closed` |
 | B | Empty-content retries del LLM como patron operativo recurrente | `open` |
 | C | Estimacion de tiempo de indexacion obsoleta tras #10 | `open` |
-| D | Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv) | `open` |
+| D | Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv) | `closed` |
 
 Cuando todos los items esten `closed`, seguir los pasos de la seccion
 "Procedimiento de cierre" al final del archivo.
@@ -45,7 +45,21 @@ Pre-P0 pero pendientes de decidir.
 
 ## A. `error_message` vacio en queries fallidas
 
-**Estado**: `open`
+**Estado**: `closed` (doc review completo: no procede cambio en CLAUDE.md
+porque el item lo declara explicitamente — bugfix puntual).
+
+**Cambios aplicados** (Fase A del HANDOFF):
+- `sandbox_mteb/evaluator.py`: nueva helper `_format_query_exc(exc)` que emite
+  `"{type.__name__}: {str(exc) or repr(exc)}"`. El loop async captura la
+  excepcion, la pasa a `_assemble_results(gen_errors=...)`, y esta la escribe
+  en `QueryEvaluationResult.error_message` del FAILED. El log WARNING tambien
+  usa el mismo helper (ya no emite cadena vacia tras los dos puntos).
+- `tests/test_evaluator.py`: EV10 (exception preserva tipo+msg), EV11
+  (`_format_query_exc` con str() vacio cae a repr). `test_assemble_results_failed_without_exception_falls_back_to_default_message`
+  mantiene compat con la ruta actual sin excepcion.
+
+**Doc review pendiente**: ningun cambio esperado en `CLAUDE.md` (item A
+explicitamente marcaba "ninguna entrada nueva en CLAUDE.md").
 
 **Evidencia**
 - `query_results[*]` en JSON: `q_978` reporta `status="failed"`,
@@ -190,7 +204,38 @@ primera para ser decidible sin ciegas:
 
 ## D. Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv)
 
-**Estado**: `open`
+**Estado**: `closed` (doc review completo: deuda #15 en CLAUDE.md
+reescrita a "RESUELTA" con alcance completo JSON+CSV+synthesis outcome).
+
+**Cambios aplicados** (Fase B del HANDOFF, unificado con deuda #15):
+- `shared/types.py`: nueva helper publica
+  `extract_retrieval_metadata_subset()` + constantes
+  `_RETRIEVAL_METADATA_PASSTHROUGH_KEYS` / `_RETRIEVAL_METADATA_COUNT_KEYS`
+  como unica fuente de verdad del subset per-query LIGHT_RAG.
+  `QueryEvaluationResult.to_dict()` la usa para emitir
+  `retrieval_metadata` en el JSON (omitido si subset vacio).
+- `shared/report.py`: guard `has_lightrag` reescrito — antes buscaba la
+  clave legacy `graph_candidates` (eliminada con divergencia #8) y era
+  siempre `False` en runs reales; ahora reusa
+  `extract_retrieval_metadata_subset()`. Columnas CSV renombradas a las
+  claves actuales: `lightrag_mode`, `kg_fallback`, `kg_entities_count`,
+  `kg_relations_count`, `kg_chunk_keyword_matches`, `kg_synthesis_used`,
+  `kg_synthesis_error`.
+- `sandbox_mteb/generation_executor.py`:
+  `_synthesize_kg_context_async` retorna `Tuple[str, Optional[str]]`
+  (narrativa_o_fallback, error_code). `_process_single_async` escribe
+  `kg_synthesis_used`/`kg_synthesis_error` en
+  `retrieval_detail.retrieval_metadata` para que ambos exports los lean.
+- `tests/test_report.py`: `test_lightrag_columns_when_graph_meta`
+  reescrito con claves actuales; +3 tests (SIMPLE_VECTOR sin columnas,
+  fallback/error serializados, JSON subset por-query).
+- `tests/test_kg_synthesis.py::TestPerQuerySynthesisMetadata`: 5 casos
+  cubriendo success/timeout/empty/error/no-kg-data.
+
+**Doc review pendiente**: reescrito el row de deuda #15 en CLAUDE.md
+como "RESUELTA" con descripcion del scope completo (JSON + CSV +
+per-query synthesis outcome). No se esperan cambios en `README.md`
+(la historia de runs F.5 no se ve afectada por un fix del exportador).
 
 **Evidencia**
 - `shared/report.py:201-204`:
