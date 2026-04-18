@@ -5,8 +5,31 @@
 > `CLAUDE.md#deuda-tecnica-vigente` porque se consideran menores u
 > operativas. **En cuanto se aborden**, revisar si alguna deja rastro en
 > `CLAUDE.md`/`README.md` (p.ej. cerrar una deuda existente, actualizar
-> una seccion, anadir una convencion) y **eliminar este archivo**. No
-> referenciar desde otros documentos.
+> una seccion, anadir una convencion) y **eliminar este archivo**.
+>
+> **NO referenciar desde `CLAUDE.md`, `README.md` ni `TESTS.md`** — un
+> enlace hacia este fichero sobrevive a su borrado y queda como
+> referencia rota. Su existencia es transitoria por diseno.
+
+## Resumen de items
+
+Estado por item. Valores posibles:
+- `open` — detectado y documentado, sin trabajo iniciado.
+- `in progress` — hay cambio en curso pero aun no cerrado.
+- `closed pending doc review` — cambio aplicado, falta validar si
+  deja rastro en `CLAUDE.md` / `README.md` / otros docs permanentes.
+- `closed` — cambio aplicado y contextualizacion completada. Listo
+  para eliminar del fichero junto con los demas cuando todos cierren.
+
+| # | Item | Estado |
+|---|---|---|
+| A | `error_message` vacio en queries fallidas | `open` |
+| B | Empty-content retries del LLM como patron operativo recurrente | `open` |
+| C | Estimacion de tiempo de indexacion obsoleta tras #10 | `open` |
+| D | Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv) | `open` |
+
+Cuando todos los items esten `closed`, seguir los pasos de la seccion
+"Procedimiento de cierre" al final del archivo.
 
 ## Contexto
 
@@ -21,6 +44,8 @@ Pre-P0 pero pendientes de decidir.
 ---
 
 ## A. `error_message` vacio en queries fallidas
+
+**Estado**: `open`
 
 **Evidencia**
 - `query_results[*]` en JSON: `q_978` reporta `status="failed"`,
@@ -59,6 +84,8 @@ Pre-P0 pero pendientes de decidir.
 
 ## B. Empty-content retries como patron operativo recurrente
 
+**Estado**: `open`
+
 **Evidencia**
 - Console log del run:
   - ~10 WARNINGs `Intento N/4 fallo: LLM returned empty content
@@ -79,28 +106,40 @@ Pre-P0 pero pendientes de decidir.
   al unico fallo (q_978). Si la tasa de empty-responses subiera en
   runs con mas queries, la tasa de fallos de query subiria con ella.
 
-**Accion propuesta**
-- No es un bug, es una caracteristica del modelo + interaccion con
-  timeouts globales. Dos opciones:
-  1. Instrumentar una stat `llm_empty_responses` por fase
-     (indexacion / synthesis / generation) y anadirla al
-     `config_snapshot._runtime`. Criterio de accion: si supera
-     threshold a definir, auditar el prompt o el modelo.
-  2. Subir `GENERATION_QUERY_TIMEOUT_S` para absorber hasta 3 retries
-     en el peor caso (300s → 480s p.ej.). Riesgo: runs mas lentos si
-     el LLM se degrada globalmente.
-- **Requiere decision sobre cual priorizar** antes de actuar.
+**Accion propuesta (secuencial, no mutuamente excluyente)**
+
+Dos acciones con orden fijo porque la segunda requiere datos de la
+primera para ser decidible sin ciegas:
+
+1. **Instrumentar primero (barato, no-invasivo)**. Anadir una stat
+   `llm_empty_responses` segmentada por fase (indexacion / synthesis
+   / generation) en `shared/llm.py` y exponerla en
+   `config_snapshot._runtime` como ya se hace con `judge_fallback_stats`
+   y `kg_synthesis_stats`. Permite medir la tasa real y correlar con
+   fallos de query en los ficheros de resultado sin abrir el log.
+
+2. **Ajustar solo si los datos de (1) lo justifican**. Si tras uno o
+   dos runs con (1) se observa que la tasa de empty-responses en fase
+   generation + el numero medio de retries consumidos **pueden**
+   exceder el presupuesto actual (300s) de forma recurrente, entonces
+   subir `GENERATION_QUERY_TIMEOUT_S` a un valor calculado desde los
+   datos (p.ej. `3 × p95_llm_call_s + margen`). Riesgo de subir a
+   ciegas: runs globalmente mas lentos si el LLM se degrada por otra
+   causa no relacionada con empty-content.
 
 **Ubicacion esperada tras cierre**
-- Si se implementa (1): la stat se documenta en
-  `CLAUDE.md#observabilidad-de-runs` junto a `judge_fallback_stats`
-  y `kg_synthesis_stats`.
-- Si se implementa (2): basta con ajustar `.env.example` +
-  comentario; no requiere cambio de doc.
+- Tras (1): la stat se documenta en `CLAUDE.md#observabilidad-de-runs`
+  junto a `judge_fallback_stats` y `kg_synthesis_stats`, con el
+  comando `jq` correspondiente.
+- Tras (2), si se aplica: basta con ajustar `.env.example` + comentario
+  enlazando la justificacion (run_id del que salieron los datos). No
+  requiere cambio de doc permanente mas alla de eso.
 
 ---
 
 ## C. Estimacion de tiempo de indexacion obsoleta tras #10
+
+**Estado**: `open`
 
 **Evidencia**
 - Banner en `sandbox_mteb/evaluator.py` (mensaje WARNING al inicio de
@@ -150,6 +189,8 @@ Pre-P0 pero pendientes de decidir.
 ---
 
 ## D. Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv)
+
+**Estado**: `open`
 
 **Evidencia**
 - `shared/report.py:201-204`:
@@ -205,17 +246,40 @@ Pre-P0 pero pendientes de decidir.
 
 ---
 
-## Estado de referencia al cerrar este archivo
+## Procedimiento de cierre
 
-Cuando los 4 items esten resueltos (o descartados con justificacion):
+### Por cada item, al trabajarlo
 
-1. Verificar que los cambios en doc de cada item estan aplicados donde
-   corresponde (CLAUDE.md, README.md, `.env.example`, banner del
-   evaluator).
-2. Confirmar que ningun item deja hilos sueltos (tests, deuda residual,
-   comportamiento no validado).
-3. **Eliminar este archivo** (`rm PENDING_AUDIT.md`) y borrar la
-   referencia del commit si alguien la anadio.
+Checklist comun (aplica a A, B, C, D):
 
-No enlazar este archivo desde README, CLAUDE ni TESTS — su existencia
-es transitoria.
+- [ ] Implementar el cambio propuesto o descartarlo con justificacion
+      explicita en el commit.
+- [ ] Tests unitarios anadidos si el cambio lo merece; pasan.
+- [ ] Marcar `**Estado**: open` → `closed pending doc review` en el
+      bloque del item y actualizar la fila en la tabla "Resumen de
+      items".
+- [ ] Evaluar "Ubicacion esperada tras cierre" del item: aplicar los
+      cambios en `CLAUDE.md` / `README.md` / `.env.example` / banner
+      que correspondan. Si no procede ningun cambio permanente, anotarlo
+      explicitamente en el commit.
+- [ ] Marcar `closed pending doc review` → `closed` solo cuando los
+      cambios permanentes esten aplicados y revisados.
+
+### Al cerrar este archivo
+
+Cuando los 4 items esten en `closed`:
+
+1. Verificar por ultima vez que ningun `CLAUDE.md` / `README.md` /
+   `TESTS.md` referencia a `PENDING_AUDIT.md` (ver nota de la cabecera).
+2. Confirmar via `git log` que cada item tiene commit asociado.
+3. Eliminar el archivo: `rm PENDING_AUDIT.md` en el mismo PR o commit
+   final.
+
+### Norma para agentes / sesiones futuras
+
+**Si en una sesion se trabaja sobre codigo relacionado con alguno de
+los items de este fichero, quien ejecute esa sesion debe tocar este
+archivo en la misma PR**: actualizar estado, eliminar seccion si ha
+cerrado, y (cuando todas cierren) borrar el fichero. Dejar un item
+con trabajo hecho pero este registro sin sincronizar convierte el
+fichero en referencia falsa.
