@@ -6,7 +6,13 @@ Sistema de evaluacion RAG para benchmarking de pipelines de retrieval y generaci
 
 ## Contexto del producto
 
-Este proyecto es un subsistema de evaluacion RAG, no un producto final. Su proposito **inmediato** es validar empiricamente que nuestra implementacion de LIGHT_RAG replica las mejoras reportadas en el paper original ([HKUDS/LightRAG, EMNLP 2025](https://arxiv.org/abs/2410.05779)). Queda una divergencia arquitectonica abierta con el paper (#10 keywords high-level por chunk); las demas (#2, #4+5, #6, #7, #8, #9) estan resueltas en codigo pero aun no demostradas empiricamente (HotpotQA no discrimina; ver "Proximos pasos · P0"). Sin esa demostracion no se puede promover LIGHT_RAG a produccion ni proponerlo al sistema administrador.
+Este proyecto es un subsistema de evaluacion RAG, no un producto final. Su proposito se descompone en dos fases secuenciales:
+
+1. **Fase actual — Pre-P0: completitud arquitectural de LIGHT_RAG**. Cerrar todas las divergencias con el paper ([HKUDS/LightRAG, EMNLP 2025](https://arxiv.org/abs/2410.05779)) y demostrar que la arquitectura descrita corre end-to-end sin degradaciones sistematicas. **Nada puede estar parcialmente implementado**: si una pieza del paper falta (p.ej. un canal del path high-level) o se ejecuta pero degrada al fallback en una fraccion no despreciable de queries (p.ej. synthesis con `fallback_rate > 10%`), la implementacion no esta lista. Las funcionalidades extra propias del entorno (caches, fallbacks defensivos, instrumentacion) son adaptaciones operativas, no sustitutos de piezas del paper. Ver "Proximos pasos · Pre-P0".
+
+2. **Fase siguiente — P0: replicacion empirica**. Una vez cerrada la fase anterior, demostrar sobre un benchmark donde el paper muestre ventaja que esta implementacion reproduce la direccion del delta (`LIGHT_RAG > SIMPLE_VECTOR`). Ver "Proximos pasos · P0".
+
+Estado a fecha: queda una divergencia arquitectonica abierta con el paper (#10 keywords high-level por chunk durante indexacion); las demas (#2, #4+5, #6, #7, #8, #9) estan resueltas en codigo. Hasta cerrar #10 y validar la ejecucion estable, P0 sobre cualquier benchmark compararia una implementacion incompleta — el resultado no replicaria ni invalidaria el paper porque no se estaria evaluando la misma arquitectura. Sin esa demostracion no se puede promover LIGHT_RAG a produccion ni proponerlo al sistema administrador.
 
 **Vision a largo plazo — sistema administrador**: eventualmente este subsistema se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos, orquestar el ciclo de vida de corpus, versionado de KGs, consultas multi-tenant y APIs de uso. El administrador compartira infraestructura con este subsistema (MinIO + Parquet como contrato), asi que la integracion no implica cambiar como consumimos datos, solo apuntar a un prefijo MinIO distinto. **La integracion esta condicionada a que P0 (replicacion del paper) cierre con exito**; si no replicamos, lo unico integrable es SIMPLE_VECTOR y el trabajo sobre KG se vuelve inutil. Trabajo concreto en "Proximos pasos · P3".
 
@@ -223,14 +229,28 @@ Esta seccion se actualiza con nuevas manifestaciones del patron segun se detecte
 ### Orden de prioridades
 
 ```
-P0 (replicacion del paper)                            <-- GATE activo, varias sesiones
+Pre-P0 (completitud arquitectural + ejecucion estable)  <-- GATE activo
   |
-  +-- P1 (sanity on/off synthesis sobre HotpotQA)     <-- barato, en paralelo
+P0 (replicacion empirica del paper)                     <-- contingente a Pre-P0
   |
-  +-- P2 (experimento 3: catalogo especializado)      <-- SOLO si P0 pasa
+  +-- P1 (sanity on/off synthesis sobre HotpotQA)       <-- barato, en paralelo a P0
   |
-  +-- P3 (embedibilidad + export KG + integracion)    <-- SOLO si P2 pasa
+  +-- P2 (experimento 3: catalogo especializado)        <-- SOLO si P0 pasa
+  |
+  +-- P3 (embedibilidad + export KG + integracion)      <-- SOLO si P2 pasa
 ```
+
+### Pre-P0 — Completitud arquitectural de LIGHT_RAG · **gate activo**
+
+Antes de cualquier medicion comparativa (P0), la implementacion de LIGHT_RAG debe cumplir tres condiciones verificables:
+
+1. **Arquitectonicamente completa frente al paper**: la tabla de "Divergencias con el paper original" no tiene ningun item marcado como abierto. Nada puede estar parcialmente implementado (p.ej. un canal del path high-level sin su contrapartida de indexacion; una capa de synthesis presente pero inestable; un VDB sin los campos que el paper usa para scoring).
+2. **Funcionando en ejecucion**: el pipeline produce al menos un run end-to-end donde los stats de observabilidad reflejan que la arquitectura descrita corre efectivamente, sin degradaciones sistematicas a paths de fallback. Criterios concretos: `kg_synthesis_stats.fallback_rate < 0.10`, `judge_fallback_stats.default_return_rate` bajo el umbral configurado, `retrieval_metadata` por query poblada (no todas en `kg_fallback=null` por falta de datos KG, y no todas en fallback al vector search).
+3. **Funcionalidades extra alineadas con el entorno**: cualquier adicion propia (cache de KG, fallbacks de LLM, capping defensivo) debe estar documentada como adaptacion operativa, no como sustituto de una pieza del paper.
+
+**Criterio de paso al gate P0**: las tres condiciones anteriores cumplidas simultaneamente sobre un mismo run (puede ser el smoke-test actual sobre HotpotQA 800 docs; el objetivo es la salud de la implementacion, no la calidad del resultado).
+
+**Criterio de fallo**: cualquier condicion incumplida bloquea el avance a P0. Lanzar P0 sin Pre-P0 cerrado mide una variante degradada de LIGHT_RAG — el resultado no es informativo ni para replicar ni para invalidar el paper.
 
 ### Resultado F.5 (referencia historica)
 
@@ -261,11 +281,13 @@ Delta pre → post se movio 0.6 decimas de porcentaje — dentro del ruido del L
 
 **Nota estructural sobre metricas de retrieval identicas en F.5**: las metricas identicas en F.5 eran consecuencia directa de la divergencia #8 (ahora resuelta). Con #8 opcion A, los chunks de LIGHT_RAG vienen del KG via `source_doc_ids` — las metricas de retrieval pueden diverger en cualquier dataset. **F.5 debe re-ejecutarse post-fix para verificar.**
 
-### P0 — Replicacion empirica del paper · **activo, desbloqueado**
+### P0 — Replicacion empirica del paper · **bloqueado por Pre-P0**
 
 **Objetivo**: demostrar que sobre al menos un benchmark donde el paper reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
 
-**Prerequisito arquitectonico resuelto**: divergencia #8 cerrada (opcion A). Los chunks de LIGHT_RAG ahora se obtienen via KG, no via vector search directo. Las metricas de retrieval pueden diverger entre estrategias.
+**Estado**: bloqueado hasta cerrar Pre-P0 (completitud arquitectural + ejecucion estable). Lanzar P0 antes mediria una variante degradada de LIGHT_RAG.
+
+**Prerequisitos arquitectonicos**: divergencia #8 cerrada (opcion A; chunks via `source_doc_ids` del KG). **Pendiente #10** (keywords high-level por chunk durante indexacion) — bloquea Pre-P0.
 
 **Candidatos de dataset**:
 - UltraDomain subsets (Legal-QA, Agriculture, CS, Mix) — los del paper original
