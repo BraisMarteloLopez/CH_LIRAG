@@ -103,7 +103,8 @@ class TestMain:
         with patch("sys.argv", ["run.py", "--env", str(env_file)]):
             with patch("sandbox_mteb.run.MTEBConfig.from_env") as mock_from_env, \
                  patch("sandbox_mteb.run.MTEBEvaluator") as mock_eval_cls, \
-                 patch("sandbox_mteb.run.RunExporter") as mock_exp_cls:
+                 patch("sandbox_mteb.run.RunExporter") as mock_exp_cls, \
+                 patch("sandbox_mteb.run._setup_console_capture") as mock_capture:
                 mock_config = MagicMock()
                 mock_config.summary.return_value = "Config"
                 mock_from_env.return_value = mock_config
@@ -115,6 +116,9 @@ class TestMain:
                 mock_exporter = MagicMock()
                 mock_exporter.export.return_value = {"json": Path("/tmp/r.json")}
                 mock_exp_cls.return_value = mock_exporter
+
+                # Evita side effect de crear MagicMock/ en el filesystem
+                mock_capture.return_value = tmp_path / "console_log.txt"
 
                 result = main()
 
