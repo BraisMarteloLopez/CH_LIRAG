@@ -23,10 +23,10 @@ Estado por item. Valores posibles:
 
 | # | Item | Estado |
 |---|---|---|
-| A | `error_message` vacio en queries fallidas | `closed pending doc review` |
+| A | `error_message` vacio en queries fallidas | `closed` |
 | B | Empty-content retries del LLM como patron operativo recurrente | `open` |
 | C | Estimacion de tiempo de indexacion obsoleta tras #10 | `open` |
-| D | Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv) | `closed pending doc review` |
+| D | Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv) | `closed` |
 
 Cuando todos los items esten `closed`, seguir los pasos de la seccion
 "Procedimiento de cierre" al final del archivo.
@@ -45,7 +45,8 @@ Pre-P0 pero pendientes de decidir.
 
 ## A. `error_message` vacio en queries fallidas
 
-**Estado**: `closed pending doc review`
+**Estado**: `closed` (doc review completo: no procede cambio en CLAUDE.md
+porque el item lo declara explicitamente — bugfix puntual).
 
 **Cambios aplicados** (Fase A del HANDOFF):
 - `sandbox_mteb/evaluator.py`: nueva helper `_format_query_exc(exc)` que emite
@@ -203,7 +204,8 @@ primera para ser decidible sin ciegas:
 
 ## D. Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv)
 
-**Estado**: `closed pending doc review`
+**Estado**: `closed` (doc review completo: deuda #15 en CLAUDE.md
+reescrita a "RESUELTA" con alcance completo JSON+CSV+synthesis outcome).
 
 **Cambios aplicados** (Fase B del HANDOFF, unificado con deuda #15):
 - `shared/types.py`: nueva helper publica

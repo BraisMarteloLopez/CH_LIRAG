@@ -14,7 +14,7 @@ import csv
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from shared.types import EvaluationRun, extract_retrieval_metadata_subset
 
@@ -279,10 +279,10 @@ class RunExporter:
                     # (p.ej. queries SIMPLE_VECTOR dentro de un run mixto
                     # o queries KG sin synthesis activa) se emiten vacias.
                     for col in lightrag_columns:
-                        value = lightrag_subset.get(col, "")
-                        if isinstance(value, bool):
-                            value = "true" if value else "false"
-                        row[col] = value
+                        cell: Any = lightrag_subset.get(col, "")
+                        if isinstance(cell, bool):
+                            cell = "true" if cell else "false"
+                        row[col] = cell
                 row["expected_response"] = (
                     (qr.expected_response or "")[:200]
                 )
