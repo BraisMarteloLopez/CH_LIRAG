@@ -209,6 +209,11 @@ Patron de fallo observado empiricamente durante el desarrollo: **claude_code tie
 4. Todo parametro que dependa del LLM usado (timeouts, tamaños de contexto, concurrencia) debe ir al `.env`, no a `constants.py`. Si se pone en `constants.py` es porque nunca deberia tocarse (p.ej. `CHARS_PER_TOKEN`).
 5. Cualquier cambio que afecte el contexto que ve el LLM debe tener test que estrese el budget, no solo el caso con budget holgado.
 
+**Validacion a ciegas del pipeline completo**: claude_code no ejecuta en el entorno con NIM+MinIO (ver deuda #9 para el contexto infra; TESTS.md F23 para el e2e actual mockeado). Implicaciones operativas:
+- Cambios que afectan al flujo retrieval→synthesis→generation solo se validan cuando el usuario lanza el run.
+- Antes de declarar un cambio como completo, claude_code debe enumerar los **criterios observables en el run**: que variable de `config_snapshot._runtime` esperar, que valor en `kg_synthesis_stats` o `judge_fallback_stats`, que rango en las metricas agregadas.
+- "Falta test e2e de X" NO es deuda pendiente que claude_code deba resolver — es consecuencia estructural del entorno. Listarla como deuda induce iteraciones futuras intentando construir algo imposible de validar en sesion.
+
 Esta seccion se actualiza con nuevas manifestaciones del patron segun se detecten. No borrar sin consenso.
 
 ## Proximos pasos
