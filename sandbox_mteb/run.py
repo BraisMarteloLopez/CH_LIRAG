@@ -15,6 +15,7 @@ se controla exclusivamente via .env. Ver env.example.
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Asegurar que el proyecto raiz esta en sys.path
@@ -26,6 +27,45 @@ from sandbox_mteb.config import MTEBConfig
 from sandbox_mteb.evaluator import MTEBEvaluator
 from shared.report import RunExporter
 from shared.structured_logging import configure_logging
+
+
+class _Tee:
+    """Duplica writes a multiples streams (stream original + archivo log).
+
+    Se usa para capturar stdout/stderr a un archivo manteniendo la salida
+    en consola. Preserva `isatty()` del stream original para libs que
+    cambian su comportamiento si detectan terminal.
+    """
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for s in self._streams:
+            s.write(data)
+            s.flush()
+
+    def flush(self):
+        for s in self._streams:
+            s.flush()
+
+    def isatty(self):
+        return self._streams[0].isatty()
+
+
+def _setup_console_capture(results_dir: Path, strategy: str) -> Path:
+    """Captura stdout/stderr a archivo en results_dir (ademas de consola).
+
+    Debe llamarse ANTES de setup_logging() para que el StreamHandler use
+    el sys.stderr ya redirigido.
+    """
+    results_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = results_dir / f"console_log_{strategy.lower()}_{timestamp}.txt"
+    log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.__stdout__, log_file)
+    sys.stderr = _Tee(sys.__stderr__, log_file)
+    return log_path
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -73,30 +113,44 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    setup_logging(args.verbose)
-    logger = logging.getLogger("sandbox_mteb")
 
-    # 1. Construir config
+    # 1. Construir config (sin logging aun, errores tempranos via print)
     env_path = Path(args.env)
     if not env_path.exists():
-        logger.error(f"Archivo .env no encontrado: {env_path.resolve()}")
-        logger.error("Copiar .env.example a .env y completar valores.")
+        print(
+            f"[ERROR] Archivo .env no encontrado: {env_path.resolve()}",
+            file=sys.stderr,
+        )
+        print("[ERROR] Copiar .env.example a .env y completar valores.", file=sys.stderr)
         return 1
 
     try:
         config = MTEBConfig.from_env(str(env_path))
     except ValueError as e:
-        logger.error(str(e))
+        print(f"[ERROR] {e}", file=sys.stderr)
         return 1
 
-    # 2. Mostrar resumen
-    print(config.summary())
     config.ensure_directories()
 
-    # 4. Dry run?
+    # 2. Dry run? (no genera log file, solo muestra config en consola)
     if args.dry_run:
+        setup_logging(args.verbose)
+        print(config.summary())
         print("\n[DRY RUN] Config valida. No se ejecuta evaluacion.")
         return 0
+
+    # 3. Captura de consola a archivo ANTES de setup_logging.
+    # El StreamHandler del logging toma sys.stderr en __init__, asi que
+    # debe redirigirse antes para que el log tambien quede en el archivo.
+    log_path = _setup_console_capture(
+        Path(config.storage.evaluation_results_dir),
+        config.retrieval.strategy.name,
+    )
+    setup_logging(args.verbose)
+
+    # 4. Mostrar resumen (ya capturado en el log file)
+    print(config.summary())
+    print(f"Console log: {log_path}")
 
     # 5. Ejecutar
     evaluator = MTEBEvaluator(config)
