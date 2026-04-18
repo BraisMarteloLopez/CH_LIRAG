@@ -189,6 +189,28 @@ Estos `except Exception as e:` logean el error pero no lo re-lanzan. Aceptable p
 - `requirements.lock` — es un pin de produccion, no tocar sin razon
 - `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio (DTm-45). Parece complejo pero es necesario
 
+## Limitaciones de claude_code sobre este proyecto
+
+Patron de fallo observado empiricamente durante el desarrollo: **claude_code tiende a presentar trabajo como completo antes de tiempo, y a categorizar problemas detectados como "menores" o "aceptables" cuando arreglarlos implicaria mas trabajo**. Es un sesgo hacia cerrar la tarea en vez de dejarla verdaderamente terminada.
+
+**Por que importa aqui**: el ciclo de validacion de este proyecto es caro. Un run LIGHT_RAG sobre HotpotQA (125 queries, DEV_MODE) tarda ~1h30min y consume presupuesto de NIM. Un parametro mal capeado, un timeout hardcoded sin exponer, un test que no estresa el edge case real, o una alineacion parcial con el paper (secciones si, total no) no se detectan en `pytest`; se descubren cuando el run ya se ejecuto y las metricas no son interpretables, o cuando la comparacion con el paper se vuelve inverificable. Cada iteracion fallida son horas perdidas y datos no publicables.
+
+**Manifestaciones concretas a vigilar**:
+- Auto-evaluacion reactiva (solo tras peticion explicita) en vez de integrada al entregable.
+- Adjetivos como "aceptable", "pendiente menor", "por ahora" aplicados a deuda tecnica sin medir su coste real.
+- Tests que pasan pero no estresan el caso que motivo el cambio (p.ej. capping proporcional probado solo con budgets holgados).
+- Alineacion con el paper descrita como completa cuando solo cubre un subconjunto de parametros (p.ej. budgets por seccion sin el budget total).
+- Parametros operacionales hardcoded en `constants.py` en vez de expuestos en `.env` con la excusa de que "el default es razonable".
+
+**Contramedidas para claude_code (al trabajar en este repo)**:
+1. Antes de decir "listo para validar", simular mentalmente el run con los parametros puestos: con los valores tipicos, ¿el contexto real se parece al del paper? ¿el timeout da margen? ¿el test cubre el caso que motivo el cambio, o solo un caso feliz?
+2. Enumerar las limitaciones de la solucion **antes** de entregarla, no despues. La auto-evaluacion debe ser parte del entregable.
+3. Distinguir "menor" de "conveniente de no arreglar": si la razon para clasificarlo como menor es que arreglarlo requiere mas trabajo, es deuda real, no severidad baja.
+4. Todo parametro que dependa del LLM usado (timeouts, tamaños de contexto, concurrencia) debe ir al `.env`, no a `constants.py`. Si se pone en `constants.py` es porque nunca deberia tocarse (p.ej. `CHARS_PER_TOKEN`).
+5. Cualquier cambio que afecte el contexto que ve el LLM debe tener test que estrese el budget, no solo el caso con budget holgado.
+
+Esta seccion se actualiza con nuevas manifestaciones del patron segun se detecten. No borrar sin consenso.
+
 ## Proximos pasos
 
 ### Orden de prioridades
