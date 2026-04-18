@@ -23,7 +23,7 @@ Estado por item. Valores posibles:
 
 | # | Item | Estado |
 |---|---|---|
-| A | `error_message` vacio en queries fallidas | `open` |
+| A | `error_message` vacio en queries fallidas | `closed pending doc review` |
 | B | Empty-content retries del LLM como patron operativo recurrente | `open` |
 | C | Estimacion de tiempo de indexacion obsoleta tras #10 | `open` |
 | D | Codigo muerto en `shared/report.py:201-212` (columnas LightRAG del detail.csv) | `open` |
@@ -45,7 +45,20 @@ Pre-P0 pero pendientes de decidir.
 
 ## A. `error_message` vacio en queries fallidas
 
-**Estado**: `open`
+**Estado**: `closed pending doc review`
+
+**Cambios aplicados** (Fase A del HANDOFF):
+- `sandbox_mteb/evaluator.py`: nueva helper `_format_query_exc(exc)` que emite
+  `"{type.__name__}: {str(exc) or repr(exc)}"`. El loop async captura la
+  excepcion, la pasa a `_assemble_results(gen_errors=...)`, y esta la escribe
+  en `QueryEvaluationResult.error_message` del FAILED. El log WARNING tambien
+  usa el mismo helper (ya no emite cadena vacia tras los dos puntos).
+- `tests/test_evaluator.py`: EV10 (exception preserva tipo+msg), EV11
+  (`_format_query_exc` con str() vacio cae a repr). `test_assemble_results_failed_without_exception_falls_back_to_default_message`
+  mantiene compat con la ruta actual sin excepcion.
+
+**Doc review pendiente**: ningun cambio esperado en `CLAUDE.md` (item A
+explicitamente marcaba "ninguna entrada nueva en CLAUDE.md").
 
 **Evidencia**
 - `query_results[*]` en JSON: `q_978` reporta `status="failed"`,

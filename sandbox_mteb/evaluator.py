@@ -62,6 +62,17 @@ from .embedding_service import batch_embed_queries, resolve_max_context_chars
 logger = logging.getLogger(__name__)
 
 
+def _format_query_exc(exc: BaseException) -> str:
+    """Formato consistente para error_message de queries fallidas.
+
+    Algunas excepciones (p.ej. `asyncio.TimeoutError` instanciado sin args)
+    tienen `str(exc) == ""`, lo que dejaba `error_message` vacio y perdia
+    el diagnostico (PENDING_AUDIT item A). Incluimos siempre el tipo y
+    caemos a repr() si el mensaje esta vacio.
+    """
+    return f"{type(exc).__name__}: {str(exc) or repr(exc)}"
+
+
 # -----------------------------------------------------------------
 # EVALUADOR
 # -----------------------------------------------------------------
@@ -557,6 +568,7 @@ class MTEBEvaluator:
 
             # Generation + Metrics (async)
             gen_metrics_results: List[Optional[GenMetricsResult]] = [None] * n_chunk
+            gen_errors: List[Optional[BaseException]] = [None] * n_chunk
             if self.config.generation_enabled and self._generation_executor:
                 raw = run_sync(
                     self._generation_executor.batch_generate_and_evaluate(
@@ -564,9 +576,14 @@ class MTEBEvaluator:
                     )
                 )
                 for idx, item in enumerate(raw):
-                    if isinstance(item, Exception):
+                    if isinstance(item, BaseException):
+                        # PENDING_AUDIT item A: preservar tipo y mensaje para
+                        # que _assemble_results los escriba en error_message
+                        # (antes se perdian al quedarse solo en el log).
+                        gen_errors[idx] = item
                         logger.warning(
-                            f"  Error async query {chunk_queries[idx].query_id}: {item}"
+                            f"  Error async query {chunk_queries[idx].query_id}: "
+                            f"{_format_query_exc(item)}"
                         )
                     else:
                         gen_metrics_results[idx] = item
@@ -575,6 +592,7 @@ class MTEBEvaluator:
             chunk_results = self._assemble_results(
                 chunk_queries, retrievals, gen_metrics_results,
                 rerank_statuses, ds_config, dataset_name,
+                gen_errors=gen_errors,
             )
             all_results.extend(chunk_results)
 
@@ -618,11 +636,19 @@ class MTEBEvaluator:
         rerank_statuses: List[Optional[bool]],
         ds_config: Dict[str, Any],
         dataset_name: str,
+        gen_errors: Optional[List[Optional[BaseException]]] = None,
     ) -> List[QueryEvaluationResult]:
-        """Ensambla QueryEvaluationResult desde retrieval + generation results."""
+        """Ensambla QueryEvaluationResult desde retrieval + generation results.
+
+        gen_errors: lista paralela a gen_metrics_results con la excepcion
+        capturada (si la hubo) para cada query. Se usa para poblar
+        error_message en los FAILED (PENDING_AUDIT item A).
+        """
+        if gen_errors is None:
+            gen_errors = [None] * len(queries)
         results: List[QueryEvaluationResult] = []
-        for query, retrieval, gm, reranked_status in zip(
-            queries, retrievals, gen_metrics_results, rerank_statuses,
+        for query, retrieval, gm, reranked_status, exc in zip(
+            queries, retrievals, gen_metrics_results, rerank_statuses, gen_errors,
         ):
             # DTm-20: passthrough generico de metadata de la query
             qr_metadata: Dict[str, Any] = {
@@ -647,6 +673,11 @@ class MTEBEvaluator:
                     metadata=qr_metadata,
                 ))
             elif self.config.generation_enabled:
+                # PENDING_AUDIT item A: si hubo excepcion, preservar tipo+mensaje.
+                error_message = (
+                    _format_query_exc(exc) if exc is not None
+                    else "Error en generacion/metricas async"
+                )
                 results.append(QueryEvaluationResult(
                     query_id=query.query_id,
                     query_text=query.query_text,
@@ -654,7 +685,7 @@ class MTEBEvaluator:
                     dataset_type=ds_config["type"],
                     retrieval=retrieval,
                     status=EvaluationStatus.FAILED,
-                    error_message="Error en generacion/metricas async",
+                    error_message=error_message,
                     metadata=qr_metadata,
                 ))
             else:

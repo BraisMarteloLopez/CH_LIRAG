@@ -11,6 +11,8 @@ Cobertura:
   EV7. _assemble_results con generacion exitosa -> COMPLETED
   EV8. _assemble_results con generacion fallida -> FAILED
   EV9. _assemble_results sin generacion -> COMPLETED (retrieval-only)
+  EV10. _assemble_results con excepcion propaga tipo+mensaje (PENDING item A)
+  EV11. _format_query_exc maneja excepciones con str() vacio
 """
 
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -31,7 +33,7 @@ from shared.types import (
     QueryEvaluationResult,
 )
 from shared.retrieval.core import RetrievalConfig, RetrievalStrategy
-from sandbox_mteb.evaluator import MTEBEvaluator
+from sandbox_mteb.evaluator import MTEBEvaluator, _format_query_exc
 from sandbox_mteb.generation_executor import GenMetricsResult
 
 
@@ -322,3 +324,76 @@ def test_assemble_results_no_generation():
     )
     assert results[0].status == EvaluationStatus.COMPLETED
     assert results[0].generation is None
+
+
+# =============================================================================
+# EV10: _assemble_results con excepcion capturada (PENDING_AUDIT item A)
+# =============================================================================
+
+def test_assemble_results_failed_with_exception_preserves_type_and_message():
+    """Si _assemble_results recibe gen_errors, error_message incluye tipo+msg."""
+    config = _make_config(generation_enabled=True)
+    ev = MTEBEvaluator(config)
+
+    queries = [NormalizedQuery(
+        query_id="q_boom", query_text="test?",
+        relevant_doc_ids=["d1"], metadata={},
+    )]
+    retrievals = [_make_retrieval_detail()]
+    gen_results = [None]
+    rerank_statuses = [None]
+    exc = RuntimeError("downstream LLM down")
+    ds_config = {"type": DatasetType.HYBRID}
+
+    results = ev._assemble_results(
+        queries, retrievals, gen_results, rerank_statuses,
+        ds_config, "hotpotqa",
+        gen_errors=[exc],
+    )
+    assert results[0].status == EvaluationStatus.FAILED
+    assert results[0].error_message is not None
+    assert "RuntimeError" in results[0].error_message
+    assert "downstream LLM down" in results[0].error_message
+
+
+def test_assemble_results_failed_without_exception_falls_back_to_default_message():
+    """Compat: sin gen_errors, error_message usa el mensaje generico previo."""
+    config = _make_config(generation_enabled=True)
+    ev = MTEBEvaluator(config)
+
+    queries = [NormalizedQuery(
+        query_id="q1", query_text="test?",
+        relevant_doc_ids=["d1"], metadata={},
+    )]
+    retrievals = [_make_retrieval_detail()]
+    gen_results = [None]
+    rerank_statuses = [None]
+    ds_config = {"type": DatasetType.HYBRID}
+
+    results = ev._assemble_results(
+        queries, retrievals, gen_results, rerank_statuses,
+        ds_config, "hotpotqa",
+        # gen_errors omitido: simulacion de call site que aun no lo pasa
+    )
+    assert results[0].status == EvaluationStatus.FAILED
+    assert results[0].error_message == "Error en generacion/metricas async"
+
+
+# =============================================================================
+# EV11: _format_query_exc con str() vacio
+# =============================================================================
+
+def test_format_query_exc_handles_empty_str():
+    """asyncio.TimeoutError() sin args tiene str() vacio; debe seguir siendo diagnosticable."""
+    import asyncio
+
+    msg = _format_query_exc(asyncio.TimeoutError())
+    assert "TimeoutError" in msg
+    # Fallback a repr() cuando str() vacio
+    assert msg != "TimeoutError: "
+
+
+def test_format_query_exc_includes_args_when_present():
+    msg = _format_query_exc(ValueError("bad input"))
+    assert "ValueError" in msg
+    assert "bad input" in msg
