@@ -7,11 +7,11 @@ Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de 
 | Estrategia | Indexacion | Busqueda | Reranker |
 |---|---|---|---|
 | `SIMPLE_VECTOR` | Embedding directo (NIM) | Cosine similarity (ChromaDB) | Opcional |
-| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding | Vector + KG enrichment + LLM synthesis del contexto | Off (auto-desactivado) |
+| `LIGHT_RAG` | LLM triplet extraction + KG + Embedding (chunks, entidades, relaciones) | Chunks via KG (`source_doc_ids` de entidades/relaciones resueltas por Entity/Relationship VDB) con fallback a vector search; LLM synthesis del contexto | Off (auto-desactivado) |
 
-**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina busqueda vectorial con un knowledge graph construido via LLM. Entity VDB + Relationship VDB para resolucion semantica. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
+**LIGHT_RAG** es una implementacion inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779). Combina knowledge graph construido via LLM con busqueda vectorial. Entity VDB + Relationship VDB para resolucion semantica; chunks seleccionados via `source_doc_ids` del KG (paper-aligned) con fallback a vector search directo cuando el KG no produce doc_ids. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
 
-> **Caveat arquitectonico (divergencia #8, abierta)**: el ranking de chunks se produce por similitud vectorial query↔chunk (heredado de `SimpleVectorRetriever`), **no** a traves de `source_doc_ids` del KG como en el paper original. El KG aporta entidades y relaciones como contexto complementario al generador via secciones separadas y synthesis, pero no participa en la decision de que chunks entran al contexto. Consecuencia: las metricas de retrieval (Hit@K, MRR, Recall@K) son estructuralmente identicas a SIMPLE_VECTOR. Hay infraestructura paper-aligned ya construida en `shared/retrieval/lightrag/knowledge_graph.py` (`query_entities`, `query_by_keywords`, `get_entities_for_docs`, `get_relations_for_docs`) **no conectada** al retriever actual — no borrar sin resolver la divergencia. Detalle completo en [CLAUDE.md — Divergencias con el paper original · #8](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad).
+> **Estado frente al paper**: divergencia #8 (chunks via KG) resuelta opcion A; divergencias #2, #4+5, #6, #7, #9 tambien resueltas. Queda abierta #10 (keywords high-level por chunk durante indexacion). Detalle y criticidad en [CLAUDE.md — Divergencias con el paper original](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad). La validacion empirica del conjunto sobre un benchmark donde el paper muestre ventaja (P0) es el gate activo — ver [CLAUDE.md — Proximos pasos · P0](CLAUDE.md#p0--replicacion-empirica-del-paper--activo-desbloqueado).
 
 ## Arquitectura
 
@@ -46,7 +46,7 @@ sandbox_mteb/                    # Pipeline de evaluacion MTEB/BeIR
   preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
   env.example                    # Plantilla .env
 
-tests/                           # pytest (~441 unit + 19 integration tests, 40 archivos)
+tests/                           # pytest (~465 unit + ~15 integration tests, cifras orientativas; ver CLAUDE.md "Test coverage")
 ```
 
 ## Pipeline
@@ -136,8 +136,8 @@ EVAL_MAX_QUERIES=50
 EVAL_MAX_CORPUS=1000
 GENERATION_ENABLED=true
 
-# LLM judge instrumentation (deuda tecnica #4)
-JUDGE_FALLBACK_THRESHOLD=0.02         # Max tasa de fallback a 0.5 permitida (0 = desactiva)
+# LLM judge instrumentation
+JUDGE_FALLBACK_THRESHOLD=0.02         # Max tasa de fallback a 0.5 permitida (0 = desactiva). Ver CLAUDE.md "Observabilidad de runs"
 
 # DEV_MODE: subset con gold docs garantizados
 DEV_MODE=false
@@ -189,7 +189,7 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 
 **Audit Fases 1-5:** 8 bugfixes, 48 tests nuevos, DAM-4 LLM synthesis, eviction con score compuesto. 447 tests, 0 fallos.
 
-**Post-refactor (abril 2026):** instrumentacion de tasa de fallback del LLM judge (deuda #4, +19 tests, threshold enforcement via `JUDGE_FALLBACK_THRESHOLD`) + capa de synthesis KG en generacion (divergencia LightRAG #2, +13 tests, prompt query-aware con citas `[ref:N]`, faithfulness contra structured_context original para penalizar hallucinations de la propia synthesis). Todas las divergencias arquitectonicas con el paper (#4+5, #6, #7, #2) resueltas.
+**Post-refactor (abril 2026):** instrumentacion de tasa de fallback del LLM judge (+19 tests, threshold enforcement via `JUDGE_FALLBACK_THRESHOLD`) + capa de synthesis KG en generacion (divergencia LightRAG #2, +13 tests, prompt query-aware con citas `[ref:N]`, faithfulness contra structured_context original para penalizar hallucinations de la propia synthesis) + resolucion divergencia #8 opcion A (chunks via `source_doc_ids` del KG con fallback a vector search, eliminacion de codigo muerto) + resolucion divergencia #9 (enriquecimiento con vecinos 1-hop y endpoints). Divergencias arquitectonicas resueltas con el paper: #2, #4+5, #6, #7, #8, #9. Queda abierta #10 (keywords high-level por chunk durante indexacion).
 
 80+ issues resueltos. Ver historial git.
 
@@ -198,7 +198,7 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 <details>
 <summary>Resultados comparativos (pre-Fases C-F, obsoletos)</summary>
 
-> Todos los runs son pre-VDBs. Pendiente run comparativo post-implementacion (F.5).
+> Todos los runs son pre-VDBs. Superados por los dos runs F.5 (pre y post refactor) documentados en [CLAUDE.md — Resultado F.5](CLAUDE.md#resultado-f5-referencia-historica): sobre HotpotQA el embedding satura el retrieval (Wikipedia en pre-entrenamiento + DEV_MODE con gold docs garantizados + ventana 192K chars), el dataset no discrimina LIGHT_RAG vs SIMPLE_VECTOR. F.5 debe re-ejecutarse post-cierre de #8 para verificar que las metricas de retrieval pueden diverger.
 
 | Metrica | SIMPLE_VECTOR | LIGHT_RAG (KG activo) | Delta |
 |---|---|---|---|
