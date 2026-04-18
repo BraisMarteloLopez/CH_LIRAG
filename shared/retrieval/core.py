@@ -61,6 +61,13 @@ class RetrievalConfig:
     lightrag_mode: str = "hybrid"  # Modos del paper: "hybrid" (default), "local", "global", "naive"
     kg_max_neighbors_per_entity: int = 5  # Divergencia #9: 1-hop neighbors por entidad resuelta
 
+    # Chunks enviados al LLM para generacion (post KG-scoring).
+    # Paper: CHUNK_TOP_K=20 (con GPT-4o-mini). El KG ya rankea los chunks
+    # por reference-count scoring; este parametro selecciona los top-N para
+    # generacion, analogo a reranker.top_n en SV.
+    # 0 = usar retrieval_k (todos los docs van a generacion).
+    lightrag_generation_top_n: int = 0
+
     # DAM-4: LLM synthesis para merge de descripciones de entidades multi-doc.
     kg_description_synthesis: bool = False  # A5.1: activar LLM synthesis
     kg_synthesis_char_threshold: int = 200  # chars minimos para trigger LLM synthesis
@@ -82,6 +89,7 @@ class RetrievalConfig:
             kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
             lightrag_mode=_env("LIGHTRAG_MODE", "hybrid"),
             kg_max_neighbors_per_entity=_env_int("KG_MAX_NEIGHBORS_PER_ENTITY", 5),
+            lightrag_generation_top_n=_env_int("LIGHTRAG_GENERATION_TOP_N", 0),
             kg_description_synthesis=_env("KG_DESCRIPTION_SYNTHESIS", "false").lower() == "true",
             kg_synthesis_char_threshold=_env_int("KG_SYNTHESIS_CHAR_THRESHOLD", 200),
         )

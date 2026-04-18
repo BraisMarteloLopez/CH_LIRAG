@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from shared.types import QueryRetrievalDetail
 from shared.retrieval.core import BaseRetriever, RetrievalStrategy
 from shared.retrieval.reranker import CrossEncoderReranker
+from shared.constants import KG_MAX_ENTITY_CONTEXT_CHARS, KG_MAX_RELATION_CONTEXT_CHARS
 
 from .config import MTEBConfig
 
@@ -151,9 +152,30 @@ class RetrievalExecutor:
                     retrieval_metadata=full_result.metadata,
                 ), reranked_ok
             else:
-                # Sin reranker: retrieval_k docs para metricas y generacion
+                # Sin reranker: retrieval_k docs para metricas.
                 result = _do_retrieve(retrieval_k)
                 _check_strategy(result)
+
+                # LIGHT_RAG: separar docs de generacion (top-N por KG score)
+                # de docs de metricas (todos retrieval_k). Analogo a
+                # reranker.top_n para SV: el KG scoring ya rankeo los chunks,
+                # seleccionamos los top-N para el LLM generador.
+                gen_top_n = self._config.retrieval.lightrag_generation_top_n
+                if (
+                    gen_top_n > 0
+                    and configured_strategy == RetrievalStrategy.LIGHT_RAG
+                    and len(result.doc_ids) > gen_top_n
+                ):
+                    return QueryRetrievalDetail(
+                        retrieved_doc_ids=result.doc_ids,
+                        retrieved_contents=result.contents,
+                        retrieval_scores=result.scores,
+                        expected_doc_ids=expected_doc_ids,
+                        retrieval_time_ms=result.retrieval_time_ms,
+                        generation_doc_ids=result.doc_ids[:gen_top_n],
+                        generation_contents=result.contents[:gen_top_n],
+                        retrieval_metadata=result.metadata,
+                    ), None
 
                 return QueryRetrievalDetail(
                     retrieved_doc_ids=result.doc_ids,
@@ -198,16 +220,16 @@ def format_context(contents: List[str], max_length: int) -> str:
     return separator.join(parts)
 
 
-# Divergencia #7: presupuestos proporcionales por seccion segun modo LightRAG.
-# Cada seccion tiene espacio garantizado; el budget no usado se redistribuye a chunks.
-# Ratios alineados con la separacion conceptual del paper HKUDS/LightRAG:
-# entidades (low-level) y relaciones (high-level) como canales independientes.
-_LIGHTRAG_MODE_BUDGETS: Dict[str, Tuple[float, float]] = {
-    # (entity_ratio, relation_ratio) — chunks = 1 - ambos
-    "hybrid": (0.20, 0.20),
-    "local":  (0.30, 0.00),
-    "global": (0.00, 0.30),
-    "naive":  (0.00, 0.00),
+# Paper-aligned: presupuestos fijos por seccion (HKUDS/LightRAG, EMNLP 2025).
+# Paper: MAX_ENTITY_TOKENS=6000, MAX_RELATION_TOKENS=8000.
+# Chunks reciben el budget restante (max_length - entity - relation).
+# Modo determina que secciones se activan, no los budgets por seccion.
+_LIGHTRAG_MODE_SECTIONS: Dict[str, Tuple[bool, bool]] = {
+    # (use_entities, use_relations)
+    "hybrid": (True,  True),
+    "local":  (True,  False),
+    "global": (False, True),
+    "naive":  (False, False),
 }
 
 # Overhead fijo del header de una seccion KG: "<label>:\n\n```json\n" + "\n```"
@@ -257,13 +279,13 @@ def format_structured_context(
     - Knowledge Graph Data (Relationship): JSON lines de relaciones
     - Document Chunks: contenido de documentos con reference_id
 
-    Cada seccion recibe un presupuesto de caracteres independiente segun el
-    modo LightRAG. El budget no usado por KG se redistribuye a chunks, de
-    modo que ninguna seccion aplasta a las otras:
-      - hybrid: 20% entidades, 20% relaciones, 60% chunks
-      - local:  30% entidades, 0% relaciones, 70% chunks
-      - global: 0% entidades, 30% relaciones, 70% chunks
-      - naive:  100% chunks (no deberia invocarse aqui; safeguard)
+    Budgets fijos por seccion (paper: MAX_ENTITY_TOKENS=6000,
+    MAX_RELATION_TOKENS=8000). Chunks reciben el budget restante.
+    El modo determina que secciones se activan:
+      - hybrid: entidades + relaciones + chunks
+      - local:  entidades + chunks
+      - global: relaciones + chunks
+      - naive:  solo chunks
 
     Args:
         contents: Chunks de documentos recuperados.
@@ -275,11 +297,22 @@ def format_structured_context(
     """
     import json
 
-    entity_ratio, relation_ratio = _LIGHTRAG_MODE_BUDGETS.get(
-        mode, _LIGHTRAG_MODE_BUDGETS["hybrid"]
+    use_entities, use_relations = _LIGHTRAG_MODE_SECTIONS.get(
+        mode, _LIGHTRAG_MODE_SECTIONS["hybrid"]
     )
-    entity_budget = int(max_length * entity_ratio)
-    relation_budget = int(max_length * relation_ratio)
+    # Budgets fijos del paper, capeados proporcionalmente si exceden 50%
+    # del max_length (chunks siempre reciben al menos 50%).
+    entity_raw = KG_MAX_ENTITY_CONTEXT_CHARS if use_entities else 0
+    relation_raw = KG_MAX_RELATION_CONTEXT_CHARS if use_relations else 0
+    total_kg_raw = entity_raw + relation_raw
+    kg_budget_cap = max_length // 2
+    if total_kg_raw > kg_budget_cap and total_kg_raw > 0:
+        scale = kg_budget_cap / total_kg_raw
+        entity_budget = int(entity_raw * scale)
+        relation_budget = int(relation_raw * scale)
+    else:
+        entity_budget = entity_raw
+        relation_budget = relation_raw
     base_chunk_budget = max_length - entity_budget - relation_budget - 100  # buffer separadores
 
     parts: List[str] = []

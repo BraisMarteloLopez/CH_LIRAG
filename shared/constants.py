@@ -68,5 +68,22 @@ CHECKPOINT_CHUNK_SIZE: int = 50
 # =============================================================================
 
 # Timeout en segundos para generacion+metricas de una query individual.
-# Si una query excede este tiempo, se reporta como error.
-GENERATION_QUERY_TIMEOUT_S: float = 120.0
+# Incluye synthesis KG + generacion + calculo de metricas (faithfulness LLM).
+# Valor laxo para evitar falsos fallos; el budget de tokens del contexto
+# es el verdadero limitador de carga al LLM, no el timeout.
+GENERATION_QUERY_TIMEOUT_S: float = 300.0
+
+# =============================================================================
+# CONTEXT BUDGETS — paper LightRAG (HKUDS, EMNLP 2025)
+# =============================================================================
+# Presupuestos de tokens por seccion del contexto estructurado.
+# El paper usa MAX_TOTAL_TOKENS=30000, MAX_ENTITY_TOKENS=6000,
+# MAX_RELATION_TOKENS=8000. Convertimos a chars (×4.0 chars/token).
+
+# Max chars para la seccion de entidades en el contexto estructurado.
+# Paper: 6000 tokens. Ajustable via KG_MAX_ENTITY_CONTEXT_CHARS.
+KG_MAX_ENTITY_CONTEXT_CHARS: int = 24_000  # ~6000 tokens
+
+# Max chars para la seccion de relaciones en el contexto estructurado.
+# Paper: 8000 tokens. Ajustable via KG_MAX_RELATION_CONTEXT_CHARS.
+KG_MAX_RELATION_CONTEXT_CHARS: int = 32_000  # ~8000 tokens
