@@ -94,6 +94,13 @@ class KnowledgeGraph:
         self._entities: Dict[str, KGEntity] = {}
         # Relaciones por doc
         self._doc_to_relations: Dict[str, List[KGRelation]] = defaultdict(list)
+        # Divergencia #10: chunk high-level keywords por doc_id. Populadas
+        # durante indexacion por `_build_knowledge_graph` y consumidas por
+        # `_build_chunk_keywords_vdb` para construir la tercera VDB
+        # (analoga a entities_vdb y relationships_vdb). Texto libre, sin
+        # normalizacion porque el Chunk Keywords VDB hace resolucion
+        # semantica via embeddings.
+        self._doc_to_keywords: Dict[str, List[str]] = {}
         # Contador de entidades nuevas rechazadas por cap
         self._entities_dropped = 0
         # DTm-49: contador de tripletas completas descartadas por entity cap
@@ -125,6 +132,39 @@ class KnowledgeGraph:
         las reglas internas de normalizacion.
         """
         return self._entities.get(self._normalize_name(name))
+
+    # =================================================================
+    # CHUNK KEYWORDS (Divergencia #10)
+    # =================================================================
+
+    def add_doc_keywords(self, doc_id: str, keywords: List[str]) -> None:
+        """Persiste chunk high-level keywords para un doc.
+
+        Divergencia #10: keywords tematicas por chunk extraidas durante
+        indexacion (piggyback en triplet extraction prompt). Usadas
+        en retrieval high-level path via Chunk Keywords VDB.
+
+        La validacion (longitud, dedup) se hace upstream en
+        `TripletExtractor._build_entities_relations`. Aqui solo persistimos.
+        Si un doc_id recibe keywords varias veces (gleaning, re-indexacion)
+        se sobreescribe — refleja la ultima extraccion autoritaria.
+        """
+        if not doc_id or not keywords:
+            return
+        self._doc_to_keywords[doc_id] = list(keywords)
+
+    def get_doc_keywords(self, doc_id: str) -> List[str]:
+        """Retorna la lista de chunk keywords de un doc, o [] si no hay."""
+        return list(self._doc_to_keywords.get(doc_id, []))
+
+    def get_all_doc_keywords(self) -> Dict[str, List[str]]:
+        """Retorna copia del mapping doc_id -> keywords para todos los docs."""
+        return {did: list(kws) for did, kws in self._doc_to_keywords.items()}
+
+    @property
+    def num_docs_with_keywords(self) -> int:
+        """Numero de docs con al menos una chunk keyword."""
+        return len(self._doc_to_keywords)
 
     def get_all_relations(self) -> List[Dict[str, Any]]:
         """Retorna lista de relaciones unicas con metadata.
@@ -557,7 +597,10 @@ class KnowledgeGraph:
             })
 
         return {
-            "version": 2,
+            # v3: divergencia #10 cerrada. Se anade `doc_to_keywords`.
+            # Caches v<3 son incompatibles (falta la tercera VDB de chunks);
+            # permitir cargarlos ocultaria una parte de la arquitectura.
+            "version": 3,
             "max_entities": self._max_entities,
             "entities_dropped": self._entities_dropped,
             "triplets_dropped_by_cap": self._triplets_dropped_by_cap,
@@ -570,15 +613,39 @@ class KnowledgeGraph:
             "doc_to_entities": {
                 k: sorted(v) for k, v in self._doc_to_entities.items()
             },
+            "doc_to_keywords": {
+                doc_id: list(kws)
+                for doc_id, kws in self._doc_to_keywords.items()
+            },
             "graph": {
                 "nodes": graph_nodes,
                 "edges": graph_edges,
             },
         }
 
+    # Version minima del cache que incluye todos los canales paper-aligned
+    # (divergencia #10 cerrada). Caches anteriores carecen de
+    # `doc_to_keywords` y por tanto representan una variante arquitecturalmente
+    # incompleta del KG — se rechazan explicitamente.
+    _MIN_CACHE_VERSION = 3
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeGraph":
-        """Reconstruye un KnowledgeGraph desde un dict serializado."""
+        """Reconstruye un KnowledgeGraph desde un dict serializado.
+
+        Divergencia #10: rechaza caches con `version < _MIN_CACHE_VERSION`
+        porque carecen del canal de chunk keywords (representarian una
+        arquitectura incompleta). Invalidar cache y re-extraer es la unica
+        forma de recuperar el canal.
+        """
+        version = data.get("version", 1)
+        if version < cls._MIN_CACHE_VERSION:
+            raise ValueError(
+                f"KG cache version {version} < {cls._MIN_CACHE_VERSION}. "
+                f"El cache es pre-#10 y no contiene chunk keywords; cargarlo "
+                f"produciria un KG arquitecturalmente incompleto. Borra el "
+                f"cache o cambia KG_CACHE_DIR para forzar re-extraccion."
+            )
         kg = cls(max_entities=data.get("max_entities", 0))
         kg._entities_dropped = data.get("entities_dropped", 0)
         kg._triplets_dropped_by_cap = data.get("triplets_dropped_by_cap", 0)
@@ -612,6 +679,11 @@ class KnowledgeGraph:
                 )
                 for r in rels_data
             ]
+
+        # Divergencia #10: reconstruir chunk keywords por doc (cache v3+).
+        for doc_id, kws in data.get("doc_to_keywords", {}).items():
+            if isinstance(kws, list) and kws:
+                kg._doc_to_keywords[doc_id] = [str(k) for k in kws if isinstance(k, str)]
 
         # Reconstruir grafo igraph
         graph_data = data.get("graph")
@@ -813,6 +885,9 @@ class KnowledgeGraph:
         components = 0
         if self._graph.vcount() > 0:
             components = len(self._graph.connected_components())
+        total_chunk_keywords = sum(
+            len(kws) for kws in self._doc_to_keywords.values()
+        )
         return {
             "num_entities": self.num_entities,
             "num_relations": self.num_relations,
@@ -828,6 +903,9 @@ class KnowledgeGraph:
             "triplets_dropped_by_cap": self._triplets_dropped_by_cap,
             "max_entities": self._max_entities,
             "approx_memory_mb": round(mem_bytes / (1024 * 1024), 2),
+            # Divergencia #10
+            "num_docs_with_keywords": self.num_docs_with_keywords,
+            "total_chunk_keywords": total_chunk_keywords,
         }
 
 

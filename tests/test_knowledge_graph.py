@@ -403,10 +403,10 @@ def test_to_dict_from_dict_roundtrip():
 
 
 def test_to_dict_version_field():
-    """to_dict incluye campo version."""
+    """to_dict incluye campo version. Bumped a 3 por divergencia #10."""
     kg = KnowledgeGraph()
     data = kg.to_dict()
-    assert data["version"] == 2
+    assert data["version"] == 3
 
 
 def test_save_load_file(tmp_path):
@@ -424,7 +424,7 @@ def test_save_load_file(tmp_path):
     # Verificar que es JSON valido
     with open(path) as f:
         data = json.load(f)
-    assert data["version"] == 2
+    assert data["version"] == 3
 
     # Load y verificar
     kg2 = KnowledgeGraph.load(path)
@@ -434,8 +434,8 @@ def test_save_load_file(tmp_path):
 
 
 def test_from_dict_empty_graph():
-    """from_dict con datos minimos produce grafo vacio funcional."""
-    kg = KnowledgeGraph.from_dict({"version": 1})
+    """from_dict con datos minimos produce grafo vacio funcional (v3+ tras #10)."""
+    kg = KnowledgeGraph.from_dict({"version": 3})
     assert kg.num_entities == 0
     assert kg.num_relations == 0
     assert kg.get_all_entities() == {}
@@ -729,3 +729,123 @@ def test_get_neighbors_ranked_edge_weight_from_multiple_docs():
     scores = {n["entity"]: n["score"] for n in neighbors}
     # B has 3 docs on edge -> higher edge_weight than C with 1 doc
     assert scores["b"] > scores["c"]
+
+
+# =============================================================================
+# Divergencia #10: chunk high-level keywords por doc
+# =============================================================================
+
+def test_chunk_keywords_add_and_get():
+    """#10: add_doc_keywords + get_doc_keywords round-trip."""
+    kg = KnowledgeGraph()
+    kg.add_doc_keywords("doc1", ["theme one", "theme two"])
+    assert kg.get_doc_keywords("doc1") == ["theme one", "theme two"]
+    # Doc sin keywords -> lista vacia, no KeyError
+    assert kg.get_doc_keywords("doc_missing") == []
+
+
+def test_chunk_keywords_get_all():
+    """#10: get_all_doc_keywords devuelve copia de todos los mappings."""
+    kg = KnowledgeGraph()
+    kg.add_doc_keywords("d1", ["a"])
+    kg.add_doc_keywords("d2", ["b", "c"])
+
+    all_kws = kg.get_all_doc_keywords()
+    assert all_kws == {"d1": ["a"], "d2": ["b", "c"]}
+    # Es copia: mutar no afecta al KG
+    all_kws["d1"].append("mutated")
+    assert kg.get_doc_keywords("d1") == ["a"]
+
+
+def test_chunk_keywords_overwrite_on_reindex():
+    """#10: re-indexar un doc sobreescribe sus keywords (ultima extraccion gana)."""
+    kg = KnowledgeGraph()
+    kg.add_doc_keywords("d1", ["old"])
+    kg.add_doc_keywords("d1", ["new1", "new2"])
+    assert kg.get_doc_keywords("d1") == ["new1", "new2"]
+
+
+def test_chunk_keywords_empty_inputs_noop():
+    """#10: doc_id o keywords vacios son no-op (no persisten)."""
+    kg = KnowledgeGraph()
+    kg.add_doc_keywords("", ["theme"])
+    kg.add_doc_keywords("d1", [])
+    assert kg.get_all_doc_keywords() == {}
+    assert kg.num_docs_with_keywords == 0
+
+
+def test_chunk_keywords_stats_reported():
+    """#10: get_stats reporta num_docs_with_keywords y total_chunk_keywords."""
+    kg = KnowledgeGraph()
+    kg.add_doc_keywords("d1", ["a", "b"])
+    kg.add_doc_keywords("d2", ["c"])
+
+    stats = kg.get_stats()
+    assert stats["num_docs_with_keywords"] == 2
+    assert stats["total_chunk_keywords"] == 3
+
+
+# =============================================================================
+# Serializacion v3 (divergencia #10)
+# =============================================================================
+
+def test_cache_version_is_v3():
+    """#10: to_dict emite version=3 (gate pre-P0)."""
+    kg = KnowledgeGraph()
+    data = kg.to_dict()
+    assert data["version"] == 3
+
+
+def test_cache_roundtrip_with_keywords():
+    """#10: to_dict/from_dict preserva doc_to_keywords."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("d1", [_rel("A", "B", "knows", doc_id="d1")])
+    kg.add_doc_keywords("d1", ["theme one", "theme two"])
+    kg.add_doc_keywords("d2", ["theme three"])
+
+    data = kg.to_dict()
+    kg2 = KnowledgeGraph.from_dict(data)
+
+    assert kg2.get_doc_keywords("d1") == ["theme one", "theme two"]
+    assert kg2.get_doc_keywords("d2") == ["theme three"]
+    assert kg2.num_docs_with_keywords == 2
+
+
+def test_cache_rejects_v2_and_earlier():
+    """#10: from_dict rechaza caches v<3 (pre-#10) con mensaje explicito."""
+    # Cache v2 minimo pero valido pre-#10
+    v2_cache = {
+        "version": 2,
+        "max_entities": 100_000,
+        "entities": {},
+        "doc_to_relations": {},
+        "entity_to_docs": {},
+        "doc_to_entities": {},
+        "graph": {"nodes": [], "edges": []},
+    }
+    with pytest.raises(ValueError, match="KG cache version 2"):
+        KnowledgeGraph.from_dict(v2_cache)
+
+
+def test_cache_rejects_v1():
+    """#10: from_dict rechaza caches v1 (legacy NetworkX)."""
+    v1_cache = {
+        "version": 1,
+        "entities": {},
+        "graph": {"nodes": [], "links": []},
+    }
+    with pytest.raises(ValueError, match="KG cache version 1"):
+        KnowledgeGraph.from_dict(v1_cache)
+
+
+def test_cache_save_load_roundtrip(tmp_path):
+    """#10: save/load persiste y recupera doc_to_keywords via JSON."""
+    kg = KnowledgeGraph()
+    kg.add_triplets("d1", [_rel("A", "B", doc_id="d1")])
+    kg.add_doc_keywords("d1", ["theme one"])
+
+    cache_path = tmp_path / "kg.json"
+    kg.save(cache_path)
+
+    kg2 = KnowledgeGraph.load(cache_path)
+    assert kg2.get_doc_keywords("d1") == ["theme one"]

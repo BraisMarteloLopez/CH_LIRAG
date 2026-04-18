@@ -32,6 +32,15 @@ from shared.constants import KG_MIN_ENTITY_NAME_LEN as MIN_ENTITY_NAME_LEN
 
 VALID_ENTITY_TYPES = {"PERSON", "ORG", "PLACE", "CONCEPT", "EVENT", "OTHER"}
 
+# Divergencia #10: high-level keywords por chunk durante indexacion
+# (paper HKUDS/LightRAG). Se extraen en la misma llamada LLM que las
+# tripletas (piggyback en TRIPLET_EXTRACTION_PROMPT) y se usan en el
+# path high-level de retrieval como canal adicional via Chunk Keywords VDB.
+# Caps defensivos frente a respuestas patologicas del LLM.
+MAX_CHUNK_KEYWORDS_PER_DOC = 10
+MIN_CHUNK_KEYWORD_LEN = 2
+MAX_CHUNK_KEYWORD_LEN = 80
+
 
 # =============================================================================
 # PROMPTS
@@ -42,34 +51,36 @@ Extract entities and their relationships from the given text.
 Do NOT reason or think step-by-step. Do NOT use <think> tags.
 Respond with ONLY the JSON object, nothing else."""
 
-TRIPLET_EXTRACTION_PROMPT = """Extract entities and relationships from this text.
+TRIPLET_EXTRACTION_PROMPT = """Extract entities, relationships, and high-level keywords from this text.
 
 Rules:
 - Extract the most important entities (people, organizations, places, concepts, events)
 - Extract relationships between entities that are explicitly stated or strongly implied
+- Extract high-level keywords that describe the abstract themes or topics of the text (e.g., "financial regulation", "quantum mechanics", "methodology", "limitations"). These are NOT entity names — they capture what the text is ABOUT thematically.
 - Keep entity names concise but unambiguous
 - Keep relation types short (2-4 words)
-- Return at most 10 entities and 10 relations
+- Return at most 10 entities, 10 relations, and 10 high-level keywords
 
 Return JSON in this exact format:
-{{"entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}]}}
+{{"entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}], "high_level_keywords": ["theme1", "theme2"]}}
 
 Text:
 {text}"""
 
-TRIPLET_EXTRACTION_BATCH_PROMPT = """Extract entities and relationships from EACH of these documents separately.
+TRIPLET_EXTRACTION_BATCH_PROMPT = """Extract entities, relationships, and high-level keywords from EACH of these documents separately.
 
 Rules:
 - Extract the most important entities (people, organizations, places, concepts, events)
 - Extract relationships between entities that are explicitly stated or strongly implied
+- Extract high-level keywords that describe the abstract themes or topics of EACH document (e.g., "financial regulation", "quantum mechanics", "methodology", "limitations"). These are NOT entity names — they capture what each document is ABOUT thematically.
 - Keep entity names concise but unambiguous
 - Keep relation types short (2-4 words)
-- Return at most 10 entities and 10 relations per document
+- Return at most 10 entities, 10 relations, and 10 high-level keywords per document
 
 {doc_blocks}
 
 Return JSON in this exact format (one entry per document, preserve doc_id):
-{{"documents": [{{"doc_id": "id1", "entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}]}}]}}"""
+{{"documents": [{{"doc_id": "id1", "entities": [{{"name": "Entity Name", "type": "PERSON|ORG|PLACE|CONCEPT|EVENT|OTHER", "description": "brief description"}}], "relations": [{{"source": "Entity A", "target": "Entity B", "relation": "relation type", "description": "brief description"}}], "high_level_keywords": ["theme1", "theme2"]}}]}}"""
 
 GLEANING_CONTINUATION_PROMPT = """Many entities and relationships were missed in the previous extraction.
 Review the text again and extract ADDITIONAL entities and relationships that were not captured before.
@@ -156,6 +167,9 @@ class TripletExtractor:
             "docs_json_recovered": 0,
             "total_entities": 0,
             "total_relations": 0,
+            # Divergencia #10: chunk high-level keywords por doc
+            "docs_with_keywords": 0,
+            "total_chunk_keywords": 0,
         }
 
     def get_stats(self) -> Dict[str, int]:
@@ -186,8 +200,14 @@ class TripletExtractor:
 
     def _parse_extraction_json(
         self, raw: str, doc_id: str
-    ) -> Tuple[List[KGEntity], List[KGRelation]]:
-        """Parsea JSON de extraccion de tripletas con fallback robusto."""
+    ) -> Tuple[List[KGEntity], List[KGRelation], List[str]]:
+        """Parsea JSON de extraccion de tripletas con fallback robusto.
+
+        Returns:
+            (entities, relations, chunk_keywords). chunk_keywords puede
+            estar vacio si el modelo no emite el campo `high_level_keywords`
+            (retrocompatible con prompts anteriores al cierre de #10).
+        """
         try:
             # Limpiar markdown code blocks si los hay
             text = raw.strip()
@@ -223,11 +243,14 @@ class TripletExtractor:
 
     def _build_entities_relations(
         self, data: Dict[str, Any], doc_id: str,
-    ) -> Tuple[List[KGEntity], List[KGRelation]]:
-        """Construye entidades y relaciones desde un dict ya parseado.
+    ) -> Tuple[List[KGEntity], List[KGRelation], List[str]]:
+        """Construye entidades, relaciones y chunk keywords desde un dict ya parseado.
 
         Usado tanto por _parse_extraction_json (single-doc, desde string)
         como por _parse_batch_extraction_json (multi-doc, dict directo).
+
+        Divergencia #10: tambien extrae `high_level_keywords` del dict si
+        estan presentes. Caps, dedup y validaciones de longitud defensivos.
         """
         entities: List[KGEntity] = []
         relations: List[KGRelation] = []
@@ -267,25 +290,45 @@ class TripletExtractor:
                     source_doc_id=doc_id,
                 ))
 
-        return entities, relations
+        # Divergencia #10: chunk high-level keywords
+        chunk_keywords: List[str] = []
+        seen_lower: set = set()
+        for k in data.get("high_level_keywords", []):
+            if not isinstance(k, str):
+                continue
+            kw = k.strip()
+            if len(kw) < MIN_CHUNK_KEYWORD_LEN or len(kw) > MAX_CHUNK_KEYWORD_LEN:
+                continue
+            # Dedup case-insensitive preservando el primer casing visto
+            key = kw.lower()
+            if key in seen_lower:
+                continue
+            seen_lower.add(key)
+            chunk_keywords.append(kw)
+            if len(chunk_keywords) >= MAX_CHUNK_KEYWORDS_PER_DOC:
+                break
+
+        return entities, relations, chunk_keywords
 
     async def extract_from_doc_async(
         self, doc_id: str, text: str,
-    ) -> Tuple[List[KGEntity], List[KGRelation]]:
-        """Extrae entidades y relaciones de un documento via LLM.
+    ) -> Tuple[List[KGEntity], List[KGRelation], List[str]]:
+        """Extrae entidades, relaciones y chunk keywords de un documento via LLM.
+
+        Divergencia #10: el mismo LLM call produce las 3 salidas.
 
         Args:
             doc_id: ID del documento.
             text: Contenido del documento.
 
         Returns:
-            Tupla (entidades, relaciones).
+            Tupla (entidades, relaciones, chunk_keywords).
         """
         self._stats["docs_processed"] += 1
 
         if not text.strip():
             self._stats["docs_empty_input"] += 1
-            return [], []
+            return [], [], []
 
         truncated = text[:self._max_text_chars]
         prompt = TRIPLET_EXTRACTION_PROMPT.format(text=truncated)
@@ -296,21 +339,24 @@ class TripletExtractor:
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
                 max_tokens=self._extraction_max_tokens,
             )
-            entities, relations = self._parse_extraction_json(raw, doc_id)
+            entities, relations, chunk_keywords = self._parse_extraction_json(raw, doc_id)
             self._stats["docs_success"] += 1
             self._stats["total_entities"] += len(entities)
             self._stats["total_relations"] += len(relations)
+            if chunk_keywords:
+                self._stats["docs_with_keywords"] += 1
+                self._stats["total_chunk_keywords"] += len(chunk_keywords)
             if not entities and not relations:
                 self._stats["docs_empty_result"] += 1
-            return entities, relations
+            return entities, relations, chunk_keywords
         except Exception as e:
             self._stats["docs_failed"] += 1
             logger.warning(f"Error extrayendo tripletas de {doc_id}: {e}")
-            return [], []
+            return [], [], []
 
     def extract_from_doc(
         self, doc_id: str, text: str,
-    ) -> Tuple[List[KGEntity], List[KGRelation]]:
+    ) -> Tuple[List[KGEntity], List[KGRelation], List[str]]:
         """Wrapper sincrono de extract_from_doc_async."""
         return run_sync(self.extract_from_doc_async(doc_id, text))
 
@@ -323,7 +369,10 @@ class TripletExtractor:
         """Gleaning: re-extraccion para capturar entidades perdidas (DAM-6).
 
         Envia el texto con un prompt de continuacion que lista las entidades
-        ya extraidas y pide al LLM que busque las que faltan.
+        ya extraidas y pide al LLM que busque las que faltan. El prompt de
+        gleaning no solicita keywords (divergencia #10): la extraccion de
+        chunk keywords se hace en la pasada principal; el gleaning solo
+        complementa entidades/relaciones perdidas.
 
         Referencia: gleaning loop en HKUDS/LightRAG operate.py.
         """
@@ -343,7 +392,7 @@ class TripletExtractor:
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
                 max_tokens=self._extraction_max_tokens,
             )
-            entities, relations = self._parse_extraction_json(raw, doc_id)
+            entities, relations, _ = self._parse_extraction_json(raw, doc_id)
             return entities, relations
         except Exception as e:
             logger.debug(f"Gleaning fallo para {doc_id}: {e}")
@@ -413,12 +462,14 @@ class TripletExtractor:
         self,
         raw: str,
         docs: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, Tuple[List[KGEntity], List[KGRelation]]]]:
+    ) -> Optional[Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]]]:
         """Parsea JSON de extraccion batch multi-documento.
 
         Returns:
-            Dict doc_id -> (entities, relations), o None si el formato
-            batch no se reconoce (el caller hara fallback a single-doc).
+            Dict doc_id -> (entities, relations, chunk_keywords), o None si
+            el formato batch no se reconoce (el caller hara fallback a
+            single-doc). El campo `chunk_keywords` viene de
+            `high_level_keywords` del JSON (divergencia #10).
         """
         try:
             text = raw.strip()
@@ -439,7 +490,7 @@ class TripletExtractor:
             if not isinstance(doc_list, list):
                 return None
 
-            results: Dict[str, Tuple[List[KGEntity], List[KGRelation]]] = {}
+            results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
             for entry in doc_list:
                 if not isinstance(entry, dict):
                     continue
@@ -447,8 +498,8 @@ class TripletExtractor:
                 if not doc_id:
                     continue
                 # DTm-68: pass dict directly, no re-serialization
-                entities, relations = self._build_entities_relations(entry, doc_id)
-                results[doc_id] = (entities, relations)
+                entities, relations, keywords = self._build_entities_relations(entry, doc_id)
+                results[doc_id] = (entities, relations, keywords)
 
             return results
 
@@ -459,23 +510,24 @@ class TripletExtractor:
     async def _extract_multi_doc_async(
         self,
         docs: List[Dict[str, Any]],
-    ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation]]]:
-        """Extrae tripletas de multiples documentos en una sola llamada LLM.
+    ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]]:
+        """Extrae tripletas y chunk keywords de multiples documentos en una llamada LLM.
 
+        Divergencia #10: el prompt batch emite `high_level_keywords` por doc.
         Si el parsing batch falla, hace fallback a extraccion individual.
         """
         # Filtrar docs vacios antes del batch
         non_empty = [d for d in docs if d.get("content", "").strip()]
         empty = [d for d in docs if not d.get("content", "").strip()]
 
-        results: Dict[str, Tuple[List[KGEntity], List[KGRelation]]] = {}
+        results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
 
         # Registrar vacios
         for d in empty:
             doc_id = d.get("doc_id", "")
             self._stats["docs_processed"] += 1
             self._stats["docs_empty_input"] += 1
-            results[doc_id] = ([], [])
+            results[doc_id] = ([], [], [])
 
         if not non_empty:
             return results
@@ -485,8 +537,8 @@ class TripletExtractor:
             doc = non_empty[0]
             doc_id = doc.get("doc_id", "")
             content = doc.get("content", "")
-            entities, relations = await self.extract_from_doc_async(doc_id, content)
-            results[doc_id] = (entities, relations)
+            entities, relations, keywords = await self.extract_from_doc_async(doc_id, content)
+            results[doc_id] = (entities, relations, keywords)
             return results
 
         # Multi-doc batch call
@@ -514,17 +566,20 @@ class TripletExtractor:
                     doc_id = doc.get("doc_id", "")
                     self._stats["docs_processed"] += 1
                     if doc_id in batch_results:
-                        entities, relations = batch_results[doc_id]
+                        entities, relations, keywords = batch_results[doc_id]
                         self._stats["docs_success"] += 1
                         self._stats["total_entities"] += len(entities)
                         self._stats["total_relations"] += len(relations)
+                        if keywords:
+                            self._stats["docs_with_keywords"] += 1
+                            self._stats["total_chunk_keywords"] += len(keywords)
                         if not entities and not relations:
                             self._stats["docs_empty_result"] += 1
-                        results[doc_id] = (entities, relations)
+                        results[doc_id] = (entities, relations, keywords)
                     else:
                         # Doc not in batch response — count as empty result
                         self._stats["docs_empty_result"] += 1
-                        results[doc_id] = ([], [])
+                        results[doc_id] = ([], [], [])
                 return results
 
             # DTm-54: batch parsing failed — fallback to single-doc (WARNING, not debug)
@@ -539,8 +594,8 @@ class TripletExtractor:
         for doc in non_empty:
             doc_id = doc.get("doc_id", "")
             content = doc.get("content", "")
-            entities, relations = await self.extract_from_doc_async(doc_id, content)
-            results[doc_id] = (entities, relations)
+            entities, relations, keywords = await self.extract_from_doc_async(doc_id, content)
+            results[doc_id] = (entities, relations, keywords)
 
         return results
 
@@ -548,8 +603,12 @@ class TripletExtractor:
         self,
         documents: List[Dict[str, Any]],
         batch_docs_per_call: int = 0,
-    ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation]]]:
+    ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]]:
         """Extraccion en batch con concurrencia controlada por el LLM service.
+
+        Divergencia #10: cada entrada del dict retornado incluye la lista
+        de chunk keywords (high-level themes) extraidos por el LLM en la
+        misma llamada que tripletas.
 
         Args:
             documents: Lista de dicts con keys: doc_id, content.
@@ -558,7 +617,7 @@ class TripletExtractor:
                 multi-documento y cada doc se envia en su propia llamada.
 
         Returns:
-            Dict doc_id -> (entidades, relaciones).
+            Dict doc_id -> (entidades, relaciones, chunk_keywords).
         """
         if batch_docs_per_call <= 0:
             batch_docs_per_call = self._DEFAULT_BATCH_DOCS_PER_CALL
@@ -566,17 +625,17 @@ class TripletExtractor:
         # G.5/DTm-60: reset stats al inicio para evitar acumulacion entre llamadas
         self.reset_stats()
         t0 = time.perf_counter()
-        results: Dict[str, Tuple[List[KGEntity], List[KGRelation]]] = {}
+        results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
 
         if batch_docs_per_call == 1:
             # Legacy mode: one LLM call per doc
             async def _extract_one(
                 doc: Dict[str, Any],
-            ) -> Tuple[str, List[KGEntity], List[KGRelation]]:
+            ) -> Tuple[str, List[KGEntity], List[KGRelation], List[str]]:
                 doc_id = doc.get("doc_id", "")
                 content = doc.get("content", "")
-                entities, relations = await self.extract_from_doc_async(doc_id, content)
-                return (doc_id, entities, relations)
+                entities, relations, keywords = await self.extract_from_doc_async(doc_id, content)
+                return (doc_id, entities, relations, keywords)
 
             batch_sz = self._batch_size
             for start in range(0, len(documents), batch_sz):
@@ -587,8 +646,8 @@ class TripletExtractor:
                     if isinstance(r, BaseException):
                         logger.warning(f"TripletExtractor: doc extraction failed: {r}")
                         continue
-                    doc_id, entities, relations = r
-                    results[doc_id] = (entities, relations)
+                    doc_id, entities, relations, keywords = r
+                    results[doc_id] = (entities, relations, keywords)
         else:
             # Multi-doc batch mode: group docs and send N per LLM call
             groups = self._group_docs_for_batch(documents, batch_docs_per_call)
@@ -606,8 +665,10 @@ class TripletExtractor:
                     results.update(gr)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        total_entities = sum(len(e) for e, _ in results.values())
-        total_relations = sum(len(r) for _, r in results.values())
+        total_entities = sum(len(v[0]) for v in results.values())
+        total_relations = sum(len(v[1]) for v in results.values())
+        total_keywords = sum(len(v[2]) for v in results.values())
+        docs_with_keywords = sum(1 for v in results.values() if v[2])
         # DTm-33: reportar fallos en el log del batch
         stats = self.get_stats()
         failed = stats["docs_failed"]
@@ -621,7 +682,8 @@ class TripletExtractor:
             )
         logger.info(
             f"TripletExtractor: batch {len(documents)} docs en {elapsed_ms:.0f}ms. "
-            f"{total_entities} entidades, {total_relations} relaciones extraidas."
+            f"{total_entities} entidades, {total_relations} relaciones, "
+            f"{total_keywords} chunk keywords ({docs_with_keywords} docs con keywords)."
             f"{fail_info}"
         )
         if failed:
@@ -636,7 +698,7 @@ class TripletExtractor:
         self,
         documents: List[Dict[str, Any]],
         batch_docs_per_call: int = 0,
-    ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation]]]:
+    ) -> Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]]:
         """Wrapper sincrono de extract_batch_async."""
         return run_sync(self.extract_batch_async(documents, batch_docs_per_call))
 

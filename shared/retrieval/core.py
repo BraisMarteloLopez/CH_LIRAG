@@ -72,6 +72,13 @@ class RetrievalConfig:
     kg_description_synthesis: bool = False  # A5.1: activar LLM synthesis
     kg_synthesis_char_threshold: int = 200  # chars minimos para trigger LLM synthesis
 
+    # Divergencia #10: chunk high-level keywords VDB (tercer canal del path
+    # high-level). Cuando esta activado, `global`/`hybrid` resuelven query
+    # high_level keywords contra la Chunk Keywords VDB ademas de contra
+    # el Relationship VDB, y los chunks matched contribuyen al doc_scores.
+    kg_chunk_keywords_enabled: bool = True
+    kg_chunk_keywords_top_k: int = 20  # top-K devueltos por keyword al consultar la VDB
+
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
         from shared.config_base import _env, _env_int, _env_float
@@ -92,6 +99,8 @@ class RetrievalConfig:
             lightrag_generation_top_n=_env_int("LIGHTRAG_GENERATION_TOP_N", 0),
             kg_description_synthesis=_env("KG_DESCRIPTION_SYNTHESIS", "false").lower() == "true",
             kg_synthesis_char_threshold=_env_int("KG_SYNTHESIS_CHAR_THRESHOLD", 200),
+            kg_chunk_keywords_enabled=_env("KG_CHUNK_KEYWORDS_ENABLED", "true").lower() == "true",
+            kg_chunk_keywords_top_k=_env_int("KG_CHUNK_KEYWORDS_TOP_K", 20),
         )
 
 
