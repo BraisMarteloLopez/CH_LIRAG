@@ -8,7 +8,7 @@ Sistema de evaluacion RAG para benchmarking de pipelines de retrieval y generaci
 
 Este proyecto es un subsistema de evaluacion RAG, no un producto final. Su proposito se descompone en dos fases secuenciales:
 
-1. **Fase actual — Pre-P0: completitud arquitectural de LIGHT_RAG**. Cerrar todas las divergencias con el paper ([HKUDS/LightRAG, EMNLP 2025](https://arxiv.org/abs/2410.05779)) y demostrar que la arquitectura descrita corre end-to-end sin degradaciones sistematicas. **Nada puede estar parcialmente implementado**: si una pieza del paper falta (p.ej. un canal del path high-level) o se ejecuta pero degrada al fallback en una fraccion no despreciable de queries (p.ej. synthesis con `fallback_rate > 10%`), la implementacion no esta lista. Las funcionalidades extra propias del entorno (caches, fallbacks defensivos, instrumentacion) son adaptaciones operativas, no sustitutos de piezas del paper. Ver "Proximos pasos · Pre-P0".
+1. **Fase actual — Pre-P0: completitud arquitectural de LIGHT_RAG**. Cerrar todas las divergencias con el paper ([HKUDS/LightRAG](https://github.com/HKUDS/LightRAG), EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)) y demostrar que la arquitectura descrita corre end-to-end sin degradaciones sistematicas. **Nada puede estar parcialmente implementado**: si una pieza del paper falta (p.ej. un canal del path high-level) o se ejecuta pero degrada al fallback en una fraccion no despreciable de queries (p.ej. synthesis con `fallback_rate > 10%`), la implementacion no esta lista. Las funcionalidades extra propias del entorno (caches, fallbacks defensivos, instrumentacion) son adaptaciones operativas, no sustitutos de piezas del paper. Ver "Proximos pasos · Pre-P0".
 
 2. **Fase siguiente — P0: replicacion empirica**. Una vez cerrada la fase anterior, demostrar sobre un benchmark donde el paper muestre ventaja que esta implementacion reproduce la direccion del delta (`LIGHT_RAG > SIMPLE_VECTOR`). Ver "Proximos pasos · P0".
 
@@ -89,7 +89,7 @@ python -m sandbox_mteb.preflight
 
 ## Estrategia LIGHT_RAG — como funciona
 
-Implementa la arquitectura de [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779), con adaptaciones operativas propias del entorno (cache de KG a disco, fallbacks ante errores del LLM/igraph, instrumentacion de observabilidad).
+Implementa la arquitectura de [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) (EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)), con adaptaciones operativas propias del entorno (cache de KG a disco, fallbacks ante errores del LLM/igraph, instrumentacion de observabilidad).
 
 **Indexacion**: LLM extrae tripletas (entidad, relacion, entidad) de cada doc + **high-level keywords tematicas del chunk** (divergencia #10 — piggyback en la misma llamada LLM, pendiente validacion end-to-end) → KnowledgeGraph in-memory (igraph) + ChromaDB para vector search. Entity VDB, Relationship VDB y Chunk Keywords VDB (tercera VDB, divergencia #10) para resolucion semantica. Stats se resetean automaticamente al inicio de cada batch (G.5). Gleaning opcional via `KG_GLEANING_ROUNDS` (no re-extrae keywords; solo entidades/relaciones perdidas).
 
@@ -110,7 +110,7 @@ Los tres canales suman al mismo `doc_scores` con formula simetrica `1/(1+rank) �
 
 ## Divergencias con el paper original — evaluacion de criticidad
 
-Diferencias entre esta implementacion y el [LightRAG original (HKUDS/LightRAG, EMNLP 2025)](https://arxiv.org/abs/2410.05779). Las divergencias 2, 4+5, 6, 7, 8, 9 estan resueltas (implementadas y ejercitadas en runs end-to-end). **La divergencia 10 esta implementada en codigo y cubierta por tests unitarios (29 tests), pero pendiente de validacion end-to-end con NIM + MinIO**: verificar que el LLM produce `high_level_keywords` consistentemente sobre un corpus real, que la Chunk Keywords VDB se construye sin errores, y que el canal contribuye al scoring en queries reales. Solo despues de ese run end-to-end se podra promover #10 a "Resuelta". La validacion de ejecucion estable y la validacion empirica sobre un benchmark donde el paper muestra ventaja son el gate Pre-P0 + P0 ("Proximos pasos").
+Diferencias entre esta implementacion y el [LightRAG original](https://github.com/HKUDS/LightRAG) (HKUDS, EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)). Las divergencias 2, 4+5, 6, 7, 8, 9 estan resueltas (implementadas y ejercitadas en runs end-to-end). **La divergencia 10 esta implementada en codigo y cubierta por tests unitarios (29 tests), pero pendiente de validacion end-to-end con NIM + MinIO**: verificar que el LLM produce `high_level_keywords` consistentemente sobre un corpus real, que la Chunk Keywords VDB se construye sin errores, y que el canal contribuye al scoring en queries reales. Solo despues de ese run end-to-end se podra promover #10 a "Resuelta". La validacion de ejecucion estable y la validacion empirica sobre un benchmark donde el paper muestra ventaja son el gate Pre-P0 + P0 ("Proximos pasos").
 
 ### Divergencias arquitectonicas
 
