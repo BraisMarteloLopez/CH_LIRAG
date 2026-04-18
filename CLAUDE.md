@@ -89,7 +89,7 @@ python -m sandbox_mteb.preflight
 
 ## Estrategia LIGHT_RAG — como funciona
 
-Inspirada en [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779).
+Implementa la arquitectura de [LightRAG (EMNLP 2025)](https://arxiv.org/abs/2410.05779), con adaptaciones operativas propias del entorno (cache de KG a disco, fallbacks ante errores del LLM/igraph, instrumentacion de observabilidad).
 
 **Indexacion**: LLM extrae tripletas (entidad, relacion, entidad) de cada doc + **high-level keywords tematicas del chunk** (divergencia #10 — piggyback en la misma llamada LLM, pendiente validacion end-to-end) → KnowledgeGraph in-memory (igraph) + ChromaDB para vector search. Entity VDB, Relationship VDB y Chunk Keywords VDB (tercera VDB, divergencia #10) para resolucion semantica. Stats se resetean automaticamente al inicio de cada batch (G.5). Gleaning opcional via `KG_GLEANING_ROUNDS` (no re-extrae keywords; solo entidades/relaciones perdidas).
 
