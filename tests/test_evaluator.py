@@ -13,6 +13,7 @@ Cobertura:
   EV9. _assemble_results sin generacion -> COMPLETED (retrieval-only)
   EV10. _assemble_results con excepcion propaga tipo+mensaje (PENDING item A)
   EV11. _format_query_exc maneja excepciones con str() vacio
+  EV12. _init_components omite reranker cuando estrategia=LIGHT_RAG (deuda #13)
 """
 
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -397,3 +398,75 @@ def test_format_query_exc_includes_args_when_present():
     msg = _format_query_exc(ValueError("bad input"))
     assert "ValueError" in msg
     assert "bad input" in msg
+
+
+# =============================================================================
+# EV12: _init_components skip reranker para LIGHT_RAG (deuda #13)
+# =============================================================================
+
+@patch("sandbox_mteb.evaluator.resolve_max_context_chars", return_value=4000)
+@patch("sandbox_mteb.evaluator.load_embedding_model")
+@patch("sandbox_mteb.evaluator.AsyncLLMService")
+@patch("sandbox_mteb.evaluator.CrossEncoderReranker")
+def test_init_components_skips_reranker_for_lightrag(
+    mock_rerank_cls, mock_llm_cls, mock_embed, mock_resolve,
+):
+    """Con RERANKER_ENABLED=true + strategy=LIGHT_RAG, no se instancia reranker.
+
+    El paper LightRAG no usa reranker (divergencia #6); inicializarlo
+    desperdicia una conexion HTTP al NIM sin efecto (deuda #13).
+    """
+    from shared.config_base import RerankerConfig
+
+    mock_embed.return_value = MagicMock()
+    mock_llm_cls.return_value = MagicMock()
+
+    config = _make_config(
+        generation_enabled=True,
+        retrieval=RetrievalConfig(strategy=RetrievalStrategy.LIGHT_RAG),
+        reranker=RerankerConfig(
+            enabled=True,
+            base_url="http://fake-reranker:9000/v1",
+            model_name="fake-reranker",
+        ),
+    )
+    ev = MTEBEvaluator(config)
+    ev._init_components()
+
+    # Reranker NO se construye para LIGHT_RAG aunque reranker.enabled=True
+    mock_rerank_cls.assert_not_called()
+    assert ev._reranker is None
+
+
+@patch("sandbox_mteb.evaluator.resolve_max_context_chars", return_value=4000)
+@patch("sandbox_mteb.evaluator.load_embedding_model")
+@patch("sandbox_mteb.evaluator.AsyncLLMService")
+@patch("sandbox_mteb.evaluator.CrossEncoderReranker")
+def test_init_components_initializes_reranker_for_simple_vector(
+    mock_rerank_cls, mock_llm_cls, mock_embed, mock_resolve,
+):
+    """Regresion guard: el skip de reranker es solo para LIGHT_RAG.
+
+    Con strategy=SIMPLE_VECTOR + RERANKER_ENABLED=true, el reranker
+    DEBE construirse como antes.
+    """
+    from shared.config_base import RerankerConfig
+
+    mock_embed.return_value = MagicMock()
+    mock_llm_cls.return_value = MagicMock()
+    mock_rerank_cls.return_value = MagicMock()
+
+    config = _make_config(
+        generation_enabled=True,
+        retrieval=RetrievalConfig(strategy=RetrievalStrategy.SIMPLE_VECTOR),
+        reranker=RerankerConfig(
+            enabled=True,
+            base_url="http://fake-reranker:9000/v1",
+            model_name="fake-reranker",
+        ),
+    )
+    ev = MTEBEvaluator(config)
+    ev._init_components()
+
+    mock_rerank_cls.assert_called_once()
+    assert ev._reranker is not None

@@ -349,9 +349,19 @@ class MTEBEvaluator:
                 embedding_model=self._embedding_model,
             )
 
-        # Reranker (opcional)
+        # Reranker (opcional). Paper LightRAG no usa reranker — el
+        # cross-encoder single-hop penaliza chunks multi-hop del KG
+        # (divergencia #6). `retrieval_executor` ya auto-desactivaba el
+        # reranker en runtime para LIGHT_RAG, pero se inicializaba igual
+        # (conexion HTTP al NIM desperdiciada). Guard movido aqui para que
+        # no se instancie cuando la estrategia lo ignora (deuda #13).
         if self.config.reranker.enabled:
-            if not HAS_NVIDIA_RERANK:
+            if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
+                logger.warning(
+                    "  Reranker habilitado en .env pero estrategia es LIGHT_RAG; "
+                    "omitiendo inicializacion (divergencia #6: el paper no usa reranker)."
+                )
+            elif not HAS_NVIDIA_RERANK:
                 logger.warning("Reranker habilitado pero NVIDIARerank no disponible")
             elif self.config.reranker.base_url and self.config.reranker.model_name:
                 try:
