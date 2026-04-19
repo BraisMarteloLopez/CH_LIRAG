@@ -12,7 +12,7 @@ Este proyecto es un subsistema de evaluacion RAG, no un producto final. Su propo
 
 2. **Fase actual — P0: replicacion empirica**. Demostrar sobre un benchmark donde el paper muestre ventaja que esta implementacion reproduce la direccion del delta (`LIGHT_RAG > SIMPLE_VECTOR`). Ver "Proximos pasos · P0".
 
-Estado a fecha: **todas las divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) estan resueltas**, implementadas y ejercitadas en runs end-to-end. La validacion de ejecucion estable (Pre-P0 criterio 2) cerro con el run `032905` (fallback_rate 2.86% < 10% umbral). Las funcionalidades extra propias del entorno (cache de KG, fallbacks ante errores, instrumentacion de timing) son adaptaciones operativas documentadas, no sustitutos de piezas del paper. P0 puede ahora lanzarse sobre un benchmark de contra-referencia sin comparar una implementacion parcial.
+Estado a fecha: **todas las divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) estan resueltas en codigo y con tests unitarios**. De las 7: **4 tienen validacion empirica directa** en el run `032905` via observables per-query/agregados (#2, #6, #8, #10); **3 estan ejercitadas implicitamente pero sin observable dedicado** (#4+5, #7, #9) — el codigo corre en todos los runs LIGHT_RAG, pero no hay una stat que discrimine su correctitud frente a una regresion silenciosa. Ver "Status de validacion por divergencia arquitectonica" para el detalle. La validacion de ejecucion estable (Pre-P0 criterio 2) cerro con el run `032905` (fallback_rate 2.86% < 10% umbral). Las funcionalidades extra propias del entorno (cache de KG, fallbacks ante errores, instrumentacion de timing) son adaptaciones operativas documentadas, no sustitutos de piezas del paper. P0 sobre un benchmark de contra-referencia validara implicitamente #4+5/#7/#9 si el delta reproduce la direccion del paper.
 
 **Vision a largo plazo — sistema administrador**: eventualmente este subsistema se integrara dentro de un sistema mas amplio cuya mision es administrar colecciones de datos, orquestar el ciclo de vida de corpus, versionado de KGs, consultas multi-tenant y APIs de uso. El administrador compartira infraestructura con este subsistema (MinIO + Parquet como contrato), asi que la integracion no implica cambiar como consumimos datos, solo apuntar a un prefijo MinIO distinto. **La integracion esta condicionada a que P0 (replicacion del paper) cierre con exito**; si no replicamos, lo unico integrable es SIMPLE_VECTOR y el trabajo sobre KG se vuelve inutil. Trabajo concreto en "Proximos pasos · P3".
 
@@ -110,7 +110,23 @@ Los tres canales suman al mismo `doc_scores` con formula simetrica `1/(1+rank) �
 
 ## Divergencias con el paper original — evaluacion de criticidad
 
-Diferencias entre esta implementacion y el [LightRAG original](https://github.com/HKUDS/LightRAG) (HKUDS, EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)). **Todas las divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) estan resueltas** — implementadas, cubiertas por tests unitarios y ejercitadas en runs end-to-end con NIM + MinIO. Las divergencias #11 y #12 son menores (cosmeticas/no funcionales) con descripcion y criterio de re-evaluacion en su fila. La validacion empirica sobre un benchmark donde el paper muestra ventaja es el objetivo de P0 ("Proximos pasos").
+Diferencias entre esta implementacion y el [LightRAG original](https://github.com/HKUDS/LightRAG) (HKUDS, EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)). Las divergencias #11 y #12 son menores (cosmeticas/no funcionales) con descripcion y criterio de re-evaluacion en su fila. La validacion empirica sobre un benchmark donde el paper muestra ventaja es el objetivo de P0 ("Proximos pasos").
+
+### Status de validacion por divergencia arquitectonica
+
+Tabla resumen del estado de cada divergencia arquitectonica frente al paper. **Validada end-to-end** significa que el run `mteb_hotpotqa_20260419_032905` expuso un observable concreto que confirma el comportamiento (flag en `retrieval_metadata`, stat en `kg_synthesis_stats`, o similar). **Resuelta en codigo** significa que el codigo esta implementado y cubierto por tests unitarios; en el run se ejercito implicitamente (sin observable dedicado). P0 sobre benchmark con contra-referencia validara implicitamente #4+5/#7/#9 si el delta reproduce la direccion del paper.
+
+| # | Divergencia | Status | Evidencia empirica |
+|---|---|---|---|
+| 2 | Synthesis layer con citas `[ref:N]` | **Resuelta + Validada end-to-end** | `kg_synthesis_stats.fallback_rate=2.86%`, `kg_synthesis_used=True` en 34/35 queries |
+| 4+5 | Budgets proporcionales entre secciones del contexto | **Resuelta en codigo** | Tests `test_structured_context.py`. Ejercitada implicitamente: la synthesis recibio contexto con las 3 secciones (entity/relation/chunks) con tamanos razonables en 34/35 queries sin errores de parsing |
+| 6 | Reranker desactivado para LIGHT_RAG | **Resuelta + Validada end-to-end** | Fix #13 cerrado esta sesion; log linea 29 del run `20260419_032905` confirma `"Reranker habilitado en .env pero estrategia es LIGHT_RAG; omitiendo inicializacion"` |
+| 7 | Contexto estructurado JSON-lines con `reference_id` | **Resuelta en codigo** | Tests `test_structured_context.py`. Ejercitada implicitamente: la capa de synthesis consume el formato y las citas `[ref:N]` funcionan (no hay stat especifica de formato) |
+| 8 | Chunks obtenidos via `source_doc_ids` del KG | **Resuelta + Validada end-to-end** | `retrieval_metadata.kg_fallback=null` en 35/35 queries (el KG produjo doc_ids en todas, sin fallback al vector search) |
+| 9 | Enriquecimiento con vecinos 1-hop y endpoints | **Resuelta en codigo** | Tests `test_knowledge_graph.py` (`get_neighbors_ranked`). Ejercitada implicitamente: el campo `neighbors` se anade al dict de entidades en `_retrieve_via_kg` pero **no hay observable en `retrieval_metadata` que lo confirme per-query** — pendiente de anadir si algun debate futuro lo requiere |
+| 10 | High-level keywords por chunk durante indexacion | **Resuelta + Validada end-to-end** | `retrieval_metadata.kg_chunk_keyword_matches > 0` en 35/35 queries (mean=34.8, 100% > 30% umbral) |
+
+Detalles tecnicos de cada item:
 
 ### Divergencias arquitectonicas
 
@@ -250,7 +266,7 @@ P0 (replicacion empirica del paper)                     <-- FASE ACTUAL
 
 Las tres condiciones verificables se cumplieron simultaneamente sobre el run `mteb_hotpotqa_20260419_032905`:
 
-1. **Arquitectonicamente completa frente al paper**: todas las divergencias (#2, #4+5, #6, #7, #8, #9, #10) resueltas. #10 (criterio 3: `kg_chunk_keyword_matches` per-query) validada end-to-end con 35/35 queries (100%, mean=34.8 matches/query), muy por encima del umbral del 30%.
+1. **Arquitectonicamente completa frente al paper**: las 7 divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) resueltas en codigo + tests. **Validacion empirica directa** para #2, #6, #8, #10 via observables concretos (ver tabla "Status de validacion por divergencia arquitectonica"); **ejercitadas implicitamente** para #4+5, #7, #9 (corren en el pipeline pero sin observable per-query dedicado — su correctitud arquitectural se asume sobre los tests unitarios y sobre el hecho de que la synthesis consume los outputs sin errores).
 2. **Funcionando en ejecucion**: `kg_synthesis_stats.fallback_rate = 2.86%` (< 10% umbral); `judge_fallback_stats.default_return_rate = 0%` en faithfulness; `retrieval_metadata.kg_fallback=null` en 35/35 queries (KG produjo doc_ids en todas, sin fallback al vector search); `queries_failed = 0`.
 3. **Funcionalidades extra alineadas con el entorno**: cache de KG, fallbacks ante errores del LLM/igraph, instrumentacion de timing (queue/LLM split) documentadas como adaptaciones operativas (deuda #16 cerrada).
 
