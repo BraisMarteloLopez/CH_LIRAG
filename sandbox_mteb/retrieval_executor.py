@@ -373,4 +373,34 @@ def format_structured_context(
     return "\n\n".join(parts)
 
 
-__all__ = ["RetrievalExecutor", "format_context", "format_structured_context"]
+def is_kg_budget_cap_triggered(max_length: int, mode: str) -> bool:
+    """Observable de divergencia #4+5: cap al 50% del presupuesto total disparado.
+
+    Retorna `True` si la suma de budgets brutos KG (entity + relation segun
+    el modo) excede `max_length // 2` y por tanto se escalaron
+    proporcionalmente. Logica identica a `format_structured_context`, pero
+    expuesta para anotar el observable sin formatear contexto.
+
+    Notas:
+    - Con la config por defecto del paper (entity=24000, relation=32000
+      chars; total=56000) y `max_length >= 112000`, el cap NO dispara y
+      chunks reciben el budget base completo.
+    - Con `max_length < 112000` en modo `hybrid`, o analogos en otros
+      modos, el cap SI dispara y las 2 secciones KG se reducen.
+    """
+    use_entities, use_relations = _LIGHTRAG_MODE_SECTIONS.get(
+        mode, _LIGHTRAG_MODE_SECTIONS["hybrid"]
+    )
+    entity_raw = KG_MAX_ENTITY_CONTEXT_CHARS if use_entities else 0
+    relation_raw = KG_MAX_RELATION_CONTEXT_CHARS if use_relations else 0
+    total_kg_raw = entity_raw + relation_raw
+    kg_budget_cap = max_length // 2
+    return total_kg_raw > kg_budget_cap and total_kg_raw > 0
+
+
+__all__ = [
+    "RetrievalExecutor",
+    "format_context",
+    "format_structured_context",
+    "is_kg_budget_cap_triggered",
+]

@@ -184,6 +184,22 @@ class TestToJson:
         rm = data["query_results"][0]["retrieval_metadata"]
         assert rm["kg_fallback"] == "no_doc_ids"
 
+    def test_retrieval_metadata_new_observables_in_json(self, tmp_path):
+        """Divergencias #9 y #4+5: los nuevos observables llegan al JSON."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        qr.retrieval.retrieval_metadata["kg_entities_with_neighbors"] = 2
+        qr.retrieval.retrieval_metadata["kg_mean_neighbors_per_entity"] = 3.5
+        qr.retrieval.retrieval_metadata["kg_budget_cap_triggered"] = True
+        run = _make_run(query_results=[qr])
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        assert rm["kg_entities_with_neighbors"] == 2
+        assert rm["kg_mean_neighbors_per_entity"] == 3.5
+        assert rm["kg_budget_cap_triggered"] is True
+
 
 class TestToSummaryCsv:
     """Tests para to_summary_csv()."""
@@ -325,6 +341,23 @@ class TestToDetailCsv:
         assert rows[0]["kg_synthesis_used"] == "false"
         assert rows[1]["kg_fallback"] == "no_doc_ids"
         assert rows[1]["kg_synthesis_used"] == "true"
+
+    def test_new_observables_serialized(self, tmp_path):
+        """Observables nuevos de divergencias #9 y #4+5 llegan al CSV."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        qr.retrieval.retrieval_metadata["kg_entities_with_neighbors"] = 3
+        qr.retrieval.retrieval_metadata["kg_mean_neighbors_per_entity"] = 1.5
+        qr.retrieval.retrieval_metadata["kg_budget_cap_triggered"] = False
+        run = _make_run(query_results=[qr])
+        path = exporter.to_detail_csv(run)
+
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        assert rows[0]["kg_entities_with_neighbors"] == "3"
+        assert rows[0]["kg_mean_neighbors_per_entity"] == "1.5"
+        assert rows[0]["kg_budget_cap_triggered"] == "false"
 
 
 class TestExport:

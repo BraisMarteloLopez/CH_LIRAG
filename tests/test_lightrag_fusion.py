@@ -805,3 +805,82 @@ def test_resolve_relations_no_kg():
     assert len(result) == 1
     assert result[0]["source"] == "a"
     assert "source_description" not in result[0]
+
+
+# =============================================================================
+# Divergencia #9: observable per-query de cobertura de vecinos
+# =============================================================================
+
+
+def test_neighbor_coverage_stats_helper_empty():
+    """`_neighbor_coverage_stats` con lista vacia retorna (0, 0.0)."""
+    from shared.retrieval.lightrag.retriever import _neighbor_coverage_stats
+    assert _neighbor_coverage_stats([]) == (0, 0.0)
+
+
+def test_neighbor_coverage_stats_helper_mixed():
+    """Stats cuentan entidades con vecinos y calculan mean sobre el total."""
+    from shared.retrieval.lightrag.retriever import _neighbor_coverage_stats
+    kg_entities = [
+        {"entity": "a", "neighbors": [{"entity": "x"}, {"entity": "y"}]},
+        {"entity": "b"},  # sin clave neighbors
+        {"entity": "c", "neighbors": [{"entity": "z"}]},
+        {"entity": "d", "neighbors": []},  # lista vacia cuenta como sin vecinos
+    ]
+    with_nb, mean_nb = _neighbor_coverage_stats(kg_entities)
+    assert with_nb == 2  # a y c
+    assert mean_nb == 0.75  # 3 vecinos totales / 4 entidades
+
+
+def test_retrieve_via_kg_emits_neighbor_observables_success():
+    """Return path exitoso popula kg_entities_with_neighbors y mean."""
+    r = make_lightrag(lightrag_mode="local")
+    alice = _make_entity("alice", "PERSON", "A researcher", source_doc_ids=["d1"])
+    _setup_kg_retrieval(
+        r,
+        entities_map={"alice": alice},
+        store_contents={"d1": "content1"},
+    )
+    r._kg.get_neighbors_ranked.return_value = [
+        {"entity": "bob", "score": 3.5},
+        {"entity": "carol", "score": 2.1},
+    ]
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    result = r._retrieve_via_kg("query about alice", top_k=5)
+
+    assert result.metadata["kg_entities_with_neighbors"] == 1
+    assert result.metadata["kg_mean_neighbors_per_entity"] == 2.0
+
+
+def test_retrieve_via_kg_emits_neighbor_observables_no_neighbors():
+    """Sin vecinos poblados, observables valen 0."""
+    r = make_lightrag(lightrag_mode="local")
+    alice = _make_entity("alice", "PERSON", "A researcher", source_doc_ids=["d1"])
+    _setup_kg_retrieval(
+        r,
+        entities_map={"alice": alice},
+        store_contents={"d1": "content1"},
+    )
+    r._kg.get_neighbors_ranked.return_value = []
+    r._extractor.extract_query_keywords.return_value = (["alice"], [])
+
+    result = r._retrieve_via_kg("query", top_k=5)
+
+    assert result.metadata["kg_entities_with_neighbors"] == 0
+    assert result.metadata["kg_mean_neighbors_per_entity"] == 0.0
+
+
+def test_retrieve_via_kg_emits_neighbor_observables_on_fallback_no_keywords():
+    """Fallback por no_keywords tambien emite observables (en 0)."""
+    r = make_lightrag(lightrag_mode="hybrid")
+    r._extractor.extract_query_keywords.return_value = ([], [])
+    r._vector_retriever.retrieve.return_value = _make_vector_result(
+        ["v1"], ["fallback content"], [0.9],
+    )
+
+    result = r._retrieve_via_kg("query", top_k=5)
+
+    assert result.metadata["kg_fallback"] == "no_keywords"
+    assert result.metadata["kg_entities_with_neighbors"] == 0
+    assert result.metadata["kg_mean_neighbors_per_entity"] == 0.0

@@ -216,6 +216,9 @@ class RunExporter:
                 "kg_entities_count",
                 "kg_relations_count",
                 "kg_chunk_keyword_matches",
+                "kg_entities_with_neighbors",
+                "kg_mean_neighbors_per_entity",
+                "kg_budget_cap_triggered",
                 "kg_synthesis_used",
                 "kg_synthesis_error",
             ]

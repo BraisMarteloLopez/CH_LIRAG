@@ -222,3 +222,59 @@ class TestStructuredContext:
 
             mock_plain.assert_called_once()
             mock_struct.assert_not_called()
+
+    def test_kg_budget_cap_triggered_annotated_in_metadata(self):
+        """Divergencia #4+5: kg_budget_cap_triggered se anota per-query cuando hay KG data.
+
+        Con max_context_chars=4000 (default del helper) y modo hybrid, el cap
+        dispara (56000 > 2000). El observable debe aparecer en retrieval_metadata
+        para que fluya a JSON/CSV via extract_retrieval_metadata_subset.
+        """
+        executor = _make_executor()
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=True)
+        retrieval.retrieval_metadata["lightrag_mode"] = "hybrid"
+        ds_config = get_dataset_config("hotpotqa")
+
+        with patch("sandbox_mteb.generation_executor.format_structured_context") as mock_struct:
+            mock_struct.return_value = "structured context"
+            asyncio.run(
+                executor._process_single_async(query, retrieval, ds_config, "hotpotqa")
+            )
+
+        assert retrieval.retrieval_metadata["kg_budget_cap_triggered"] is True
+
+    def test_kg_budget_cap_not_triggered_with_wide_window(self):
+        """Con ventana >= 112000 chars el cap no dispara en hybrid."""
+        executor = GenerationExecutor(
+            llm_service=_make_executor()._llm_service,
+            metrics_calculator=_make_executor()._metrics_calculator,
+            max_context_chars=200000,
+        )
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=True)
+        retrieval.retrieval_metadata["lightrag_mode"] = "hybrid"
+        ds_config = get_dataset_config("hotpotqa")
+
+        with patch("sandbox_mteb.generation_executor.format_structured_context") as mock_struct:
+            mock_struct.return_value = "structured context"
+            asyncio.run(
+                executor._process_single_async(query, retrieval, ds_config, "hotpotqa")
+            )
+
+        assert retrieval.retrieval_metadata["kg_budget_cap_triggered"] is False
+
+    def test_kg_budget_cap_not_annotated_without_kg_meta(self):
+        """SIMPLE_VECTOR sin KG data NO emite kg_budget_cap_triggered."""
+        executor = _make_executor()
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=False)
+        ds_config = get_dataset_config("hotpotqa")
+
+        with patch("sandbox_mteb.generation_executor.format_context") as mock_plain:
+            mock_plain.return_value = "plain context"
+            asyncio.run(
+                executor._process_single_async(query, retrieval, ds_config, "hotpotqa")
+            )
+
+        assert "kg_budget_cap_triggered" not in retrieval.retrieval_metadata

@@ -10,6 +10,7 @@ import json
 from sandbox_mteb.retrieval_executor import (
     format_context,
     format_structured_context,
+    is_kg_budget_cap_triggered,
 )
 
 
@@ -319,3 +320,37 @@ def test_structured_context_mode_parameter_default_is_hybrid():
 
     assert "Knowledge Graph Data (Entity):" in result
     assert "Knowledge Graph Data (Relationship):" in result
+
+
+# =============================================================================
+# Divergencia #4+5: observable de cap proporcional disparado
+# =============================================================================
+
+
+def test_is_kg_budget_cap_triggered_hybrid_wide_window():
+    """Ventana >= 2*(entity+relation) => cap no dispara (paper budgets intactos)."""
+    # entity=24000, relation=32000 -> total=56000 -> cap threshold = 112000
+    assert is_kg_budget_cap_triggered(max_length=200000, mode="hybrid") is False
+
+
+def test_is_kg_budget_cap_triggered_hybrid_narrow_window():
+    """Ventana < 2*(entity+relation) => cap dispara."""
+    assert is_kg_budget_cap_triggered(max_length=50000, mode="hybrid") is True
+
+
+def test_is_kg_budget_cap_triggered_local_mode():
+    """Local solo usa entity (24000) => threshold = 48000."""
+    assert is_kg_budget_cap_triggered(max_length=60000, mode="local") is False
+    assert is_kg_budget_cap_triggered(max_length=40000, mode="local") is True
+
+
+def test_is_kg_budget_cap_triggered_naive_never():
+    """Modo naive no usa KG => cap jamas dispara (total_kg_raw=0)."""
+    assert is_kg_budget_cap_triggered(max_length=100, mode="naive") is False
+    assert is_kg_budget_cap_triggered(max_length=10**9, mode="naive") is False
+
+
+def test_is_kg_budget_cap_triggered_unknown_mode_falls_back_to_hybrid():
+    """Modo desconocido usa defaults de hybrid (consistente con format_structured_context)."""
+    assert is_kg_budget_cap_triggered(max_length=50000, mode="foo") is True
+    assert is_kg_budget_cap_triggered(max_length=200000, mode="foo") is False

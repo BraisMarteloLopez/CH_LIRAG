@@ -355,6 +355,11 @@ _RETRIEVAL_METADATA_PASSTHROUGH_KEYS = (
     "kg_synthesis_error",
     "lightrag_mode",
     "graph_active",
+    # Divergencia #9 — cobertura del enriquecimiento 1-hop per-query.
+    "kg_entities_with_neighbors",
+    "kg_mean_neighbors_per_entity",
+    # Divergencia #4+5 — cap proporcional del budget KG disparado.
+    "kg_budget_cap_triggered",
 )
 
 _RETRIEVAL_METADATA_COUNT_KEYS = (

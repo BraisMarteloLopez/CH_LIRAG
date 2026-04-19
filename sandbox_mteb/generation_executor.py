@@ -30,7 +30,11 @@ from .config import (
     KG_SYNTHESIS_SYSTEM_PROMPT,
     KG_SYNTHESIS_USER_TEMPLATE,
 )
-from .retrieval_executor import format_context, format_structured_context
+from .retrieval_executor import (
+    format_context,
+    format_structured_context,
+    is_kg_budget_cap_triggered,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +263,14 @@ class GenerationExecutor:
                 kg_relations or [],
                 self._max_context_chars,
                 mode=lightrag_mode,
+            )
+            # Observable de divergencia #4+5: registrar si el cap al 50%
+            # del budget total escalo las secciones KG. Con la config por
+            # defecto del paper y modelos de contexto >= 112000 chars el
+            # cap no dispara; con ventanas mas pequenas discrimina
+            # "chunks starved por KG" vs "budgets del paper intactos".
+            retrieval_detail.retrieval_metadata["kg_budget_cap_triggered"] = (
+                is_kg_budget_cap_triggered(self._max_context_chars, lightrag_mode)
             )
         else:
             structured_context = format_context(

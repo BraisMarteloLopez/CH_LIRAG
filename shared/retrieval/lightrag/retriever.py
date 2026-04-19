@@ -47,6 +47,24 @@ from .triplet_extractor import TripletExtractor
 logger = logging.getLogger(__name__)
 
 
+def _neighbor_coverage_stats(
+    kg_entities: List[Dict[str, Any]],
+) -> Tuple[int, float]:
+    """Observable de divergencia #9: cobertura del enriquecimiento 1-hop.
+
+    Retorna `(entities_with_neighbors, mean_neighbors_per_entity)`.
+    `mean` se calcula sobre el total de entidades resueltas (no solo las
+    que tienen vecinos) para que un mean bajo discrimine "muchas entidades
+    sin vecinos" vs "pocas entidades con muchos vecinos". Si la lista es
+    vacia, retorna `(0, 0.0)`.
+    """
+    if not kg_entities:
+        return 0, 0.0
+    with_nb = sum(1 for e in kg_entities if e.get("neighbors"))
+    total = sum(len(e.get("neighbors", [])) for e in kg_entities)
+    return with_nb, round(total / len(kg_entities), 3)
+
+
 class LightRAGRetriever(BaseRetriever):
     """Retriever LightRAG: Vector + Knowledge Graph dual-level.
 
@@ -876,6 +894,8 @@ class LightRAGRetriever(BaseRetriever):
             result.metadata["kg_entities"] = []
             result.metadata["kg_relations"] = []
             result.metadata["kg_chunk_keyword_matches"] = 0
+            result.metadata["kg_entities_with_neighbors"] = 0
+            result.metadata["kg_mean_neighbors_per_entity"] = 0.0
             return result
 
         use_local = self._lightrag_mode in ("local", "hybrid")
@@ -984,6 +1004,9 @@ class LightRAGRetriever(BaseRetriever):
             result.metadata["kg_entities"] = kg_entities
             result.metadata["kg_relations"] = resolved_relations
             result.metadata["kg_chunk_keyword_matches"] = len(resolved_chunk_matches)
+            with_nb, mean_nb = _neighbor_coverage_stats(kg_entities)
+            result.metadata["kg_entities_with_neighbors"] = with_nb
+            result.metadata["kg_mean_neighbors_per_entity"] = mean_nb
             return result
 
         ranked_doc_ids = sorted(
@@ -1017,6 +1040,9 @@ class LightRAGRetriever(BaseRetriever):
             result.metadata["kg_entities"] = kg_entities
             result.metadata["kg_relations"] = resolved_relations
             result.metadata["kg_chunk_keyword_matches"] = len(resolved_chunk_matches)
+            with_nb, mean_nb = _neighbor_coverage_stats(kg_entities)
+            result.metadata["kg_entities_with_neighbors"] = with_nb
+            result.metadata["kg_mean_neighbors_per_entity"] = mean_nb
             return result
 
         logger.debug(
@@ -1026,6 +1052,7 @@ class LightRAGRetriever(BaseRetriever):
             len(resolved_chunk_matches), query[:60],
         )
 
+        with_nb, mean_nb = _neighbor_coverage_stats(kg_entities)
         return RetrievalResult(
             doc_ids=doc_ids,
             contents=contents,
@@ -1035,6 +1062,8 @@ class LightRAGRetriever(BaseRetriever):
                 "kg_entities": kg_entities,
                 "kg_relations": resolved_relations,
                 "kg_chunk_keyword_matches": len(resolved_chunk_matches),
+                "kg_entities_with_neighbors": with_nb,
+                "kg_mean_neighbors_per_entity": mean_nb,
                 "kg_doc_scores": {did: s for did, s in ranked_doc_ids},
                 "kg_fallback": None,
             },
