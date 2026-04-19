@@ -10,6 +10,8 @@ import json
 from sandbox_mteb.retrieval_executor import (
     format_context,
     format_structured_context,
+    format_structured_context_with_stats,
+    is_kg_budget_cap_triggered,
 )
 
 
@@ -319,3 +321,91 @@ def test_structured_context_mode_parameter_default_is_hybrid():
 
     assert "Knowledge Graph Data (Entity):" in result
     assert "Knowledge Graph Data (Relationship):" in result
+
+
+# =============================================================================
+# Divergencia #4+5: observable de cap proporcional disparado
+# =============================================================================
+
+
+def test_is_kg_budget_cap_triggered_hybrid_wide_window():
+    """Ventana >= 2*(entity+relation) => cap no dispara (paper budgets intactos)."""
+    # entity=24000, relation=32000 -> total=56000 -> cap threshold = 112000
+    assert is_kg_budget_cap_triggered(max_length=200000, mode="hybrid") is False
+
+
+def test_is_kg_budget_cap_triggered_hybrid_narrow_window():
+    """Ventana < 2*(entity+relation) => cap dispara."""
+    assert is_kg_budget_cap_triggered(max_length=50000, mode="hybrid") is True
+
+
+def test_is_kg_budget_cap_triggered_local_mode():
+    """Local solo usa entity (24000) => threshold = 48000."""
+    assert is_kg_budget_cap_triggered(max_length=60000, mode="local") is False
+    assert is_kg_budget_cap_triggered(max_length=40000, mode="local") is True
+
+
+def test_is_kg_budget_cap_triggered_naive_never():
+    """Modo naive no usa KG => cap jamas dispara (total_kg_raw=0)."""
+    assert is_kg_budget_cap_triggered(max_length=100, mode="naive") is False
+    assert is_kg_budget_cap_triggered(max_length=10**9, mode="naive") is False
+
+
+def test_is_kg_budget_cap_triggered_unknown_mode_falls_back_to_hybrid():
+    """Modo desconocido usa defaults de hybrid (consistente con format_structured_context)."""
+    assert is_kg_budget_cap_triggered(max_length=50000, mode="foo") is True
+    assert is_kg_budget_cap_triggered(max_length=200000, mode="foo") is False
+
+
+# =============================================================================
+# format_structured_context_with_stats: n_chunks_emitted (divergencia #7)
+# =============================================================================
+
+
+def test_with_stats_wrapper_parity_with_legacy():
+    """format_structured_context (wrapper) devuelve el mismo texto que _with_stats."""
+    entities = [{"entity": "A", "type": "T", "description": "d"}]
+    contents = ["chunk-1", "chunk-2"]
+    legacy = format_structured_context(contents, entities, [], max_length=60000)
+    text, _ = format_structured_context_with_stats(
+        contents, entities, [], max_length=60000,
+    )
+    assert legacy == text
+
+
+def test_with_stats_reports_all_chunks_with_ample_budget():
+    """Con budget amplio, n_chunks_emitted == len(contents)."""
+    contents = [f"short chunk {i}" for i in range(5)]
+    _, n = format_structured_context_with_stats(
+        contents, [], [], max_length=60000,
+    )
+    assert n == 5
+
+
+def test_with_stats_reports_truncated_count_under_tight_budget():
+    """Budget apretado: n_chunks_emitted < len(contents)."""
+    contents = ["x" * 800 for _ in range(10)]  # 10 chunks grandes
+    # budget chunks base: max_length - entity_raw - relation_raw - 100
+    # con max_length=4000 hybrid -> cap_triggered, entity_budget+relation_budget
+    # escalan a 2000, quedan ~1900 para chunks -> entran ~2 chunks de 800
+    _, n = format_structured_context_with_stats(
+        contents, [], [], max_length=4000, mode="naive",
+    )
+    assert 0 < n < 10
+
+
+def test_with_stats_zero_chunks_when_empty_contents():
+    """Sin contents, n_chunks_emitted == 0."""
+    entities = [{"entity": "A", "type": "T", "description": "d"}]
+    _, n = format_structured_context_with_stats(
+        [], entities, [], max_length=60000,
+    )
+    assert n == 0
+
+
+def test_with_stats_zero_chunks_when_all_sections_starve():
+    """Con max_length demasiado pequeno para nada, n_chunks_emitted == 0."""
+    _, n = format_structured_context_with_stats(
+        ["content"], [], [], max_length=50,
+    )
+    assert n == 0

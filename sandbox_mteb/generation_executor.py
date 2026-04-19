@@ -30,7 +30,14 @@ from .config import (
     KG_SYNTHESIS_SYSTEM_PROMPT,
     KG_SYNTHESIS_USER_TEMPLATE,
 )
-from .retrieval_executor import format_context, format_structured_context
+from shared.citation_parser import parse_citation_refs
+
+from .retrieval_executor import (
+    format_context,
+    format_structured_context,
+    format_structured_context_with_stats,
+    is_kg_budget_cap_triggered,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,16 +256,25 @@ class GenerationExecutor:
         kg_entities = retrieval_detail.retrieval_metadata.get("kg_entities")
         kg_relations = retrieval_detail.retrieval_metadata.get("kg_relations")
         has_kg_data = bool(kg_entities or kg_relations)
+        n_chunks_emitted = 0
         if has_kg_data:
             lightrag_mode = retrieval_detail.retrieval_metadata.get(
                 "lightrag_mode", "hybrid"
             )
-            structured_context = format_structured_context(
+            structured_context, n_chunks_emitted = format_structured_context_with_stats(
                 retrieval_detail.get_generation_contents(),
                 kg_entities or [],
                 kg_relations or [],
                 self._max_context_chars,
                 mode=lightrag_mode,
+            )
+            # Observable de divergencia #4+5: registrar si el cap al 50%
+            # del budget total escalo las secciones KG. Con la config por
+            # defecto del paper y modelos de contexto >= 112000 chars el
+            # cap no dispara; con ventanas mas pequenas discrimina
+            # "chunks starved por KG" vs "budgets del paper intactos".
+            retrieval_detail.retrieval_metadata["kg_budget_cap_triggered"] = (
+                is_kg_budget_cap_triggered(self._max_context_chars, lightrag_mode)
             )
         else:
             structured_context = format_context(
@@ -284,6 +300,19 @@ class GenerationExecutor:
             )
             if synth_error is not None:
                 retrieval_detail.retrieval_metadata["kg_synthesis_error"] = synth_error
+
+            # Divergencia #7: observable de citaciones `[ref:N]` en la narrativa
+            # synthesized. El prompt KG_SYNTHESIS_SYSTEM_PROMPT instruye al LLM
+            # a emitir el formato; el parser cuenta cuantas respeto, cuantas
+            # estan fuera de rango (apuntan a chunks truncados o inventadas),
+            # cuantas son duplicados, etc. Si synth fallo, generation_context
+            # es structured_context verbatim => el parser produce 0 validly
+            # (no hay `[ref:N]` en el JSON crudo, solo `reference_id`).
+            synth_stats = parse_citation_refs(generation_context, n_chunks_emitted)
+            for metric_name, value in synth_stats.items():
+                retrieval_detail.retrieval_metadata[
+                    f"citation_refs_synth_{metric_name}"
+                ] = value
         else:
             generation_context = structured_context
 
@@ -291,6 +320,22 @@ class GenerationExecutor:
         generation = await self._execute_generation_async(
             query.query_text, generation_context, dataset_name
         )
+
+        # Divergencia #7: observable de citaciones en la respuesta final del
+        # generador, emitido bajo el mismo gate que synth_* (has_kg_data +
+        # synthesis enabled). Comparado con synth_*, discrimina el trasvase
+        # narrativa -> respuesta:
+        #   gen_valid > synth_valid  => generador invento citas (alarma)
+        #   gen_out_of_range > 0 y synth_out_of_range == 0 => alucinacion
+        #                                                     solo en gen
+        if has_kg_data and self._kg_synthesis_enabled:
+            gen_stats = parse_citation_refs(
+                generation.generated_response, n_chunks_emitted,
+            )
+            for metric_name, value in gen_stats.items():
+                retrieval_detail.retrieval_metadata[
+                    f"citation_refs_gen_{metric_name}"
+                ] = value
 
         # 2. Metricas async (faithfulness se evalua contra structured_context
         # original, no contra la narrativa del synthesis)

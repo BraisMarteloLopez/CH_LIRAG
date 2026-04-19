@@ -184,6 +184,67 @@ class TestToJson:
         rm = data["query_results"][0]["retrieval_metadata"]
         assert rm["kg_fallback"] == "no_doc_ids"
 
+    def test_retrieval_metadata_new_observables_in_json(self, tmp_path):
+        """Divergencias #9 y #4+5: los nuevos observables llegan al JSON."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        qr.retrieval.retrieval_metadata["kg_entities_with_neighbors"] = 2
+        qr.retrieval.retrieval_metadata["kg_mean_neighbors_per_entity"] = 3.5
+        qr.retrieval.retrieval_metadata["kg_budget_cap_triggered"] = True
+        run = _make_run(query_results=[qr])
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        assert rm["kg_entities_with_neighbors"] == 2
+        assert rm["kg_mean_neighbors_per_entity"] == 3.5
+        assert rm["kg_budget_cap_triggered"] is True
+
+    def test_citation_refs_fields_in_json(self, tmp_path):
+        """Divergencia #7: los 14 campos citation_refs_{synth,gen}_* llegan al JSON."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        # Los 7 synth + 7 gen.
+        synth_values = {
+            "total": 5, "valid": 4, "malformed": 1, "in_range": 3,
+            "out_of_range": 1, "distinct": 2, "coverage_ratio": 0.667,
+        }
+        gen_values = {
+            "total": 2, "valid": 2, "malformed": 0, "in_range": 2,
+            "out_of_range": 0, "distinct": 2, "coverage_ratio": 1.0,
+        }
+        for k, v in synth_values.items():
+            qr.retrieval.retrieval_metadata[f"citation_refs_synth_{k}"] = v
+        for k, v in gen_values.items():
+            qr.retrieval.retrieval_metadata[f"citation_refs_gen_{k}"] = v
+
+        run = _make_run(query_results=[qr])
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        for k, v in synth_values.items():
+            assert rm[f"citation_refs_synth_{k}"] == v
+        for k, v in gen_values.items():
+            assert rm[f"citation_refs_gen_{k}"] == v
+
+    def test_citation_refs_absent_when_not_emitted(self, tmp_path):
+        """Regresion guard: SIMPLE_VECTOR o LIGHT_RAG sin synthesis no
+        inflan el JSON con 14 campos en 0."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)  # KG data pero sin citation_refs_*
+        run = _make_run(query_results=[qr])
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        # Ninguno de los 14 campos debe aparecer en el JSON si no estaban
+        # en el retrieval_metadata original.
+        for prefix in ("synth", "gen"):
+            for k in ("total", "valid", "malformed", "in_range",
+                     "out_of_range", "distinct", "coverage_ratio"):
+                assert f"citation_refs_{prefix}_{k}" not in rm
+
 
 class TestToSummaryCsv:
     """Tests para to_summary_csv()."""
@@ -325,6 +386,77 @@ class TestToDetailCsv:
         assert rows[0]["kg_synthesis_used"] == "false"
         assert rows[1]["kg_fallback"] == "no_doc_ids"
         assert rows[1]["kg_synthesis_used"] == "true"
+
+    def test_new_observables_serialized(self, tmp_path):
+        """Observables nuevos de divergencias #9 y #4+5 llegan al CSV."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        qr.retrieval.retrieval_metadata["kg_entities_with_neighbors"] = 3
+        qr.retrieval.retrieval_metadata["kg_mean_neighbors_per_entity"] = 1.5
+        qr.retrieval.retrieval_metadata["kg_budget_cap_triggered"] = False
+        run = _make_run(query_results=[qr])
+        path = exporter.to_detail_csv(run)
+
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        assert rows[0]["kg_entities_with_neighbors"] == "3"
+        assert rows[0]["kg_mean_neighbors_per_entity"] == "1.5"
+        assert rows[0]["kg_budget_cap_triggered"] == "false"
+
+    def test_citation_refs_fields_in_csv(self, tmp_path):
+        """Divergencia #7: los 14 campos citation_refs_{synth,gen}_* llegan al CSV."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        synth_values = {
+            "total": 5, "valid": 4, "malformed": 1, "in_range": 3,
+            "out_of_range": 1, "distinct": 2, "coverage_ratio": 0.667,
+        }
+        gen_values = {
+            "total": 2, "valid": 2, "malformed": 0, "in_range": 2,
+            "out_of_range": 0, "distinct": 2, "coverage_ratio": 1.0,
+        }
+        for k, v in synth_values.items():
+            qr.retrieval.retrieval_metadata[f"citation_refs_synth_{k}"] = v
+        for k, v in gen_values.items():
+            qr.retrieval.retrieval_metadata[f"citation_refs_gen_{k}"] = v
+
+        run = _make_run(query_results=[qr])
+        path = exporter.to_detail_csv(run)
+
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        row = rows[0]
+        # Los 14 campos estan presentes con sus valores stringificados.
+        assert row["citation_refs_synth_total"] == "5"
+        assert row["citation_refs_synth_valid"] == "4"
+        assert row["citation_refs_synth_malformed"] == "1"
+        assert row["citation_refs_synth_out_of_range"] == "1"
+        assert row["citation_refs_synth_coverage_ratio"] == "0.667"
+        assert row["citation_refs_gen_total"] == "2"
+        assert row["citation_refs_gen_out_of_range"] == "0"
+        assert row["citation_refs_gen_coverage_ratio"] == "1.0"
+
+    def test_citation_refs_absent_columns_when_not_emitted(self, tmp_path):
+        """Queries sin los campos citation_refs_* obtienen string vacio
+        en esas 14 columnas (no ``0``, para discriminar 'no aplica' de
+        'cero validos')."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)  # KG meta pero sin citation_refs_*
+        run = _make_run(query_results=[qr])
+        path = exporter.to_detail_csv(run)
+
+        with open(path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        row = rows[0]
+        # Las columnas existen en el header (por que hay LightRAG data) pero
+        # las celdas de los 14 campos nuevos estan vacias.
+        for prefix in ("synth", "gen"):
+            for k in ("total", "valid", "malformed", "in_range",
+                     "out_of_range", "distinct", "coverage_ratio"):
+                assert row[f"citation_refs_{prefix}_{k}"] == ""
 
 
 class TestExport:

@@ -216,8 +216,27 @@ class RunExporter:
                 "kg_entities_count",
                 "kg_relations_count",
                 "kg_chunk_keyword_matches",
+                "kg_entities_with_neighbors",
+                "kg_mean_neighbors_per_entity",
+                "kg_budget_cap_triggered",
                 "kg_synthesis_used",
                 "kg_synthesis_error",
+                # Divergencia #7 — citaciones [ref:N] en narrativa synthesized.
+                "citation_refs_synth_total",
+                "citation_refs_synth_valid",
+                "citation_refs_synth_malformed",
+                "citation_refs_synth_in_range",
+                "citation_refs_synth_out_of_range",
+                "citation_refs_synth_distinct",
+                "citation_refs_synth_coverage_ratio",
+                # Divergencia #7 — citaciones [ref:N] en respuesta final.
+                "citation_refs_gen_total",
+                "citation_refs_gen_valid",
+                "citation_refs_gen_malformed",
+                "citation_refs_gen_in_range",
+                "citation_refs_gen_out_of_range",
+                "citation_refs_gen_distinct",
+                "citation_refs_gen_coverage_ratio",
             ]
             fieldnames.extend(lightrag_columns)
         fieldnames.extend([

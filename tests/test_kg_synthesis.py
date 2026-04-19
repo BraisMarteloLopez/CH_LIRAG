@@ -179,9 +179,9 @@ class TestFaithfulnessContext:
         ds_config = get_dataset_config("hotpotqa")
 
         with patch(
-            "sandbox_mteb.generation_executor.format_structured_context"
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
         ) as mock_struct:
-            mock_struct.return_value = "STRUCTURED_CTX"
+            mock_struct.return_value = ("STRUCTURED_CTX", 1)
             asyncio.run(
                 executor._process_single_async(
                     _make_query(), _make_retrieval(kg_meta=True),
@@ -206,9 +206,9 @@ class TestFaithfulnessContext:
         ds_config = get_dataset_config("hotpotqa")
 
         with patch(
-            "sandbox_mteb.generation_executor.format_structured_context"
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
         ) as mock_struct:
-            mock_struct.return_value = "STRUCTURED_CTX"
+            mock_struct.return_value = ("STRUCTURED_CTX", 1)
             asyncio.run(
                 executor._process_single_async(
                     _make_query(), _make_retrieval(kg_meta=True),
@@ -288,9 +288,9 @@ class TestSynthesisFallback:
         ds_config = get_dataset_config("hotpotqa")
 
         with patch(
-            "sandbox_mteb.generation_executor.format_structured_context"
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
         ) as mock_struct:
-            mock_struct.return_value = "STRUCTURED_CTX"
+            mock_struct.return_value = ("STRUCTURED_CTX", 1)
             asyncio.run(
                 executor._process_single_async(
                     _make_query(), _make_retrieval(kg_meta=True),

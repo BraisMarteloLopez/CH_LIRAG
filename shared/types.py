@@ -355,6 +355,27 @@ _RETRIEVAL_METADATA_PASSTHROUGH_KEYS = (
     "kg_synthesis_error",
     "lightrag_mode",
     "graph_active",
+    # Divergencia #9 — cobertura del enriquecimiento 1-hop per-query.
+    "kg_entities_with_neighbors",
+    "kg_mean_neighbors_per_entity",
+    # Divergencia #4+5 — cap proporcional del budget KG disparado.
+    "kg_budget_cap_triggered",
+    # Divergencia #7 — citaciones `[ref:N]` en la narrativa synthesized.
+    "citation_refs_synth_total",
+    "citation_refs_synth_valid",
+    "citation_refs_synth_malformed",
+    "citation_refs_synth_in_range",
+    "citation_refs_synth_out_of_range",
+    "citation_refs_synth_distinct",
+    "citation_refs_synth_coverage_ratio",
+    # Divergencia #7 — citaciones `[ref:N]` en la respuesta final del generador.
+    "citation_refs_gen_total",
+    "citation_refs_gen_valid",
+    "citation_refs_gen_malformed",
+    "citation_refs_gen_in_range",
+    "citation_refs_gen_out_of_range",
+    "citation_refs_gen_distinct",
+    "citation_refs_gen_coverage_ratio",
 )
 
 _RETRIEVAL_METADATA_COUNT_KEYS = (
