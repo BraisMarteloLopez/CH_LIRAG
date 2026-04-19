@@ -295,23 +295,12 @@ Tres condiciones cumplidas simultaneamente:
 
 Ninguno esta en formato MTEB/BeIR nativo; todos requieren ETL propio al contrato MinIO/Parquet de `loader.py`.
 
-**Trabajo necesario (varias sesiones adicionales de claude_code)**:
-1. **Seleccion de benchmark** publico donde exista contra-referencia publicada (paper u otra fuente revisada) a favor de LightRAG/GraphRAG. Sin contra-referencia no hay "replicacion" que validar.
-2. **ETL al contrato Parquet**: mapear queries, corpus, qrels; extender `DATASET_CONFIG` en `shared/types.py`.
-3. **Protocolo experimental**: seed fijo, N>=3 runs por estrategia (mitiga deuda #3), reranker segun config del paper, metricas alineadas con lo que reporta el paper.
-4. **Comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid** con synthesis on. Opcionalmente ablacion off para aislar la aportacion de la synthesis.
-5. **Analisis**: validar `judge_fallback_stats` y `kg_synthesis_stats` antes de interpretar deltas (ver "Observabilidad de runs"). Si alguno degrada, los resultados no son interpretables.
+**Trabajo necesario**:
+1. **Comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid** con synthesis on.
 
 **Criterio de exito**: delta `LIGHT_RAG > SIMPLE_VECTOR` en la metrica principal del benchmark, distinguible del ruido (seed×LLM), con signo consistente con el paper.
 
 **Criterio de fallo**: deltas dentro del ruido o invertidos → debug (¿synthesis llega al generador? ¿KG se construye? ¿indexacion falla silenciosamente?), no avance a P2/P3.
-
-### P1 — Sanity de synthesis sobre HotpotQA · barato, paralelo a P0
-
-Dos controles que no sustituyen P0:
-
-1. **Ablacion synthesis on/off**: comparar `KG_SYNTHESIS_ENABLED=true` vs `false` para detectar regresion introducida por la capa de synthesis.
-2. **Full corpus sin DEV_MODE**: senal intermedia sobre robustez del KG cuando el retrieval deja de saturar (el embedding NO satura).
 
 ### P2 — Experimento 3: catalogo especializado · **futuro, contingente a P0**
 
