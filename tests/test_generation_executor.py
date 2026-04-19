@@ -193,9 +193,9 @@ class TestStructuredContext:
         retrieval = _make_retrieval(kg_meta=True)
         ds_config = get_dataset_config("hotpotqa")
 
-        with patch("sandbox_mteb.generation_executor.format_structured_context") as mock_struct, \
+        with patch("sandbox_mteb.generation_executor.format_structured_context_with_stats") as mock_struct, \
              patch("sandbox_mteb.generation_executor.format_context") as mock_plain:
-            mock_struct.return_value = "structured context"
+            mock_struct.return_value = ("structured context", 1)
             mock_plain.return_value = "plain context"
 
             asyncio.run(
@@ -211,9 +211,9 @@ class TestStructuredContext:
         retrieval = _make_retrieval(kg_meta=False)
         ds_config = get_dataset_config("hotpotqa")
 
-        with patch("sandbox_mteb.generation_executor.format_structured_context") as mock_struct, \
+        with patch("sandbox_mteb.generation_executor.format_structured_context_with_stats") as mock_struct, \
              patch("sandbox_mteb.generation_executor.format_context") as mock_plain:
-            mock_struct.return_value = "structured context"
+            mock_struct.return_value = ("structured context", 1)
             mock_plain.return_value = "plain context"
 
             asyncio.run(
@@ -236,8 +236,8 @@ class TestStructuredContext:
         retrieval.retrieval_metadata["lightrag_mode"] = "hybrid"
         ds_config = get_dataset_config("hotpotqa")
 
-        with patch("sandbox_mteb.generation_executor.format_structured_context") as mock_struct:
-            mock_struct.return_value = "structured context"
+        with patch("sandbox_mteb.generation_executor.format_structured_context_with_stats") as mock_struct:
+            mock_struct.return_value = ("structured context", 1)
             asyncio.run(
                 executor._process_single_async(query, retrieval, ds_config, "hotpotqa")
             )
@@ -256,13 +256,75 @@ class TestStructuredContext:
         retrieval.retrieval_metadata["lightrag_mode"] = "hybrid"
         ds_config = get_dataset_config("hotpotqa")
 
-        with patch("sandbox_mteb.generation_executor.format_structured_context") as mock_struct:
-            mock_struct.return_value = "structured context"
+        with patch("sandbox_mteb.generation_executor.format_structured_context_with_stats") as mock_struct:
+            mock_struct.return_value = ("structured context", 1)
             asyncio.run(
                 executor._process_single_async(query, retrieval, ds_config, "hotpotqa")
             )
 
         assert retrieval.retrieval_metadata["kg_budget_cap_triggered"] is False
+
+    def test_citation_refs_synth_populated_when_synthesis_enabled(self):
+        """Divergencia #7: tras synthesis con narrativa citada, retrieval_metadata
+        expone citation_refs_synth_* para auditar calidad de las citas [ref:N]."""
+        # Narrativa mockeada con 3 citas validas a chunks 1-3 + una out_of_range a 99.
+        narrative = "See [ref:1] and [ref:2]. Also [ref:99] inventada. And [ref:1] again."
+        llm = MagicMock()
+        llm.invoke_async = AsyncMock(return_value=narrative)
+        calc = MagicMock()
+        async def _calc_async(mt, **kwargs):
+            return MetricResult(metric_type=mt, value=0.75)
+        calc.calculate_async = AsyncMock(side_effect=_calc_async)
+        calc.embedding_model = None
+        executor = GenerationExecutor(
+            llm_service=llm,
+            metrics_calculator=calc,
+            max_context_chars=4000,
+            kg_synthesis_enabled=True,
+        )
+
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=True)
+        retrieval.retrieval_metadata["lightrag_mode"] = "hybrid"
+        ds_config = get_dataset_config("hotpotqa")
+
+        # Patcheamos _with_stats para fijar n_chunks_emitted=3, asi [ref:99] cae
+        # out_of_range deterministicamente. La narrativa la emite el LLM mockeado.
+        with patch(
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
+        ) as mock_struct:
+            mock_struct.return_value = ("STRUCTURED_CTX", 3)
+            asyncio.run(
+                executor._process_single_async(
+                    query, retrieval, ds_config, "hotpotqa",
+                )
+            )
+
+        rm = retrieval.retrieval_metadata
+        assert rm["citation_refs_synth_valid"] == 4  # [1], [2], [99], [1]
+        assert rm["citation_refs_synth_in_range"] == 3  # [1], [2], [1]
+        assert rm["citation_refs_synth_out_of_range"] == 1  # [99]
+        assert rm["citation_refs_synth_distinct"] == 2  # {1, 2}
+        assert rm["citation_refs_synth_malformed"] == 0
+
+    def test_citation_refs_synth_absent_when_synthesis_disabled(self):
+        """Sin synthesis, los campos citation_refs_synth_* NO se emiten."""
+        executor = _make_executor()  # synthesis_enabled=False por default
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        with patch(
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
+        ) as mock_struct:
+            mock_struct.return_value = ("STRUCTURED_CTX", 3)
+            asyncio.run(
+                executor._process_single_async(
+                    query, retrieval, ds_config, "hotpotqa",
+                )
+            )
+
+        assert "citation_refs_synth_valid" not in retrieval.retrieval_metadata
 
     def test_kg_budget_cap_not_annotated_without_kg_meta(self):
         """SIMPLE_VECTOR sin KG data NO emite kg_budget_cap_triggered."""

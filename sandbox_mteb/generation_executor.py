@@ -30,9 +30,12 @@ from .config import (
     KG_SYNTHESIS_SYSTEM_PROMPT,
     KG_SYNTHESIS_USER_TEMPLATE,
 )
+from shared.citation_parser import parse_citation_refs
+
 from .retrieval_executor import (
     format_context,
     format_structured_context,
+    format_structured_context_with_stats,
     is_kg_budget_cap_triggered,
 )
 
@@ -253,11 +256,12 @@ class GenerationExecutor:
         kg_entities = retrieval_detail.retrieval_metadata.get("kg_entities")
         kg_relations = retrieval_detail.retrieval_metadata.get("kg_relations")
         has_kg_data = bool(kg_entities or kg_relations)
+        n_chunks_emitted = 0
         if has_kg_data:
             lightrag_mode = retrieval_detail.retrieval_metadata.get(
                 "lightrag_mode", "hybrid"
             )
-            structured_context = format_structured_context(
+            structured_context, n_chunks_emitted = format_structured_context_with_stats(
                 retrieval_detail.get_generation_contents(),
                 kg_entities or [],
                 kg_relations or [],
@@ -296,6 +300,19 @@ class GenerationExecutor:
             )
             if synth_error is not None:
                 retrieval_detail.retrieval_metadata["kg_synthesis_error"] = synth_error
+
+            # Divergencia #7: observable de citaciones `[ref:N]` en la narrativa
+            # synthesized. El prompt KG_SYNTHESIS_SYSTEM_PROMPT instruye al LLM
+            # a emitir el formato; el parser cuenta cuantas respeto, cuantas
+            # estan fuera de rango (apuntan a chunks truncados o inventadas),
+            # cuantas son duplicados, etc. Si synth fallo, generation_context
+            # es structured_context verbatim => el parser produce 0 validly
+            # (no hay `[ref:N]` en el JSON crudo, solo `reference_id`).
+            synth_stats = parse_citation_refs(generation_context, n_chunks_emitted)
+            for metric_name, value in synth_stats.items():
+                retrieval_detail.retrieval_metadata[
+                    f"citation_refs_synth_{metric_name}"
+                ] = value
         else:
             generation_context = structured_context
 
