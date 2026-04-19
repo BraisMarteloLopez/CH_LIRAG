@@ -11,7 +11,7 @@ Sistema de evaluacion RAG (Retrieval-Augmented Generation) para benchmarking de 
 
 **LIGHT_RAG** implementa la arquitectura de [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) (EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)), con adaptaciones operativas propias del entorno (cache de KG a disco, fallbacks ante errores del LLM/igraph, instrumentacion de observabilidad). LightRAG extrae via LLM entidades, relaciones y high-level keywords por chunk para construir un knowledge graph + indices tematicos; las queries se resuelven en dos niveles (entidades concretas y temas abstractos) contra tres VDBs dedicadas — Entity VDB (entidades), Relationship VDB (relaciones) y Chunk Keywords VDB (temas high-level por chunk, divergencia #10) — cuyos resultados agregan al mismo scoring de chunks. Chunks seleccionados via `source_doc_ids` del KG y matching directo a temas (paper-aligned), con fallback a vector search directo cuando el KG no produce doc_ids. 4 modos configurables via `LIGHTRAG_MODE`: `hybrid` (default), `local`, `global`, `naive`. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final. Sin `igraph` o sin LLM → degrada a vector search puro; fallos de synthesis → degrada al contexto estructurado.
 
-> **Estado frente al paper**: divergencias #2, #4+5, #6, #7, #8, #9 resueltas. **#10 (keywords high-level por chunk durante indexacion) implementada en codigo y con tests unitarios, pendiente validacion end-to-end con NIM + MinIO reales** antes de marcarse como "Resuelta". Detalle y criticidad en [CLAUDE.md — Divergencias con el paper original](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad). El gate activo es Pre-P0 (completitud arquitectural + ejecucion estable) antes de P0 (replicacion empirica) — ver [CLAUDE.md — Proximos pasos](CLAUDE.md#proximos-pasos).
+> **Estado frente al paper**: las 7 divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) resueltas en codigo con tests y con observables empiricos per-query. Unica excepcion cualitativa: la **calidad** del canal high-level del #10 (piggyback vs llamada dedicada del paper) — bloqueante antes de P2, no de P0. Detalle en [CLAUDE.md — Divergencias con el paper original](CLAUDE.md#divergencias-con-el-paper-original--evaluacion-de-criticidad). **Pre-P0 cerrado (2026-04-19)**; fase actual: P0 (replicacion empirica sobre benchmark con contra-referencia) — ver [CLAUDE.md — Proximos pasos](CLAUDE.md#proximos-pasos).
 
 ## Arquitectura
 
@@ -46,7 +46,7 @@ sandbox_mteb/                    # Pipeline de evaluacion MTEB/BeIR
   preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
   env.example                    # Plantilla .env
 
-tests/                           # pytest (~465 unit + ~15 integration tests, cifras orientativas; ver CLAUDE.md "Test coverage")
+tests/                           # pytest (~499 unit + ~15 integration tests, cifras orientativas; ver CLAUDE.md "Test coverage")
 ```
 
 ## Pipeline
