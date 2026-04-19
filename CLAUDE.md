@@ -240,13 +240,10 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 - Parametros operacionales hardcoded en `constants.py` con la excusa "el default es razonable".
 
 **Contramedidas (vehiculos complementarios pre-run; ninguno equivale a validar)**:
-1. **Simulacion mental antes de entregar**: con los parametros propuestos, ¿el contexto real se parece al del paper? ¿el timeout da margen? ¿el test cubre el caso adversarial o solo el feliz? Filtra errores groseros sin quemar compute del usuario.
-2. **Auto-evaluacion como parte del entregable**: enumerar limitaciones y criterios observables ANTES de entregar, no despues.
-3. **Distinguir "menor" de "conveniente de no arreglar"**: si la razon para clasificarlo como menor es el coste de arreglarlo, es deuda real.
-4. **Parametros que dependen del LLM usado** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
-5. **Tests unitarios adversariales** para todo cambio que afecte el contexto que ve el LLM: estresar el budget, no solo el caso holgado. Es la unica forma de codigo (vs. simulacion mental, que es proceso) que claude_code puede dejar como red de seguridad antes del run del usuario.
-
-Esta seccion se actualiza con nuevas manifestaciones del patron segun se detecten. No borrar sin consenso.
+1. **Auto-evaluacion como parte del entregable**: enumerar limitaciones y criterios observables ANTES de entregar, no despues.
+2. **Distinguir "menor" de "conveniente de no arreglar"**: si la razon para clasificarlo como menor es el coste de arreglarlo, es deuda real.
+3. **Parametros que dependen del LLM usado** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
+4. **Tests unitarios adversariales** para todo cambio que afecte el contexto que ve el LLM: estresar el budget, no solo el caso holgado.
 
 ## Proximos pasos
 
