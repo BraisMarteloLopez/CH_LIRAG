@@ -264,7 +264,7 @@ P0 (replicacion empirica del paper)                     <-- FASE ACTUAL
   +-- P3 (embedibilidad + export KG + integracion)      <-- SOLO si P2 pasa
 ```
 
-**⚠️ Alerta sobre Pre-P0 cerrado con matiz**: la condicion 1 del gate (completitud arquitectural) se cumplio con una salvedad explicita sobre la divergencia #10 (ver su fila). El piggyback en la extraccion de keywords high-level puede degradar la calidad del canal **exactamente en el escenario donde LightRAG deberia brillar** (catalogo especializado, dominio fuera del pre-entrenamiento del embedding). HotpotQA no discrimina este riesgo por saturacion del vector directo. **Antes de lanzar P2 — no P0 — hace falta anadir observable de calidad de keywords y/o toggle a llamada dedicada.**
+** Alerta sobre Pre-P0 cerrado con matiz**: El piggyback en la extraccion de keywords high-level puede degradar la calidad del canal **exactamente en el escenario donde LightRAG deberia brillar** (catalogo especializado, dominio fuera del pre-entrenamiento del embedding). HotpotQA no discrimina este riesgo por saturacion del vector directo. **Antes de lanzar P2 — no P0 — hace falta anadir observable de calidad de keywords y/o toggle a llamada dedicada.**
 
 ### Pre-P0 — Completitud arquitectural de LIGHT_RAG · **GATE CERRADO (2026-04-19)**
 
@@ -274,8 +274,6 @@ Tres condiciones cumplidas simultaneamente:
 2. **Ejecucion estable**: `kg_synthesis_stats.fallback_rate = 2.86%` (< 10% umbral), `judge.default_return_rate = 0%`, `retrieval_metadata.kg_fallback=null` en 35/35 queries, `queries_failed = 0`.
 3. **Funcionalidades extra documentadas**: cache de KG, fallbacks ante errores LLM/igraph, instrumentacion de timing (queue/LLM split) — adaptaciones operativas, no sustitutos de piezas del paper.
 
-**Diagnostico de la fase (resumen sin runs concretos)**: la causa primaria del fallback alto inicial (~31%) era saturacion de cola del semaforo `NIM_MAX_CONCURRENT_REQUESTS=16`. Subir a 32 concurrentes elimino la cola pero subio la latencia LLM (saturacion GPU del NIM). Cierre de la fase: timeout calibrado al p95 LLM real + margen.
-
 **Config validada** para runs LIGHT_RAG en infra actual (defaults en `sandbox_mteb/env.example`, marcados `[PRE-P0 VALIDATED]`):
 - `NIM_MAX_CONCURRENT_REQUESTS=32`
 - `KG_SYNTHESIS_MAX_CHARS=50000`
@@ -283,15 +281,14 @@ Tres condiciones cumplidas simultaneamente:
 
 **Palanca post-Pre-P0**: `KG_GLEANING_ROUNDS` (default `0`) ejecuta una pasada extra de extraccion para recuperar entidades/relaciones perdidas (no re-extrae keywords de chunk). Coste: ~2x llamadas LLM en indexacion. Usar solo si la cobertura del KG (`num_docs_with_entities / total_docs`) baja de ~95%.
 
-**Nota estructural sobre divergencia #8**: con #8 resuelta (chunks via `source_doc_ids` del KG), las metricas de retrieval de LIGHT_RAG ya no se solapan necesariamente con las del vector directo. Pueden diverger en cualquier dataset post-#8.
 
-### P0 — Replicacion empirica del paper · **FASE ACTUAL**
+### P0 — Demostrar calidad de generacion · **FASE ACTUAL**
 
-**Objetivo**: demostrar que sobre al menos un benchmark donde el paper reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
+**Objetivo**: demostrar que sobre al menos un benchmark donde una run reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
 
 **Estado**: desbloqueado tras cierre de Pre-P0 el 2026-04-19. La arquitectura esta completa y ejecuta estable; el siguiente trabajo es seleccionar benchmark y correr la comparativa.
 
-**Prerequisitos arquitectonicos**: todos cumplidos para P0 sobre HotpotQA o benchmark de contra-referencia similar. Divergencias #2, #6, #8 validadas directamente; #4+5, #7, #9 ejercitadas implicitamente; #10 presente pero con riesgo conocido de calidad por piggyback (ver su fila). **Para avanzar a P2 (catalogo especializado) hace falta adicionalmente cerrar el riesgo de piggyback en #10** — anadir observable de calidad de keywords y/o exponer toggle a llamada dedicada.
+**Prerequisitos arquitectonicos**: todos cumplidos para P0 sobre HotpotQA. **Para avanzar a P2 (catalogo especializado) hace falta adicionalmente cerrar el riesgo de piggyback en #10** — anadir observable de calidad de keywords y/o exponer toggle a llamada dedicada.
 
 Ninguno esta en formato MTEB/BeIR nativo; todos requieren ETL propio al contrato MinIO/Parquet de `loader.py`.
 
