@@ -204,7 +204,7 @@ Ver [`CLAUDE.md`](CLAUDE.md) para convenciones, divergencias con el paper, deuda
 <details>
 <summary>Resultados comparativos (pre-Fases C-F, obsoletos)</summary>
 
-> Todos los runs son pre-VDBs. Superados por los dos runs F.5 (pre y post refactor) documentados en [CLAUDE.md — Resultado F.5](CLAUDE.md#resultado-f5-referencia-historica): sobre HotpotQA el embedding satura el retrieval (Wikipedia en pre-entrenamiento + DEV_MODE con gold docs garantizados + ventana 192K chars), el dataset no discrimina LIGHT_RAG vs SIMPLE_VECTOR. F.5 debe re-ejecutarse post-cierre de #8 para verificar que las metricas de retrieval pueden diverger.
+> Todos los runs son pre-VDBs y pre-arquitectura-actual. Conclusion estructural vigente documentada en [CLAUDE.md — Resultado F.5](CLAUDE.md#resultado-f5-referencia-historica): sobre HotpotQA el embedding satura el retrieval (Wikipedia en pre-entrenamiento + DEV_MODE con gold docs garantizados + ventana 192K chars), el dataset no discrimina LIGHT_RAG vs SIMPLE_VECTOR. Cualquier medicion comparativa con la arquitectura actual es trabajo de P0 — las tablas numericas pre-refactor/post-refactor se retiraron de CLAUDE.md por obsoletas (git history las preserva).
 
 | Metrica | SIMPLE_VECTOR | LIGHT_RAG (KG activo) | Delta |
 |---|---|---|---|

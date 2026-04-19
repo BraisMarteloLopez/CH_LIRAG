@@ -148,7 +148,7 @@ Detalles tecnicos de cada item:
 | 11 | **Chunks en coleccion principal de ChromaDB, no en `text_chunks_vdb` dedicado** | **2/10** | El paper mantiene 3 VDBs: `entities_vdb`, `relationships_vdb` y `text_chunks_vdb` (coleccion separada para chunks con su id y metadata). Aqui los chunks se indexan en la coleccion principal de `ChromaVectorStore` (heredada de `SimpleVectorRetriever` via `retriever.py:87-90`), no en un VDB dedicado. Las Entity VDB y Relationship VDB si son colecciones separadas (`_build_entities_vdb` en `retriever.py:380`, `_build_relationships_vdb` en `retriever.py:487`). **Consecuencia practica post-#8 resuelta**: con #8 cerrada (opcion A), los chunks se obtienen via `source_doc_ids` del KG en el path principal; la coleccion principal de `ChromaVectorStore` actua de facto como `text_chunks_vdb` (contiene los chunks con su id y metadata) y ademas sirve al fallback de vector search directo cuando el KG no produce doc_ids. Separar formalmente en colecciones dedicadas seria un cambio de naming/organizacion sin efecto funcional. **Criterio para re-evaluar**: si en P3 el schema de export hacia el administrador requiere distinguir VDBs por rol (p.ej. versionado independiente de chunks vs. VDBs del KG), o si aparece un segundo consumidor del `text_chunks_vdb` que no quiera la dependencia con `ChromaVectorStore`. |
 | 12 | **Formato de contexto JSON-lines, no CSV con headers del paper** | **2/10** | El paper original presenta el contexto al LLM como tablas CSV con headers `Entities \| Relationships \| Sources`. Aqui `format_structured_context()` en `retrieval_executor.py:246-340` usa bloques JSON-lines etiquetados como `"Knowledge Graph Data (Entity)"`, `"Knowledge Graph Data (Relationship)"` y `"Document Chunks"` con `reference_id` numerico (usado por la capa de synthesis para citas `[ref:N]`). **Consecuencia practica**: ambos son formatos estructurados que el LLM parsea sin problema. El JSON-lines tiene la ventaja de que la capa de synthesis (divergencia #2 resuelta) usa los `reference_id` para anclar citas. No requiere accion — cambiar a CSV romperia el esquema de citas sin beneficio funcional. |
 
-Runs F.5 (resultados empiricos pre-refactor y post-refactor) en "Proximos pasos · Resultado F.5".
+Contexto historico sobre HotpotQA (por que satura, implicacion para la eleccion de benchmark de P0) en "Proximos pasos · Resultado F.5".
 
 ## Deuda tecnica vigente
 
@@ -287,32 +287,11 @@ Las tres condiciones verificables se cumplieron simultaneamente sobre el run `mt
 
 ### Resultado F.5 (referencia historica)
 
-F.5 se ejecuto dos veces sobre HotpotQA (125q, DEV_MODE, seed=42, reranker ON).
+F.5 ejecuto dos rondas comparativas SIMPLE_VECTOR vs LIGHT_RAG sobre HotpotQA (125q, DEV_MODE, seed=42). **Conclusion central, todavia vigente**: HotpotQA no discrimina entre estrategias en generacion — Wikipedia en el pre-entrenamiento del embedding + DEV_MODE con gold docs garantizados + ventana de 192K chars → el embedding resuelve por si solo sin necesitar el KG. Los deltas observados (<0.01 puntos de gen score) cayeron dentro del ruido del LLM judge. **Implicacion operativa**: cualquier medicion comparativa de la hipotesis del paper (`LIGHT_RAG > SIMPLE_VECTOR`) debe hacerse sobre un benchmark donde el embedding NO sature (objetivo de P0 — ver "Proximos pasos · P0").
 
-**F.5 pre-refactor** (divergencias #4+5/#6/#7 abiertas, 4000 docs):
+Las tablas numericas detalladas de F.5 (pre-refactor con divergencias #4+5/#6/#7 abiertas, post-refactor con esas cerradas) se omiten intencionadamente: **ambas rondas son anteriores a la arquitectura actual** (synthesis #2, chunk keywords VDB #10, chunks via KG #8, guard de reranker #6 post-fix, observabilidad per-query). Los 3 runs diagnosticos que cerraron Pre-P0 (`20260419_004640/015230/032905`) midieron solo LIGHT_RAG, no la comparativa. **Cualquier delta `LIGHT_RAG vs SIMPLE_VECTOR` sobre arquitectura actual requiere un run nuevo** — la comparativa es trabajo de P0, no referencia historica reutilizable. Git history preserva las tablas F.5 originales si en algun momento hacen falta.
 
-| Metrica | SIMPLE_VECTOR | LIGHT_RAG | Delta |
-|---|---|---|---|
-| Hit@5 | 1.000 | 1.000 | 0 |
-| MRR | 0.992 | 0.992 | 0 |
-| Recall@5 | 0.968 | 0.968 | 0 |
-| Recall@20 | 0.988 | 0.988 | 0 |
-| Avg gen score | 0.7764 | 0.7877 | +0.0113 |
-| Tiempo total | 194.7s | 9002.1s | ×46 |
-
-Todas las metricas de retrieval identicas query por query. El KG aporto ~49 docs exclusivos por query, pero el reranker colapso el ranking final al mismo top-20 que SIMPLE_VECTOR. KG indexado correctamente (23K entidades, 55K relaciones, 32K co-occurrence edges), pero las divergencias #4+5 y #6 impedian que su senal llegara al LLM. Las 10 diferencias en generacion son no-determinismo del LLM con mismo contexto.
-
-**F.5 post-refactor** (#4+5/#6/#7 resueltos, 2500 docs):
-
-| Metrica | SIMPLE_VECTOR | LIGHT_RAG hybrid | Delta |
-|---|---|---|---|
-| Hit@5 / MRR | 1.000 / 1.000 | 1.000 / 1.000 | 0 (saturado) |
-| Avg gen score | 0.8038 | 0.8157 | +0.0119 |
-| Tiempo | 144s | 4589s | ×31.8 |
-
-Delta pre → post se movio 0.6 decimas de porcentaje — dentro del ruido del LLM judge. **HotpotQA no discrimina** en generacion: Wikipedia en el pre-entrenamiento del embedding + DEV_MODE saturando gold docs + ventana 192K chars → el embedding resuelve por si solo sin necesitar el KG. Los fixes estan correctamente implementados (el KG se construye, las secciones llegan al LLM con budgets proporcionales, el reranker no colapsa el ranking); simplemente este dataset no es util para validar la arquitectura por el lado de la generacion.
-
-**Nota estructural sobre metricas de retrieval identicas en F.5**: las metricas identicas en F.5 eran consecuencia directa de la divergencia #8 (ahora resuelta). Con #8 opcion A, los chunks de LIGHT_RAG vienen del KG via `source_doc_ids` — las metricas de retrieval pueden diverger en cualquier dataset. **F.5 debe re-ejecutarse post-fix para verificar.**
+**Nota estructural sobre divergencia #8**: las metricas de retrieval identicas query-por-query en F.5 eran consecuencia directa de #8 (entonces abierta) — con #8 opcion A resuelta, los chunks de LIGHT_RAG vienen del KG via `source_doc_ids` en vez de solaparse con los del vector directo, asi que las metricas de retrieval pueden diverger en cualquier dataset post-#8.
 
 ### P0 — Replicacion empirica del paper · **FASE ACTUAL**
 
