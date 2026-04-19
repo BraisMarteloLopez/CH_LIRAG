@@ -230,16 +230,9 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 **Implicaciones operativas**:
 - Cambios al flujo retrieval→synthesis→generation solo se validan cuando el usuario lanza el run.
 - Antes de declarar completo, claude_code debe enumerar los **criterios observables** que el usuario comprobara: que variable de `config_snapshot._runtime` esperar, que rango en `kg_synthesis_stats`/`judge_fallback_stats`, que metrica agregada.
-- "Falta test e2e de X" NO es deuda pendiente — es consecuencia estructural. Listarla induce intentos de construir algo imposible de validar en sesion.
+- "Falta test e2e de X" NO es deuda pendiente — es consecuencia estructural. Listarla induce intentos de construir algo imposible de validar en sesion. 
 
-**Patron de fallo recurrente**: claude_code tiende a presentar trabajo como completo antes de tiempo y a categorizar problemas como "menores" cuando arreglarlos implicaria mas trabajo. Manifestaciones a vigilar:
-- Auto-evaluacion reactiva (solo tras peticion) en vez de integrada al entregable.
-- "Aceptable", "pendiente menor", "por ahora" aplicados a deuda sin medir coste real.
-- Tests que pasan pero no estresan el caso que motivo el cambio.
-- Alineacion con el paper descrita como completa cuando solo cubre un subconjunto.
-- Parametros operacionales hardcoded en `constants.py` con la excusa "el default es razonable".
-
-**Contramedidas (vehiculos complementarios pre-run; ninguno equivale a validar)**:
+**Contramedidas de Claude_code (vehiculos complementarios pre-run; ninguno equivale a validar)**:
 1. **Auto-evaluacion como parte del entregable**: enumerar limitaciones y criterios observables ANTES de entregar, no despues.
 2. **Distinguir "menor" de "conveniente de no arreglar"**: si la razon para clasificarlo como menor es el coste de arreglarlo, es deuda real.
 3. **Parametros que dependen del LLM usado** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
@@ -253,8 +246,6 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 Pre-P0 (completitud arquitectural + ejecucion estable)  <-- GATE CERRADO (2026-04-19)
   |
 P0 (replicacion empirica del paper)                     <-- FASE ACTUAL
-  |
-  +-- P1 (sanity on/off synthesis sobre HotpotQA)       <-- barato, en paralelo a P0
   |
   +-- P2 (experimento 3: catalogo especializado)        <-- SOLO si P0 pasa + riesgo piggyback #10 resuelto
   |
