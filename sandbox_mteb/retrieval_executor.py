@@ -272,28 +272,37 @@ def format_structured_context(
     max_length: int,
     mode: str = "hybrid",
 ) -> str:
-    """Formatea contexto con secciones KG estructuradas (F.3/DAM-8, divergencia #7).
+    """Wrapper retrocompatible de `format_structured_context_with_stats`.
 
-    Formato alineado con el original HKUDS/LightRAG:
-    - Knowledge Graph Data (Entity): JSON lines de entidades
-    - Knowledge Graph Data (Relationship): JSON lines de relaciones
-    - Document Chunks: contenido de documentos con reference_id
+    Devuelve solo el string formateado. Para auditar cuantos chunks llegaron
+    al LLM (requerido por el observable de citaciones, divergencia #7) usar
+    `format_structured_context_with_stats` directamente.
+    """
+    text, _ = format_structured_context_with_stats(
+        contents, kg_entities, kg_relations, max_length, mode,
+    )
+    return text
 
-    Budgets fijos por seccion (paper: MAX_ENTITY_TOKENS=6000,
-    MAX_RELATION_TOKENS=8000). Chunks reciben el budget restante.
-    El modo determina que secciones se activan:
-      - hybrid: entidades + relaciones + chunks
-      - local:  entidades + chunks
-      - global: relaciones + chunks
-      - naive:  solo chunks
 
-    Args:
-        contents: Chunks de documentos recuperados.
-        kg_entities: Entidades resueltas desde el KG (vacio = seccion omitida).
-        kg_relations: Relaciones resueltas desde el KG (vacio = seccion omitida).
-        max_length: Presupuesto total de caracteres.
-        mode: Modo LightRAG ('hybrid', 'local', 'global', 'naive').
-              Mode desconocido usa defaults de 'hybrid'.
+def format_structured_context_with_stats(
+    contents: List[str],
+    kg_entities: List[Dict[str, Any]],
+    kg_relations: List[Dict[str, Any]],
+    max_length: int,
+    mode: str = "hybrid",
+) -> Tuple[str, int]:
+    """Formatea contexto con secciones KG estructuradas y reporta chunks emitidos.
+
+    Identica a `format_structured_context` en todo excepto el retorno:
+    `(texto, n_chunks_emitted)` donde `n_chunks_emitted` es el numero de
+    chunks que cupieron en el budget y fueron serializados como JSON-lines.
+    Con budget holgado, `n_chunks_emitted == len(contents)`; con budget
+    apretado, es menor.
+
+    Este dato es requerido por `parse_citation_refs` (divergencia #7) para
+    validar el rango `[1, n_chunks_emitted]` de las referencias `[ref:N]`
+    emitidas por el LLM. Sin este numero, citas a chunks truncados
+    apareceran como `in_range` cuando realmente son `out_of_range`.
     """
     import json
 
@@ -345,6 +354,7 @@ def format_structured_context(
         unused_budget += relation_budget
 
     # Seccion 3: Chunks (budget base + redistribuido)
+    n_chunks_emitted = 0
     chunk_budget = base_chunk_budget + unused_budget
     if chunk_budget > 0 and contents:
         chunk_parts: List[str] = []
@@ -359,6 +369,7 @@ def format_structured_context(
             chunk_parts.append(entry)
             chunk_used += len(entry) + 1  # +1 for newline
 
+        n_chunks_emitted = len(chunk_parts)
         if chunk_parts:
             chunks_str = "\n".join(chunk_parts)
             section = (
@@ -368,9 +379,9 @@ def format_structured_context(
             parts.append(section)
 
     if not parts:
-        return "[No se encontraron documentos]"
+        return "[No se encontraron documentos]", n_chunks_emitted
 
-    return "\n\n".join(parts)
+    return "\n\n".join(parts), n_chunks_emitted
 
 
 def is_kg_budget_cap_triggered(max_length: int, mode: str) -> bool:
@@ -402,5 +413,6 @@ __all__ = [
     "RetrievalExecutor",
     "format_context",
     "format_structured_context",
+    "format_structured_context_with_stats",
     "is_kg_budget_cap_triggered",
 ]
