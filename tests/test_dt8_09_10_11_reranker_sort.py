@@ -53,8 +53,6 @@ def test_ascending_order_gets_sorted():
         f"Scores desordenados: {result.scores}"
     )
 
-    print("PASS: docs en orden ascendente se reordenan descendente")
-
 
 def test_identical_scores():
     """Docs con scores identicos no producen error."""
@@ -69,8 +67,6 @@ def test_identical_scores():
 
     assert len(result.doc_ids) == 3, f"Esperado 3 docs, obtenido {len(result.doc_ids)}"
     assert all(s == 0.7 for s in result.scores), f"Scores inesperados: {result.scores}"
-
-    print("PASS: scores identicos no fallan")
 
 
 def test_missing_relevance_score():
@@ -90,11 +86,3 @@ def test_missing_relevance_score():
     assert result.scores[-1] == 0.0, (
         f"Score default deberia ser 0.0, obtenido {result.scores[-1]}"
     )
-
-    print("PASS: doc sin relevance_score queda al final con score 0.0")
-
-
-if __name__ == "__main__":
-    test_ascending_order_gets_sorted()
-    test_identical_scores()
-    test_missing_relevance_score()

@@ -101,7 +101,6 @@ def test_rerank_success():
     assert len(detail.generation_doc_ids) == 5, (
         f"Esperado 5 docs post-rerank, obtenido {len(detail.generation_doc_ids)}"
     )
-    print("PASS: rerank exitoso -> reranked_ok=True, rerank_failures=0")
 
 
 def test_rerank_failure():
@@ -124,10 +123,3 @@ def test_rerank_failure():
     assert executor.rerank_failures == 2, (
         f"Esperado 2 failures, obtenido {executor.rerank_failures}"
     )
-
-    print("PASS: rerank fallido -> reranked_ok=False, rerank_failures incrementa")
-
-
-if __name__ == "__main__":
-    test_rerank_success()
-    test_rerank_failure()

@@ -1,19 +1,20 @@
 """
 Tests para cambios de los grupos A y B de la review:
 
-A1. SimpleVectorRetriever.get_documents_by_ids delega al vector store.
-A2. SimpleVectorRetriever.get_documents_by_ids retorna {} si store no init.
 A3. ChromaVectorStore.get_documents_by_ids parte en batches de _CHROMA_IN_BATCH_SIZE.
 B1. Reranker propaga vector_scores en path exitoso.
 B2. Reranker propaga vector_scores en path de error (fallback).
+
+Nota: A1 (delega al vector store) y A2 (sin store / lista vacia) viven en
+test_simple_vector_retriever.py::test_get_documents_by_ids_delegates y
+::test_get_documents_by_ids_no_store. El caso "lista vacia" permanece aqui
+porque ejercita una rama distinta (store inicializado, input vacio).
 """
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
 from shared.retrieval.core import (
-    RetrievalConfig,
     RetrievalResult,
     RetrievalStrategy,
-    SimpleVectorRetriever,
 )
 
 from tests.helpers import make_reranker, make_retriever, make_vector_store
@@ -46,29 +47,7 @@ def _make_reranker_with_mock_compress(fake_docs):
 
 
 # =============================================================================
-# A1: get_documents_by_ids delega al vector store
-# =============================================================================
-
-def test_get_documents_by_ids_delegates_to_vector_store():
-    """El metodo publico delega al _vector_store interno."""
-    retriever = make_retriever(with_store=True)
-    retriever._vector_store.get_documents_by_ids.return_value = {
-        "d1": "contenido_1",
-        "d2": "contenido_2",
-    }
-
-    result = retriever.get_documents_by_ids(["d1", "d2"])
-
-    retriever._vector_store.get_documents_by_ids.assert_called_once_with(
-        ["d1", "d2"]
-    )
-    assert result == {"d1": "contenido_1", "d2": "contenido_2"}
-    print("PASS A1: get_documents_by_ids delega al vector store")
-
-
-# =============================================================================
-# A2: get_documents_by_ids con lista vacia
-# Nota: el caso "sin store -> {}" vive en test_simple_vector_retriever.py::test_get_documents_by_ids_no_store
+# A2: get_documents_by_ids con lista vacia (store inicializado)
 # =============================================================================
 
 def test_get_documents_by_ids_empty_list():
@@ -78,7 +57,6 @@ def test_get_documents_by_ids_empty_list():
     result = retriever.get_documents_by_ids([])
     assert result == {}
     retriever._vector_store.get_documents_by_ids.assert_not_called()
-    print("PASS A2b: lista vacia retorna {} sin llamar al store")
 
 
 # =============================================================================
@@ -116,7 +94,6 @@ def test_chroma_batching():
     assert len(result) == n_docs, (
         f"Esperado {n_docs} docs, obtenido {len(result)}"
     )
-    print("PASS A3: batching correcto (250 ids -> 3 batches)")
 
 
 def test_chroma_single_batch():
@@ -141,7 +118,6 @@ def test_chroma_single_batch():
 
     assert mock_collection.get.call_count == 1
     assert len(result) == 50
-    print("PASS A3b: single batch para <=100 ids")
 
 
 # =============================================================================
@@ -175,7 +151,6 @@ def test_reranker_propagates_vector_scores():
     assert result.vector_scores[2] == 0.9, (  # doc_0
         f"Esperado 0.9 para doc_0, obtenido {result.vector_scores[2]}"
     )
-    print("PASS B1: reranker propaga vector_scores en orden correcto")
 
 
 # =============================================================================
@@ -195,7 +170,6 @@ def test_reranker_propagates_vector_scores_on_error():
     assert result.vector_scores == original.vector_scores[:3], (
         f"Esperado {original.vector_scores[:3]}, obtenido {result.vector_scores}"
     )
-    print("PASS B2: reranker fallback preserva vector_scores[:top_n]")
 
 
 def test_reranker_no_vector_scores():
@@ -216,14 +190,3 @@ def test_reranker_no_vector_scores():
     assert result.vector_scores is None, (
         f"Esperado None, obtenido {result.vector_scores}"
     )
-    print("PASS B2b: sin vector_scores original -> None en resultado")
-
-
-if __name__ == "__main__":
-    test_get_documents_by_ids_delegates_to_vector_store()
-    test_get_documents_by_ids_empty_list()
-    test_chroma_batching()
-    test_chroma_single_batch()
-    test_reranker_propagates_vector_scores()
-    test_reranker_propagates_vector_scores_on_error()
-    test_reranker_no_vector_scores()

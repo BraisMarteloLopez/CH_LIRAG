@@ -231,15 +231,3 @@ def test_corpus_contains_mix_of_gold_and_distractors():
 
     assert len(gold_in_corpus) > 0, "Debe haber gold docs en corpus"
     assert len(non_gold_in_corpus) > 0, "Debe haber distractores en corpus"
-
-
-if __name__ == "__main__":
-    test_gold_docs_present_in_corpus()
-    test_distractors_fill_to_dev_corpus_size()
-    test_correct_number_of_queries()
-    test_seed_deterministic()
-    test_different_seed_different_result()
-    test_gold_exceeds_corpus_size_raises_error()
-    test_dev_queries_exceeds_total_uses_all()
-    test_gold_docs_missing_from_corpus_handled()
-    test_corpus_contains_mix_of_gold_and_distractors()

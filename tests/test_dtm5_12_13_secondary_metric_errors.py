@@ -162,8 +162,6 @@ def test_failed_secondary_metric_logs_warning():
             f"Warning no contiene fragmento de query: '{msg}'"
         )
 
-        print("PASS: fallo de metrica secundaria emite warning con tipo y query")
-
     finally:
         gen_logger.removeHandler(handler)
 
@@ -210,11 +208,3 @@ def test_all_secondary_fail_returns_all_with_errors():
     for r in secondary:
         assert r.value == 0.0, f"{r.metric_type.value} deberia tener value=0.0"
         assert r.error is not None, f"{r.metric_type.value} deberia tener error"
-
-    print("PASS: todas las secundarias fallan -> todas presentes con error")
-
-
-if __name__ == "__main__":
-    test_failed_secondary_metric_produces_result()
-    test_failed_secondary_metric_logs_warning()
-    test_all_secondary_fail_returns_all_with_errors()

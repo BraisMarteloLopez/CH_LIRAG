@@ -468,24 +468,3 @@ def test_query_result_to_dict_conditional_fields():
     assert d_reranked["generation_doc_ids"] == ["d0", "d1"]
     assert d_reranked["pre_rerank_candidate_ids"] == ["d0", "d1", "d2", "d3"]
     assert d_reranked["metadata"]["reranked"] is True
-
-
-if __name__ == "__main__":
-    test_avg_hit_rate_at_5()
-    test_avg_mrr()
-    test_avg_recall_at_k()
-    test_complement_recall_is_one_minus_recall()
-    test_generation_score_includes_zeros()
-    test_failed_queries_not_counted_in_metrics()
-    test_no_completed_queries_zeros()
-    test_config_snapshot_fields()
-    test_corpus_indexed_size()
-    test_run_metadata()
-    test_single_query_no_averaging_error()
-    test_gen_zero_count_in_snapshot()
-    test_generation_disabled_no_gen_score()
-    test_to_dict_schema_keys()
-    test_to_dict_rounding()
-    test_to_dict_full_includes_query_results()
-    test_query_result_to_dict_schema()
-    test_query_result_to_dict_conditional_fields()

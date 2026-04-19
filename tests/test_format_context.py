@@ -23,7 +23,6 @@ def test_empty_list_returns_placeholder():
     """Lista vacia retorna placeholder fijo."""
     result = format_context([], 4000)
     assert result == "[No se encontraron documentos]", f"Obtenido: '{result}'"
-    print("PASS: lista vacia retorna placeholder")
 
 
 def test_single_doc_has_header():
@@ -31,7 +30,6 @@ def test_single_doc_has_header():
     result = format_context(["contenido del doc"], 4000)
     assert result.startswith("[Doc 1]\n"), f"No empieza con header: '{result[:30]}'"
     assert "contenido del doc" in result
-    print("PASS: single doc tiene header [Doc 1]")
 
 
 def test_multiple_docs_numbered():
@@ -44,7 +42,6 @@ def test_multiple_docs_numbered():
     assert "doc uno" in result
     assert "doc dos" in result
     assert "doc tres" in result
-    print("PASS: multiples docs numerados [Doc 1], [Doc 2], [Doc 3]")
 
 
 def test_docs_separated_by_double_newline():
@@ -56,7 +53,6 @@ def test_docs_separated_by_double_newline():
     assert len(parts) == 2, f"Esperado 2 partes separadas por \\n\\n, obtenido {len(parts)}"
     assert parts[0].endswith("aaa")
     assert parts[1].endswith("bbb")
-    print("PASS: docs separados por \\n\\n")
 
 
 def test_truncation_omits_docs_that_exceed_limit():
@@ -70,7 +66,6 @@ def test_truncation_omits_docs_that_exceed_limit():
     assert "aaaa" in result
     assert "bbbb" not in result, f"Segundo doc no deberia caber: '{result}'"
     assert "[Doc 2]" not in result
-    print("PASS: truncacion omite docs que exceden limite")
 
 
 def test_truncation_first_doc_too_large():
@@ -78,7 +73,6 @@ def test_truncation_first_doc_too_large():
     # "[Doc 1]\n" = 8 chars > 5, asi que el primer doc no cabe
     result = format_context(["este doc es largo"], 5)
     assert result == "", f"Esperado string vacio, obtenido: '{result}'"
-    print("PASS: primer doc excede limite -> string vacio")
 
 
 def test_all_docs_fit_within_limit():
@@ -88,7 +82,6 @@ def test_all_docs_fit_within_limit():
 
     for i in range(1, 6):
         assert f"[Doc {i}]" in result, f"Falta [Doc {i}]"
-    print("PASS: todos los docs caben con limite amplio")
 
 
 def test_exact_boundary():
@@ -100,7 +93,6 @@ def test_exact_boundary():
     # Si max_length=9, 9 > 9 es False, asi que cabe
     result = format_context(["x"], 9)
     assert "x" in result, f"Doc deberia caber exactamente: '{result}'"
-    print("PASS: doc que cabe exactamente en el limite se incluye")
 
 
 def test_empty_string_docs():
@@ -109,16 +101,3 @@ def test_empty_string_docs():
     assert "[Doc 1]" in result
     assert "[Doc 2]" in result
     assert "contenido" in result
-    print("PASS: docs con string vacio generan headers")
-
-
-if __name__ == "__main__":
-    test_empty_list_returns_placeholder()
-    test_single_doc_has_header()
-    test_multiple_docs_numbered()
-    test_docs_separated_by_double_newline()
-    test_truncation_omits_docs_that_exceed_limit()
-    test_truncation_first_doc_too_large()
-    test_all_docs_fit_within_limit()
-    test_exact_boundary()
-    test_empty_string_docs()

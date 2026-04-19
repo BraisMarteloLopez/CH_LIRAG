@@ -270,18 +270,3 @@ def test_non_comparison_query_preserves_answer_type():
     )
 
     assert result.queries[0].answer_type == "text"
-
-
-if __name__ == "__main__":
-    test_basic_populate()
-    test_multiple_qrels_per_query()
-    test_none_dataframes_no_crash()
-    test_empty_dataframes()
-    test_answer_type_inferred_when_missing()
-    test_no_answer_no_answer_type()
-    test_question_type_metadata()
-    test_question_type_fallback_to_type_field()
-    test_query_without_qrels_has_empty_relevant_ids()
-    test_comparison_query_auto_converts_answer_type_to_label()
-    test_comparison_query_already_label_unchanged()
-    test_non_comparison_query_preserves_answer_type()

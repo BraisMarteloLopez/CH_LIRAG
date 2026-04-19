@@ -75,9 +75,3 @@ def test_reranked_column_in_csv():
     assert rows[2]["reranked"] == "", (
         f"q3: esperado vacio, obtenido '{rows[2]['reranked']}'"
     )
-
-    print("PASS: columna 'reranked' en detail CSV con valores True/False/vacio")
-
-
-if __name__ == "__main__":
-    test_reranked_column_in_csv()
