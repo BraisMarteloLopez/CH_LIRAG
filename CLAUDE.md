@@ -12,7 +12,7 @@ El harness en `sandbox_mteb/` (datasets MTEB/BeIR + NVIDIA NIM) es **instrumento
 
 **Escenario objetivo**: colecciones pequenas (10-50 PDFs) de dominio especializado con terminologia/entidades fuera del pre-entrenamiento del embedding. Es el caso donde el KG aporta diferencial. HotpotQA NO es ese escenario — es harness de verificacion previa.
 
-**Implicacion de diseño**: las decisiones favorecen la embedibilidad futura (config declarativa, interfaces claras, sin side-effects globales, corpus arbitrarios). Mientras P0 no este verde, la embedibilidad es objetivo de diseño, no trabajo activo.
+**Implicacion de diseño**: las decisiones favorecen la embedibilidad futura (config declarativa, interfaces claras, sin side-effects globales, corpus arbitrarios, muy alta calidad de generacion). Mientras P0 no este verde, la embedibilidad es objetivo de diseño, no trabajo activo.
 
 **Fases del proyecto**:
 1. **Pre-P0 — Cerrada (2026-04-19)**: completitud arquitectural de LIGHT_RAG + ejecucion estable. Las 7 divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) resueltas en codigo y tests. Validacion empirica:
@@ -283,10 +283,6 @@ Tres condiciones cumplidas simultaneamente:
 
 **Palanca post-Pre-P0**: `KG_GLEANING_ROUNDS` (default `0`) ejecuta una pasada extra de extraccion para recuperar entidades/relaciones perdidas (no re-extrae keywords de chunk). Coste: ~2x llamadas LLM en indexacion. Usar solo si la cobertura del KG (`num_docs_with_entities / total_docs`) baja de ~95%.
 
-### Leccion de HotpotQA (referencia para P0)
-
-HotpotQA no discrimina entre estrategias en generacion: Wikipedia en pre-entrenamiento del embedding + DEV_MODE con gold docs garantizados + ventana grande → el embedding resuelve solo, sin necesitar el KG. Cualquier medicion de la hipotesis `LIGHT_RAG > SIMPLE_VECTOR` debe hacerse sobre un benchmark donde el embedding NO sature.
-
 **Nota estructural sobre divergencia #8**: con #8 resuelta (chunks via `source_doc_ids` del KG), las metricas de retrieval de LIGHT_RAG ya no se solapan necesariamente con las del vector directo. Pueden diverger en cualquier dataset post-#8.
 
 ### P0 — Replicacion empirica del paper · **FASE ACTUAL**
@@ -296,10 +292,6 @@ HotpotQA no discrimina entre estrategias en generacion: Wikipedia en pre-entrena
 **Estado**: desbloqueado tras cierre de Pre-P0 el 2026-04-19. La arquitectura esta completa y ejecuta estable; el siguiente trabajo es seleccionar benchmark y correr la comparativa.
 
 **Prerequisitos arquitectonicos**: todos cumplidos para P0 sobre HotpotQA o benchmark de contra-referencia similar. Divergencias #2, #6, #8 validadas directamente; #4+5, #7, #9 ejercitadas implicitamente; #10 presente pero con riesgo conocido de calidad por piggyback (ver su fila). **Para avanzar a P2 (catalogo especializado) hace falta adicionalmente cerrar el riesgo de piggyback en #10** — anadir observable de calidad de keywords y/o exponer toggle a llamada dedicada.
-
-**Candidatos de dataset**:
-- UltraDomain subsets (Legal-QA, Agriculture, CS, Mix) — los del paper original
-- Cualquier QA especializado con domain shift real al embedding
 
 Ninguno esta en formato MTEB/BeIR nativo; todos requieren ETL propio al contrato MinIO/Parquet de `loader.py`.
 
