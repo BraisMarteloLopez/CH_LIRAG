@@ -200,6 +200,51 @@ class TestToJson:
         assert rm["kg_mean_neighbors_per_entity"] == 3.5
         assert rm["kg_budget_cap_triggered"] is True
 
+    def test_citation_refs_fields_in_json(self, tmp_path):
+        """Divergencia #7: los 14 campos citation_refs_{synth,gen}_* llegan al JSON."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)
+        # Los 7 synth + 7 gen.
+        synth_values = {
+            "total": 5, "valid": 4, "malformed": 1, "in_range": 3,
+            "out_of_range": 1, "distinct": 2, "coverage_ratio": 0.667,
+        }
+        gen_values = {
+            "total": 2, "valid": 2, "malformed": 0, "in_range": 2,
+            "out_of_range": 0, "distinct": 2, "coverage_ratio": 1.0,
+        }
+        for k, v in synth_values.items():
+            qr.retrieval.retrieval_metadata[f"citation_refs_synth_{k}"] = v
+        for k, v in gen_values.items():
+            qr.retrieval.retrieval_metadata[f"citation_refs_gen_{k}"] = v
+
+        run = _make_run(query_results=[qr])
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        for k, v in synth_values.items():
+            assert rm[f"citation_refs_synth_{k}"] == v
+        for k, v in gen_values.items():
+            assert rm[f"citation_refs_gen_{k}"] == v
+
+    def test_citation_refs_absent_when_not_emitted(self, tmp_path):
+        """Regresion guard: SIMPLE_VECTOR o LIGHT_RAG sin synthesis no
+        inflan el JSON con 14 campos en 0."""
+        exporter = RunExporter(output_dir=tmp_path)
+        qr = _make_qr("q1", graph_meta=True)  # KG data pero sin citation_refs_*
+        run = _make_run(query_results=[qr])
+        path = exporter.to_json(run)
+
+        data = json.loads(path.read_text())
+        rm = data["query_results"][0]["retrieval_metadata"]
+        # Ninguno de los 14 campos debe aparecer en el JSON si no estaban
+        # en el retrieval_metadata original.
+        for prefix in ("synth", "gen"):
+            for k in ("total", "valid", "malformed", "in_range",
+                     "out_of_range", "distinct", "coverage_ratio"):
+                assert f"citation_refs_{prefix}_{k}" not in rm
+
 
 class TestToSummaryCsv:
     """Tests para to_summary_csv()."""
