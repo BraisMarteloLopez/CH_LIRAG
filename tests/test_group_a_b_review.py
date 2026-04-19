@@ -67,17 +67,9 @@ def test_get_documents_by_ids_delegates_to_vector_store():
 
 
 # =============================================================================
-# A2: get_documents_by_ids retorna {} si store no inicializado
+# A2: get_documents_by_ids con lista vacia
+# Nota: el caso "sin store -> {}" vive en test_simple_vector_retriever.py::test_get_documents_by_ids_no_store
 # =============================================================================
-
-def test_get_documents_by_ids_no_store():
-    """Sin vector store inicializado retorna dict vacio."""
-    retriever = make_retriever(with_store=False)
-
-    result = retriever.get_documents_by_ids(["d1", "d2"])
-    assert result == {}
-    print("PASS A2: sin store retorna {}")
-
 
 def test_get_documents_by_ids_empty_list():
     """Lista vacia retorna {} sin llamar al store."""
@@ -229,7 +221,6 @@ def test_reranker_no_vector_scores():
 
 if __name__ == "__main__":
     test_get_documents_by_ids_delegates_to_vector_store()
-    test_get_documents_by_ids_no_store()
     test_get_documents_by_ids_empty_list()
     test_chroma_batching()
     test_chroma_single_batch()
