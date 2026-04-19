@@ -3,9 +3,14 @@
 > **Archivo efimero**. Registra tareas pendientes detectadas al auditar el
 > run `mteb_hotpotqa_20260418_223530` (2026-04-18) que no subieron a
 > `CLAUDE.md#deuda-tecnica-vigente` porque se consideran menores u
-> operativas. **En cuanto se aborden**, revisar si alguna deja rastro en
-> `CLAUDE.md`/`README.md` (p.ej. cerrar una deuda existente, actualizar
-> una seccion, anadir una convencion) y **eliminar este archivo**.
+> operativas.
+>
+> **Estado (2026-04-19)**: Pre-P0 cerrado con run `mteb_hotpotqa_20260419_032905`.
+> Items A y D cerrados como parte del HANDOFF del paso 1 (commits en PR #39
+> y PR #40). Items B y C **siguen abiertos** — no eran bloqueantes para
+> Pre-P0 (son respectivamente una estimacion de banner desactualizada y
+> una observacion sobre retries exitosos del LLM). Cuando se aborden,
+> cerrar las secciones correspondientes y eliminar este archivo.
 >
 > **NO referenciar desde `CLAUDE.md`, `README.md` ni `TESTS.md`** — un
 > enlace hacia este fichero sobrevive a su borrado y queda como
