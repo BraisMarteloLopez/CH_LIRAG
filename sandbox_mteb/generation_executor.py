@@ -321,6 +321,22 @@ class GenerationExecutor:
             query.query_text, generation_context, dataset_name
         )
 
+        # Divergencia #7: observable de citaciones en la respuesta final del
+        # generador, emitido bajo el mismo gate que synth_* (has_kg_data +
+        # synthesis enabled). Comparado con synth_*, discrimina el trasvase
+        # narrativa -> respuesta:
+        #   gen_valid > synth_valid  => generador invento citas (alarma)
+        #   gen_out_of_range > 0 y synth_out_of_range == 0 => alucinacion
+        #                                                     solo en gen
+        if has_kg_data and self._kg_synthesis_enabled:
+            gen_stats = parse_citation_refs(
+                generation.generated_response, n_chunks_emitted,
+            )
+            for metric_name, value in gen_stats.items():
+                retrieval_detail.retrieval_metadata[
+                    f"citation_refs_gen_{metric_name}"
+                ] = value
+
         # 2. Metricas async (faithfulness se evalua contra structured_context
         # original, no contra la narrativa del synthesis)
         primary_result, secondary_results = await self._calculate_metrics_async(

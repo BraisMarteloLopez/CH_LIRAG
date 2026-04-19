@@ -326,6 +326,71 @@ class TestStructuredContext:
 
         assert "citation_refs_synth_valid" not in retrieval.retrieval_metadata
 
+    def test_citation_refs_gen_populated_when_synthesis_enabled(self):
+        """Divergencia #7: la respuesta final del generador tambien se parsea
+        con prefijo citation_refs_gen_*. Permite detectar si el generador
+        propago / filtro / invento citas respecto a la narrativa synth."""
+        # LLM mockeado devuelve el mismo texto en ambas llamadas (synthesis y
+        # generacion). Usamos una respuesta distinguible con 2 validos en
+        # rango y 1 out_of_range.
+        gen_response = "Answer references [ref:1] and [ref:2] and [ref:50]."
+        llm = MagicMock()
+        llm.invoke_async = AsyncMock(return_value=gen_response)
+        calc = MagicMock()
+        async def _calc_async(mt, **kwargs):
+            return MetricResult(metric_type=mt, value=0.75)
+        calc.calculate_async = AsyncMock(side_effect=_calc_async)
+        calc.embedding_model = None
+        executor = GenerationExecutor(
+            llm_service=llm,
+            metrics_calculator=calc,
+            max_context_chars=4000,
+            kg_synthesis_enabled=True,
+        )
+
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        with patch(
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
+        ) as mock_struct:
+            mock_struct.return_value = ("STRUCTURED_CTX", 3)
+            asyncio.run(
+                executor._process_single_async(
+                    query, retrieval, ds_config, "hotpotqa",
+                )
+            )
+
+        rm = retrieval.retrieval_metadata
+        # Los 7 campos gen_* estan presentes
+        assert rm["citation_refs_gen_valid"] == 3
+        assert rm["citation_refs_gen_in_range"] == 2  # [1], [2]
+        assert rm["citation_refs_gen_out_of_range"] == 1  # [50]
+        assert rm["citation_refs_gen_distinct"] == 2
+        # Y coexisten con los synth_* porque el mismo LLM mock responde
+        # identico en ambos pasos
+        assert rm["citation_refs_synth_valid"] == 3
+
+    def test_citation_refs_gen_absent_when_synthesis_disabled(self):
+        """Sin synthesis no hay gen_citation_refs_* tampoco (gate unificado)."""
+        executor = _make_executor()  # synthesis_enabled=False
+        query = _make_query()
+        retrieval = _make_retrieval(kg_meta=True)
+        ds_config = get_dataset_config("hotpotqa")
+
+        with patch(
+            "sandbox_mteb.generation_executor.format_structured_context_with_stats"
+        ) as mock_struct:
+            mock_struct.return_value = ("STRUCTURED_CTX", 3)
+            asyncio.run(
+                executor._process_single_async(
+                    query, retrieval, ds_config, "hotpotqa",
+                )
+            )
+
+        assert "citation_refs_gen_valid" not in retrieval.retrieval_metadata
+
     def test_kg_budget_cap_not_annotated_without_kg_meta(self):
         """SIMPLE_VECTOR sin KG data NO emite kg_budget_cap_triggered."""
         executor = _make_executor()
