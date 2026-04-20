@@ -12,7 +12,7 @@ El harness en `sandbox_mteb/` (datasets MTEB/BeIR + NVIDIA NIM) es **instrumento
 
 **Escenario objetivo**: colecciones pequenas (10-50 PDFs) de dominio especializado con terminologia/entidades fuera del pre-entrenamiento del embedding. Es el caso donde el KG aporta diferencial. HotpotQA NO es ese escenario — es harness de verificacion previa.
 
-**Implicacion de diseño**: las decisiones favorecen la embedibilidad futura (config declarativa, interfaces claras, sin side-effects globales, corpus arbitrarios). Mientras P0 no este verde, la embedibilidad es objetivo de diseño, no trabajo activo.
+**Implicacion de diseño**: las decisiones favorecen la embedibilidad futura (config declarativa, interfaces claras, sin side-effects globales, corpus arbitrarios, muy alta calidad de generacion). Mientras P0 no este verde, la embedibilidad es objetivo de diseño, no trabajo activo.
 
 **Fases del proyecto**:
 1. **Pre-P0 — Cerrada (2026-04-19)**: completitud arquitectural de LIGHT_RAG + ejecucion estable. Las 7 divergencias arquitectonicas (#2, #4+5, #6, #7, #8, #9, #10) resueltas en codigo y tests. Validacion empirica:
@@ -112,7 +112,7 @@ Contenido real fetcheado por `get_documents_by_ids`. Fallback a vector directo s
 
 ## Divergencias con el paper original — evaluacion de criticidad
 
-Diferencias entre esta implementacion y el [LightRAG original](https://github.com/HKUDS/LightRAG) (HKUDS, EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)). Las divergencias #11 y #12 son menores (cosmeticas/no funcionales) con descripcion y criterio de re-evaluacion en su fila. La validacion empirica sobre un benchmark donde el paper muestra ventaja es el objetivo de P0 ("Proximos pasos").
+Diferencias entre esta implementacion y el [LightRAG original](https://github.com/HKUDS/LightRAG) (HKUDS, EMNLP 2025; [arxiv](https://arxiv.org/abs/2410.05779)).
 
 ### Status de validacion por divergencia arquitectonica
 
@@ -140,14 +140,14 @@ La extraccion de high-level keywords por chunk se implementa como **piggyback en
 
 ## Deuda tecnica vigente
 
-| # | Item | Severidad | Ubicacion | Mitigacion temporal |
+| # ID | Item | Severidad | Ubicacion | Mitigacion temporal |
 |---|---|---|---|---|
 | 1 | ChromaDB: colecciones huerfanas si el proceso se interrumpe | **BAJO** | `evaluator.py:_cleanup()` borra la coleccion al terminar; si el proceso muere antes, queda `eval_*` en disco. Con `PersistentClient` se acumulan | Auditar `VECTOR_DB_DIR` entre campanas y purgar `eval_*` huerfanas; automatizar en `preflight.py` si el tamano supera presupuesto |
 | 2 | Preflight no valida datos reales | **MEDIO** | `preflight.py` solo verifica bucket MinIO; no descarga ni parsea Parquet, no valida schema contra `DATASET_CONFIG`. Riesgo real: **schema drift del contrato upstream** (administrador produce catalogo con columnas/tipos distintos) — fallo horas despues en `_populate_from_dataframes()`, quemando compute | `--dry-run` primero; cerrar con contract testing al integrar con administrador (P3) |
 | 3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
 | 5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, fallback 4000 chars (presupuesto TOTAL de contexto, no truncado del doc; ~4-8 chunks). Riesgo: dejar senal en la mesa si el modelo soporta mucho mas (p.ej. 192K). Loguea INFO (no WARNING) → puede pasar desapercibido | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicito en `.env`. Auditar `config_snapshot._runtime.max_context_chars` antes de aceptar un run |
 | 8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, checkpoint/preflight/JSONL/export dual/DEV_MODE es mucho. Componentes ejercitados sin incidentes en validacion previa | Revisar post-P0: si algun componente queda sin uso tras 3 runs reales, candidato a eliminacion |
-| 9 | Lock-in a NVIDIA NIM | **MEDIO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
+| 9 | Lock-in a NVIDIA NIM | **BAJO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 | 10 | Sin indexacion incremental del KG | **MEDIO** | `LightRAGRetriever.index_documents()` siempre rebuild completo o carga de cache. No hay `append_documents()` para integrar docs nuevos sin reconstruir. El paper soporta `insert()` incremental. Para PDFs en tandas (escenario administrador), obliga a re-indexar todo | Cache de disco mitiga re-extraccion LLM pero no rebuild del grafo ni VDBs. P3 lo requiere |
 | 11 | Duplicacion parcial de iteracion de vecinos en KG | **BAJO** | `_get_neighbors_weighted()` y `get_neighbors_ranked()` (div #9) iteran los mismos edges con campos distintos (uno extrae `edge_weight`, el otro ademas `degree_centrality` + relacion). Duplicacion deliberada para no complicar la API interna | Refactorizar a iterador comun solo si aparece un tercer consumidor |
 | 12 | Tests acoplados a mensajes de error de `AsyncLLMService` | **BAJO** | Tests en `test_llm.py` usan regex laxa sobre `RuntimeError` porque no hay excepciones custom (`EmptyResponseError`/`RetriesExhaustedError`). Si cambia el texto, los tests fallan por regex, no por comportamiento | Refactor de excepciones en el proximo PR funcional a `shared/llm.py`. Mientras tanto, sincronizar regex al tocar mensajes |
@@ -230,23 +230,13 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 **Implicaciones operativas**:
 - Cambios al flujo retrieval→synthesis→generation solo se validan cuando el usuario lanza el run.
 - Antes de declarar completo, claude_code debe enumerar los **criterios observables** que el usuario comprobara: que variable de `config_snapshot._runtime` esperar, que rango en `kg_synthesis_stats`/`judge_fallback_stats`, que metrica agregada.
-- "Falta test e2e de X" NO es deuda pendiente — es consecuencia estructural. Listarla induce intentos de construir algo imposible de validar en sesion.
+- "Falta test e2e de X" NO es deuda pendiente — es consecuencia estructural. Listarla induce intentos de construir algo imposible de validar en sesion. 
 
-**Patron de fallo recurrente**: claude_code tiende a presentar trabajo como completo antes de tiempo y a categorizar problemas como "menores" cuando arreglarlos implicaria mas trabajo. Manifestaciones a vigilar:
-- Auto-evaluacion reactiva (solo tras peticion) en vez de integrada al entregable.
-- "Aceptable", "pendiente menor", "por ahora" aplicados a deuda sin medir coste real.
-- Tests que pasan pero no estresan el caso que motivo el cambio.
-- Alineacion con el paper descrita como completa cuando solo cubre un subconjunto.
-- Parametros operacionales hardcoded en `constants.py` con la excusa "el default es razonable".
-
-**Contramedidas (vehiculos complementarios pre-run; ninguno equivale a validar)**:
-1. **Simulacion mental antes de entregar**: con los parametros propuestos, ¿el contexto real se parece al del paper? ¿el timeout da margen? ¿el test cubre el caso adversarial o solo el feliz? Filtra errores groseros sin quemar compute del usuario.
-2. **Auto-evaluacion como parte del entregable**: enumerar limitaciones y criterios observables ANTES de entregar, no despues.
-3. **Distinguir "menor" de "conveniente de no arreglar"**: si la razon para clasificarlo como menor es el coste de arreglarlo, es deuda real.
-4. **Parametros que dependen del LLM usado** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
-5. **Tests unitarios adversariales** para todo cambio que afecte el contexto que ve el LLM: estresar el budget, no solo el caso holgado. Es la unica forma de codigo (vs. simulacion mental, que es proceso) que claude_code puede dejar como red de seguridad antes del run del usuario.
-
-Esta seccion se actualiza con nuevas manifestaciones del patron segun se detecten. No borrar sin consenso.
+**Contramedidas de Claude_code (vehiculos complementarios pre-run; ninguno equivale a validar)**:
+1. **Auto-evaluacion como parte del entregable**: enumerar limitaciones y criterios observables ANTES de entregar, no despues.
+2. **Distinguir "menor" de "conveniente de no arreglar"**: si la razon para clasificarlo como menor es el coste de arreglarlo, es deuda real.
+3. **Parametros que dependen del LLM usado** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
+4. **Tests unitarios adversariales** para todo cambio que afecte el contexto que ve el LLM: estresar el budget, no solo el caso holgado.
 
 ## Proximos pasos
 
@@ -257,14 +247,12 @@ Pre-P0 (completitud arquitectural + ejecucion estable)  <-- GATE CERRADO (2026-0
   |
 P0 (replicacion empirica del paper)                     <-- FASE ACTUAL
   |
-  +-- P1 (sanity on/off synthesis sobre HotpotQA)       <-- barato, en paralelo a P0
-  |
   +-- P2 (experimento 3: catalogo especializado)        <-- SOLO si P0 pasa + riesgo piggyback #10 resuelto
   |
   +-- P3 (embedibilidad + export KG + integracion)      <-- SOLO si P2 pasa
 ```
 
-**⚠️ Alerta sobre Pre-P0 cerrado con matiz**: la condicion 1 del gate (completitud arquitectural) se cumplio con una salvedad explicita sobre la divergencia #10 (ver su fila). El piggyback en la extraccion de keywords high-level puede degradar la calidad del canal **exactamente en el escenario donde LightRAG deberia brillar** (catalogo especializado, dominio fuera del pre-entrenamiento del embedding). HotpotQA no discrimina este riesgo por saturacion del vector directo. **Antes de lanzar P2 — no P0 — hace falta anadir observable de calidad de keywords y/o toggle a llamada dedicada.**
+** Alerta sobre Pre-P0 cerrado con matiz**: El piggyback en la extraccion de keywords high-level puede degradar la calidad del canal **exactamente en el escenario donde LightRAG deberia brillar** (catalogo especializado, dominio fuera del pre-entrenamiento del embedding). HotpotQA no discrimina este riesgo por saturacion del vector directo. **Antes de lanzar P2 — no P0 — hace falta anadir observable de calidad de keywords y/o toggle a llamada dedicada.**
 
 ### Pre-P0 — Completitud arquitectural de LIGHT_RAG · **GATE CERRADO (2026-04-19)**
 
@@ -274,8 +262,6 @@ Tres condiciones cumplidas simultaneamente:
 2. **Ejecucion estable**: `kg_synthesis_stats.fallback_rate = 2.86%` (< 10% umbral), `judge.default_return_rate = 0%`, `retrieval_metadata.kg_fallback=null` en 35/35 queries, `queries_failed = 0`.
 3. **Funcionalidades extra documentadas**: cache de KG, fallbacks ante errores LLM/igraph, instrumentacion de timing (queue/LLM split) — adaptaciones operativas, no sustitutos de piezas del paper.
 
-**Diagnostico de la fase (resumen sin runs concretos)**: la causa primaria del fallback alto inicial (~31%) era saturacion de cola del semaforo `NIM_MAX_CONCURRENT_REQUESTS=16`. Subir a 32 concurrentes elimino la cola pero subio la latencia LLM (saturacion GPU del NIM). Cierre de la fase: timeout calibrado al p95 LLM real + margen.
-
 **Config validada** para runs LIGHT_RAG en infra actual (defaults en `sandbox_mteb/env.example`, marcados `[PRE-P0 VALIDATED]`):
 - `NIM_MAX_CONCURRENT_REQUESTS=32`
 - `KG_SYNTHESIS_MAX_CHARS=50000`
@@ -283,43 +269,22 @@ Tres condiciones cumplidas simultaneamente:
 
 **Palanca post-Pre-P0**: `KG_GLEANING_ROUNDS` (default `0`) ejecuta una pasada extra de extraccion para recuperar entidades/relaciones perdidas (no re-extrae keywords de chunk). Coste: ~2x llamadas LLM en indexacion. Usar solo si la cobertura del KG (`num_docs_with_entities / total_docs`) baja de ~95%.
 
-### Leccion de HotpotQA (referencia para P0)
+### P0 — Demostrar calidad de generacion · **FASE ACTUAL**
 
-HotpotQA no discrimina entre estrategias en generacion: Wikipedia en pre-entrenamiento del embedding + DEV_MODE con gold docs garantizados + ventana grande → el embedding resuelve solo, sin necesitar el KG. Cualquier medicion de la hipotesis `LIGHT_RAG > SIMPLE_VECTOR` debe hacerse sobre un benchmark donde el embedding NO sature.
-
-**Nota estructural sobre divergencia #8**: con #8 resuelta (chunks via `source_doc_ids` del KG), las metricas de retrieval de LIGHT_RAG ya no se solapan necesariamente con las del vector directo. Pueden diverger en cualquier dataset post-#8.
-
-### P0 — Replicacion empirica del paper · **FASE ACTUAL**
-
-**Objetivo**: demostrar que sobre al menos un benchmark donde el paper reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
+**Objetivo**: demostrar que sobre al menos un benchmark donde una run reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
 
 **Estado**: desbloqueado tras cierre de Pre-P0 el 2026-04-19. La arquitectura esta completa y ejecuta estable; el siguiente trabajo es seleccionar benchmark y correr la comparativa.
 
-**Prerequisitos arquitectonicos**: todos cumplidos para P0 sobre HotpotQA o benchmark de contra-referencia similar. Divergencias #2, #6, #8 validadas directamente; #4+5, #7, #9 ejercitadas implicitamente; #10 presente pero con riesgo conocido de calidad por piggyback (ver su fila). **Para avanzar a P2 (catalogo especializado) hace falta adicionalmente cerrar el riesgo de piggyback en #10** — anadir observable de calidad de keywords y/o exponer toggle a llamada dedicada.
-
-**Candidatos de dataset**:
-- UltraDomain subsets (Legal-QA, Agriculture, CS, Mix) — los del paper original
-- Cualquier QA especializado con domain shift real al embedding
+**Prerequisitos arquitectonicos**: todos cumplidos para P0 sobre HotpotQA. **Para avanzar a P2 (catalogo especializado) hace falta adicionalmente cerrar el riesgo de piggyback en #10** — anadir observable de calidad de keywords y/o exponer toggle a llamada dedicada.
 
 Ninguno esta en formato MTEB/BeIR nativo; todos requieren ETL propio al contrato MinIO/Parquet de `loader.py`.
 
-**Trabajo necesario (varias sesiones adicionales de claude_code)**:
-1. **Seleccion de benchmark** publico donde exista contra-referencia publicada (paper u otra fuente revisada) a favor de LightRAG/GraphRAG. Sin contra-referencia no hay "replicacion" que validar.
-2. **ETL al contrato Parquet**: mapear queries, corpus, qrels; extender `DATASET_CONFIG` en `shared/types.py`.
-3. **Protocolo experimental**: seed fijo, N>=3 runs por estrategia (mitiga deuda #3), reranker segun config del paper, metricas alineadas con lo que reporta el paper.
-4. **Comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid** con synthesis on. Opcionalmente ablacion off para aislar la aportacion de la synthesis.
-5. **Analisis**: validar `judge_fallback_stats` y `kg_synthesis_stats` antes de interpretar deltas (ver "Observabilidad de runs"). Si alguno degrada, los resultados no son interpretables.
+**Trabajo necesario**:
+1. **Comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid** con synthesis on.
 
 **Criterio de exito**: delta `LIGHT_RAG > SIMPLE_VECTOR` en la metrica principal del benchmark, distinguible del ruido (seed×LLM), con signo consistente con el paper.
 
 **Criterio de fallo**: deltas dentro del ruido o invertidos → debug (¿synthesis llega al generador? ¿KG se construye? ¿indexacion falla silenciosamente?), no avance a P2/P3.
-
-### P1 — Sanity de synthesis sobre HotpotQA · barato, paralelo a P0
-
-Dos controles que no sustituyen P0:
-
-1. **Ablacion synthesis on/off**: comparar `KG_SYNTHESIS_ENABLED=true` vs `false` para detectar regresion introducida por la capa de synthesis.
-2. **Full corpus sin DEV_MODE**: senal intermedia sobre robustez del KG cuando el retrieval deja de saturar (el embedding NO satura).
 
 ### P2 — Experimento 3: catalogo especializado · **futuro, contingente a P0**
 
