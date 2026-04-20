@@ -189,7 +189,7 @@ def test_pipeline_e2e_mocked(
 
 
 # =============================================================================
-# E2E: LIGHT_RAG pipeline (DTm-78 / I.4)
+# E2E: LIGHT_RAG pipeline
 # =============================================================================
 
 @patch("sandbox_mteb.evaluator.MinIOLoader")

@@ -102,7 +102,7 @@ class MTEBConfig:
     dev_queries: int = 200
     dev_corpus_size: int = 4000
 
-    # Umbral de tasa de fallback del LLM judge (deuda tecnica #4).
+    # Umbral de tasa de fallback del LLM judge.
     # Si en el run la proporcion de scores devueltos como default 0.5
     # (el judge no pudo producir JSON parseable ni score via regex) supera
     # este umbral para CUALQUIER metrica del judge, el run se marca como
@@ -112,7 +112,7 @@ class MTEBConfig:
     # subir durante iteracion, bajar antes del experimento 3.
     judge_fallback_threshold: float = 0.02
 
-    # Synthesis de contexto KG en generacion (divergencia LightRAG #2).
+    # Synthesis de contexto KG en generacion (value-add propio del proyecto).
     # Cuando hay datos KG presentes (entidades o relaciones del KG) y esta
     # flag esta activa, el contexto multi-seccion (entidades + relaciones +
     # chunks) se reescribe como narrativa coherente via LLM ANTES de la
@@ -286,6 +286,7 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
             "You are a helpful assistant. Use the provided context to answer the question. "
             "Answer in as few words as possible — ideally a single entity, name, date, or number. "
             "For yes/no questions, answer only 'yes' or 'no'. "
+            "Preserve [ref:N] citations inline when present in the context. "
             "Do not explain, elaborate, or add extra context."
         ),
         "user_template": "CONTEXT:\n{context}\n\nQUESTION: {query}\n\nANSWER:",
@@ -299,7 +300,7 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
 
 
 # =========================================================================
-# PROMPT DE SYNTHESIS DE CONTEXTO KG (divergencia LightRAG #2)
+# PROMPT DE SYNTHESIS DE CONTEXTO KG
 # =========================================================================
 # El system prompt acepta un placeholder {max_chars} que se rellena en
 # runtime con kg_synthesis_max_chars (o max_context_chars si es 0).

@@ -175,7 +175,7 @@ Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test
 
 1. **Atributo nuevo en clase con `object.__new__()`**: sincronizar los helpers `_make_X()` listados en "Patron object.__new__()". Localizar todos los usos con `grep -rn "object.__new__(ClassName)" tests/`
 2. **Nuevo campo en RetrievalConfig**: propagado automaticamente via `RetrievalConfig()` default. Sin accion en tests salvo que el field necesite valor no-default
-3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos de campos recientes: `judge_fallback_threshold` (deuda #4), `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s` (divergencia LightRAG #2) — todos tienen defaults, no requieren tocar helpers
+3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos recientes (`judge_fallback_threshold`, `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s`) tienen defaults, no requieren tocar helpers
 4. **Nuevo campo en QueryRetrievalDetail o QueryEvaluationResult**: actualizar `_make_qr()` en test_checkpoint.py si el field es required
 5. **Import de botocore.exceptions**: nunca directo en tests. Usar `_FakeClientError` + `@patch`
 6. **Cada assertion debe usar `assert`**: nunca dejar expresiones booleanas sueltas (`x is None` sin assert)

@@ -1,7 +1,7 @@
 """
 Tests para MinIOLoader._populate_from_dataframes() en loader.py.
 
-Cobertura DTm-4:
+Cobertura:
   - Validar que el metodo estatico popula correctamente un LoadedDataset
   - Queries con campos completos (query_id, text, answer, answer_type)
   - Corpus con doc_id, title, text
@@ -222,7 +222,7 @@ def test_query_without_qrels_has_empty_relevant_ids():
 
 
 def test_comparison_query_auto_converts_answer_type_to_label():
-    """DTm-15: question_type=comparison fuerza answer_type=label."""
+    """question_type=comparison fuerza answer_type=label."""
     queries_df = MockDataFrame([
         {"query_id": "q1", "text": "Is A taller?",
          "answer": "yes", "answer_type": "text",
@@ -241,7 +241,7 @@ def test_comparison_query_auto_converts_answer_type_to_label():
 
 
 def test_comparison_query_already_label_unchanged():
-    """DTm-15: si ya es label, no se modifica."""
+    """Si ya es label, no se modifica."""
     queries_df = MockDataFrame([
         {"query_id": "q1", "text": "Is A taller?",
          "answer": "yes", "answer_type": "label",

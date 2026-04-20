@@ -1,6 +1,6 @@
 """
-Test DT-7 #5: Rerank exitoso -> reranked_ok=True, rerank_failures=0.
-Test DT-7 #6: Rerank fallido -> reranked_ok=False, rerank_failures incrementa.
+Rerank exitoso -> reranked_ok=True, rerank_failures=0.
+Rerank fallido -> reranked_ok=False, rerank_failures incrementa.
 """
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy, RetrievalConfig
 from shared.config_base import InfraConfig, RerankerConfig

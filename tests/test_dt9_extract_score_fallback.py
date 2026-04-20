@@ -1,5 +1,5 @@
 """
-Tests DT-9: _extract_score_fallback() regex robusta.
+_extract_score_fallback() regex robusta.
 
 Cubre: decimales 0-1, falsos positivos rechazados, escala 1-10 con
 prefijo "score:", fracciones N/M, defaults, respuestas LLM reales.

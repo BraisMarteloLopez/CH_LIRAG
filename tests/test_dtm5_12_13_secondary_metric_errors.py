@@ -1,7 +1,8 @@
 """
-Test DTm-5 #12: Metrica secundaria que falla produce MetricResult con error
-              (no desaparece silenciosamente).
-Test DTm-5 #13: El fallo emite logger.warning con tipo de metrica y query.
+Tests de fallo en metricas secundarias durante generacion:
+  - Metrica secundaria que falla produce MetricResult con error
+    (no desaparece silenciosamente).
+  - El fallo emite logger.warning con tipo de metrica y query.
 """
 import asyncio
 import logging

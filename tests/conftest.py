@@ -1,8 +1,8 @@
 """
 Configuracion compartida de pytest para todos los tests.
 
-FIX DTm-4: centraliza sys.path y mocking de modulos de infraestructura
-que no estan disponibles en el entorno de test (boto3, langchain_*, chromadb).
+Centraliza sys.path y mocking de modulos de infraestructura que no
+estan disponibles en el entorno de test (boto3, langchain_*, chromadb).
 
 Con pyproject.toml [tool.pytest.ini_options] pythonpath=["."], pytest
 resuelve imports del proyecto automaticamente. Los mocks de modulos

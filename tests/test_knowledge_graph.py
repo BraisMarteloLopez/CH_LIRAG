@@ -1,5 +1,5 @@
 """
-Tests unitarios para KnowledgeGraph (DTm-23, Fase 1.1).
+Tests unitarios para KnowledgeGraph.
 
 Cobertura:
   KG1. add_triplets basico — entidades y relaciones se anaden al grafo.
@@ -10,13 +10,13 @@ Cobertura:
   KG12. grafo vacio — graph reports zero entities/relations/docs.
   KG14. get_stats — estadisticas correctas.
   KG15. add_entity_metadata — actualiza type y description.
-  KG16. max_entities cap with eviction (DTm-21/63).
-  KG17. dedup de relaciones en aristas (DTm-21).
-  KG18. get_stats includes memory and cap info (DTm-21).
-  KG19-KG23. Persistencia: to_dict/from_dict, save/load (DTm-34).
-  Co-occurrence bridging (DTm-73).
-  merge_entity_descriptions (DAM-4).
-  get_entity / get_neighbors_ranked (divergencia #9).
+  KG16. max_entities cap con eviction.
+  KG17. dedup de relaciones en aristas.
+  KG18. get_stats incluye memoria y cap info.
+  KG19-KG23. Persistencia: to_dict/from_dict, save/load.
+  Co-occurrence bridging.
+  merge_entity_descriptions.
+  get_entity / get_neighbors_ranked.
   get_all_entities / get_all_relations.
 
 Note: tests for query_entities, query_by_keywords, get_entities_for_docs,
@@ -196,11 +196,11 @@ def test_add_entity_metadata_unknown_entity():
 
 
 # =============================================================================
-# KG16: max_entities cap (DTm-21)
+# KG16: max_entities cap
 # =============================================================================
 
 def test_max_entities_cap_with_eviction():
-    """Al alcanzar el cap, entidades de baja importancia se evictan (DTm-63)."""
+    """Al alcanzar el cap, entidades de baja importancia se evictan."""
     kg = KnowledgeGraph(max_entities=3)
     # A, B -> 2 entidades
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
@@ -247,7 +247,7 @@ def test_max_entities_existing_entities_still_updated():
 
 
 def test_eviction_prefers_low_doc_count():
-    """Eviction elige entidades con menos source_doc_ids (DTm-63)."""
+    """Eviction elige entidades con menos source_doc_ids."""
     kg = KnowledgeGraph(max_entities=4)
     # A, B en doc1 y doc2 — 2 docs cada uno (no evictables)
     kg.add_triplets("doc1", [_rel("A", "B", "r1")])
@@ -271,7 +271,7 @@ def test_eviction_prefers_low_doc_count():
 
 
 def test_eviction_cleans_indices():
-    """Eviction limpia la entidad del catalogo (DTm-63): tras eviction,
+    """Eviction limpia la entidad del catalogo: tras eviction,
     la entidad evicta deja de aparecer en get_all_entities()."""
     kg = KnowledgeGraph(max_entities=2)
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
@@ -288,7 +288,7 @@ def test_eviction_cleans_indices():
 
 
 def test_eviction_serialization_roundtrip():
-    """entities_evicted se preserva en to_dict/from_dict (DTm-63)."""
+    """entities_evicted se preserva en to_dict/from_dict."""
     kg = KnowledgeGraph(max_entities=2)
     kg.add_triplets("doc1", [_rel("A", "B", "r")])
     kg.add_triplets("doc2", [_rel("C", "D", "r")])  # triggers eviction
@@ -302,7 +302,7 @@ def test_eviction_serialization_roundtrip():
 
 
 # =============================================================================
-# KG17: dedup de relaciones en aristas (DTm-21)
+# KG17: dedup de relaciones en aristas
 # =============================================================================
 
 def test_relation_dedup_same_doc():
@@ -340,7 +340,7 @@ def test_relation_dedup_different_relation():
 
 
 # =============================================================================
-# KG18: get_stats incluye memoria y cap info (DTm-21)
+# KG18: get_stats incluye memoria y cap info
 # =============================================================================
 
 def test_get_stats_includes_memory_and_cap():
@@ -357,7 +357,7 @@ def test_get_stats_includes_memory_and_cap():
 
 
 # =============================================================================
-# KG19-KG23: Persistencia (DTm-34)
+# KG19-KG23: Persistencia
 # =============================================================================
 
 def test_to_dict_from_dict_roundtrip():
@@ -495,7 +495,7 @@ def test_get_all_relations_returns_list():
 
 
 # =============================================================================
-# merge_entity_descriptions (DAM-4)
+# merge_entity_descriptions
 # =============================================================================
 
 def test_merge_entity_descriptions_single_doc():
@@ -560,7 +560,7 @@ def test_merge_entity_descriptions_serialization_roundtrip():
 
 
 # =============================================================================
-# DTm-73: Co-occurrence bridging
+# Co-occurrence bridging
 # =============================================================================
 
 
@@ -624,7 +624,7 @@ def test_co_occurrence_caps_pairs_per_doc():
 
 
 # =============================================================================
-# get_entity / get_neighbors_ranked (divergencia #9)
+# get_entity / get_neighbors_ranked
 # =============================================================================
 
 

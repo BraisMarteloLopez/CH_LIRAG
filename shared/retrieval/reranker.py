@@ -90,7 +90,7 @@ class CrossEncoderReranker:
             self._reranker.top_n = top_n
             reranked_docs = self._reranker.compress_documents(lc_docs, query)
 
-            # FIX DT-8: ordenar explicitamente por relevance_score descendente.
+            # Ordenar explicitamente por relevance_score descendente:
             # compress_documents() no garantiza orden formalmente en su contrato.
             reranked_docs = sorted(
                 reranked_docs,

@@ -46,30 +46,31 @@ class RetrievalConfig:
 
     # HNSW (ChromaDB): num_threads=1 reduce no-determinismo del grafo
     # (elimina variabilidad de threading). No garantiza reproducibilidad
-    # total: ChromaDB no soporta hnsw:random_seed. Ver DTm-13.
+    # total: ChromaDB no expone hnsw:random_seed (deuda #3 en CLAUDE.md).
     hnsw_num_threads: int = 1
 
     # Knowledge graph (LIGHT_RAG)
-    kg_max_hops: int = 1  # DAM-7: 1-hop como el original, configurable via KG_MAX_HOPS
+    kg_max_hops: int = 1  # 1-hop como el paper original
     kg_max_text_chars: int = 3000
     kg_max_entities: int = 0
-    kg_cache_dir: str = ""  # Directorio para persistir KG entre runs (DTm-34)
+    kg_cache_dir: str = ""
     kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
-    kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call (DTm-66)
-    kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction (DTm-67)
-    kg_gleaning_rounds: int = 0  # DAM-6: rounds de re-extraccion (0 = desactivado)
+    kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call
+    kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction
+    kg_gleaning_rounds: int = 0  # rounds de re-extraccion (0 = desactivado)
     lightrag_mode: str = "hybrid"  # Modos del paper: "hybrid" (default), "local", "global", "naive"
-    kg_max_neighbors_per_entity: int = 5  # Divergencia #9: 1-hop neighbors por entidad resuelta
+    kg_max_neighbors_per_entity: int = 5  # 1-hop neighbors por entidad resuelta
 
     # Chunks enviados al LLM para generacion (post KG-scoring).
     # Paper: CHUNK_TOP_K=20 (con GPT-4o-mini). El KG ya rankea los chunks
-    # por reference-count scoring; este parametro selecciona los top-N para
-    # generacion, analogo a reranker.top_n en SV.
+    # por scoring agregado `1/(1+rank) × similarity [× edge_weight]`; este
+    # parametro selecciona los top-N para generacion, analogo a
+    # reranker.top_n en SimpleVector.
     # 0 = usar retrieval_k (todos los docs van a generacion).
     lightrag_generation_top_n: int = 0
 
-    # DAM-4: LLM synthesis para merge de descripciones de entidades multi-doc.
-    kg_description_synthesis: bool = False  # A5.1: activar LLM synthesis
+    # LLM synthesis para merge de descripciones de entidades multi-doc.
+    kg_description_synthesis: bool = False
     kg_synthesis_char_threshold: int = 200  # chars minimos para trigger LLM synthesis
 
     # Divergencia #10: chunk high-level keywords VDB (tercer canal del path

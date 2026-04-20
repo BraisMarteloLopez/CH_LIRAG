@@ -86,7 +86,7 @@ class RetrievalExecutor:
                 return retriever.retrieve(query_text, top_k=top_k)
 
             def _check_strategy(result) -> None:
-                """Detecta discrepancia entre estrategia configurada y ejecutada (DTm-38)."""
+                """Detecta discrepancia entre estrategia configurada y ejecutada."""
                 actual = result.strategy_used.name
                 expected = configured_strategy.name
                 if actual != expected:
@@ -98,16 +98,16 @@ class RetrievalExecutor:
                             f"la estrategia configurada."
                         )
 
-            # Paper LightRAG no usa reranker — cross-encoder single-hop
-            # penaliza docs multi-hop del KG (divergencia #6).
+            # Paper LightRAG no usa reranker — el cross-encoder single-hop
+            # penalizaria los docs multi-hop que aporta el KG.
             use_reranker = (
                 self._reranker
                 and configured_strategy != RetrievalStrategy.LIGHT_RAG
             )
             if use_reranker:
                 fetch_k = self._config.reranker.fetch_k or (self._config.reranker.top_n * 3)
-                # Garantizar que fetch_k >= retrieval_k para que las metricas
-                # pre-rerank tengan suficientes candidatos (DTm-35).
+                # Garantizar fetch_k >= retrieval_k para que las metricas
+                # pre-rerank tengan suficientes candidatos.
                 fetch_k = max(fetch_k, retrieval_k)
                 logger.debug(
                     f"  fetch_k={fetch_k} (retrieval_k={retrieval_k}, "
@@ -128,7 +128,7 @@ class RetrievalExecutor:
                     top_n=self._config.reranker.top_n,
                 )
 
-                # FIX DT-7: detectar fallback silencioso del reranker
+                # Detectar fallback silencioso del reranker.
                 reranked_ok = reranked.metadata.get("reranked", True)
                 if not reranked_ok:
                     self._rerank_failures += 1
@@ -146,8 +146,8 @@ class RetrievalExecutor:
                     retrieval_time_ms=reranked.retrieval_time_ms,
                     generation_doc_ids=reranked.doc_ids,
                     generation_contents=reranked.contents,
-                    # FIX DT-5: almacenar IDs de todos los candidatos pre-rerank
-                    # para trazabilidad post-hoc (solo IDs, ~3KB/query)
+                    # Almacenar IDs de candidatos pre-rerank para
+                    # trazabilidad post-hoc (~3KB/query).
                     pre_rerank_candidate_ids=full_result.doc_ids,
                     retrieval_metadata=full_result.metadata,
                 ), reranked_ok
@@ -385,7 +385,7 @@ def format_structured_context_with_stats(
 
 
 def is_kg_budget_cap_triggered(max_length: int, mode: str) -> bool:
-    """Observable de divergencia #4+5: cap al 50% del presupuesto total disparado.
+    """Indica si el cap del 50% del presupuesto KG se dispara.
 
     Retorna `True` si la suma de budgets brutos KG (entity + relation segun
     el modo) excede `max_length // 2` y por tanto se escalaron

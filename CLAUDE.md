@@ -44,7 +44,7 @@ Ver [`README.md`](README.md) para setup, ejecucion, tests y preflight.
 
 - **Config via .env**: toda la parametrizacion en `sandbox_mteb/.env`, leida por `MTEBConfig.from_env()` una sola vez. Sub-configs delegadas a `InfraConfig`, `RerankerConfig`, `RetrievalConfig` en shared/. `MTEBConfig.validate()` propaga validacion a sub-configs
 - **Factory pattern**: `get_retriever(config, embedding_model)` en `shared/retrieval/__init__.py` crea el retriever correcto
-- **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas. `HYBRID_PLUS` fue eliminada (DTm-83)
+- **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
 - **Tests**: `conftest.py` mockea modulos de infra (boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Mocks siempre a nivel de funcion, nunca modulos enteros
 - **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
@@ -79,8 +79,8 @@ Diferencias entre esta implementacion y el [LightRAG original](https://github.co
 |---|---|---|---|
 | 10 | High-level keywords por chunk durante indexacion (piggyback) | **Presencia validada; calidad NO validada** ⚠️ | Canal arquitectonicamente presente: `retrieval_metadata.kg_chunk_keyword_matches > 0` en 35/35 queries. **Riesgo**: el paper hace llamada LLM dedicada por chunk; aqui las keywords se emiten en la misma llamada que entities/relations para ahorrar ~50% del coste. Coste teorico: el LLM puede emitir keywords genericas ("event", "person", "document") en vez de temas reales del chunk — HotpotQA es ciego a esta degradacion porque el canal vector directo satura el retrieval. **Cuando importa**: P2 (catalogo especializado 10-50 PDFs) es el caso donde el canal high-level es el unico que opera sobre conceptos que el embedding SI conoce; si piggyback lo degrada silenciosamente, se rompe la pata diferencial de LightRAG. **Bloqueante antes de P2, no de P0.** Accion pendiente: (1) observable de calidad de keywords (diversidad Jaccard intra-tema, ratio genericas/especificas via IDF intra-corpus); (2) si muestra degradacion, exponer toggle `KG_CHUNK_KEYWORDS_DEDICATED_CALL=true` |
 
-### Hallazgo abierto
-— "Hallazgo abierto: gen_*=0, el generador no propaga [ref:N] al usuario. Faithfulness intacta. Mejora pendiente antes de P0 si se quiere respuesta anclada"
+### Hallazgo previo resuelto
+— `gen_*=0` (generador no propagaba `[ref:N]` al usuario) diagnosticado como prompt gap: `GENERATION_PROMPTS["hotpotqa"]["system"]` no instruia preservar citas. Corregido añadiendo instruccion explicita al system prompt (`sandbox_mteb/config.py:289`). Verificar en proximo run que `citation_refs_gen_valid > 0` y `citation_refs_gen_out_of_range = 0`.
 
 ### Divergencias menores (cosmeticas / no funcionales)
 
@@ -115,7 +115,7 @@ Los `EvaluationRun` exportados a JSON incluyen en `config_snapshot._runtime` dos
 jq '.config_snapshot._runtime.judge_fallback_stats' <run_export.json>
 ```
 
-**`kg_synthesis_stats`** (solo `LIGHT_RAG` con `KG_SYNTHESIS_ENABLED=true`): contadores (`invocations`, `successes`, `errors`, `empty_returns`, `truncations`, `timeouts`, `fallback_rate`) + timing per-invocacion: `p50/p95/max_total_ms` (wall-clock completo), `p50/p95/max_queue_ms` (espera del semaforo `NIM_MAX_CONCURRENT_REQUESTS`), `p50/p95/max_llm_ms` (llamada al NIM tras acquire). `n_total_samples`/`n_queue_samples`/`n_llm_samples` reportan cuantas invocaciones contribuyeron — queue/llm pueden tener menos cuando un timeout cancelo la coroutine antes. **Umbrales**: `fallback_rate > 10%` bloquea. **Diagnostico**: `p50_queue_ms` alto → subir `NIM_MAX_CONCURRENT_REQUESTS` o bajar paralelismo; `p50_llm_ms` alto → reducir `KG_SYNTHESIS_MAX_CHARS` o subir `KG_SYNTHESIS_TIMEOUT_S`.
+**`kg_synthesis_stats`** (solo `LIGHT_RAG` con `KG_SYNTHESIS_ENABLED=true`): contadores (`invocations`, `successes`, `errors`, `empty_returns`, `truncations`, `timeouts`, `fallback_rate`) + timing per-invocacion: `p50/p95/max_total_ms` (wall-clock completo), `p50/p95/max_queue_ms` (espera del semaforo `NIM_MAX_CONCURRENT_REQUESTS`), `p50/p95/max_llm_ms` (llamada al NIM tras acquire). `n_total_samples`/`n_queue_samples`/`n_llm_samples` reportan cuantas invocaciones contribuyeron — queue/llm pueden tener menos cuando un timeout cancelo la coroutine antes. **Umbrales**: `fallback_rate > 10%` es senal roja (warning en logs, sin bloqueo activo; guardrail pendiente de implementacion — a dia de hoy solo `judge_fallback_stats` bloquea el run). **Diagnostico**: `p50_queue_ms` alto → subir `NIM_MAX_CONCURRENT_REQUESTS` o bajar paralelismo; `p50_llm_ms` alto → reducir `KG_SYNTHESIS_MAX_CHARS` o subir `KG_SYNTHESIS_TIMEOUT_S`.
 
 ```bash
 jq '.config_snapshot._runtime.kg_synthesis_stats' <run_export.json>
@@ -165,7 +165,7 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 - `shared/config_base.py` — la importan todos los modulos, cambios rompen todo
 - Tests de integracion (`tests/integration/`) — dependen de NIM + MinIO reales
 - `requirements.lock` — es un pin de produccion, no tocar sin razon
-- `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio (DTm-45). Parece complejo pero es necesario
+- `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio. Parece complejo pero es necesario
 
 ## Limitaciones de claude_code sobre este proyecto
 

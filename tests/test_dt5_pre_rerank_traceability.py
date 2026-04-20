@@ -1,5 +1,5 @@
 """
-Tests DT-5: Trazabilidad de candidatos pre-rerank via RetrievalExecutor.
+Trazabilidad de candidatos pre-rerank via RetrievalExecutor.
 
 Verifica que:
   - Con reranker: pre_rerank_candidate_ids contiene el pool completo

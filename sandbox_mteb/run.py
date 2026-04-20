@@ -70,7 +70,7 @@ def _setup_console_capture(results_dir: Path, strategy: str) -> Path:
 
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    # DT-3: configure_logging lee LOG_FORMAT del entorno ("text" o "jsonl")
+    # configure_logging lee LOG_FORMAT del entorno ("text" o "jsonl")
     configure_logging(level=level)
     # Reducir ruido de libs externas
     logging.getLogger("boto3").setLevel(logging.WARNING)
@@ -106,7 +106,7 @@ def parse_args() -> argparse.Namespace:
         "--resume",
         default=None,
         metavar="RUN_ID",
-        help="Reanudar un run previo desde su checkpoint (DTm-36)",
+        help="Reanudar un run previo desde su checkpoint",
     )
     return parser.parse_args()
 

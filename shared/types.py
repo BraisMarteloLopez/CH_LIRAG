@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import math
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -259,10 +258,10 @@ class QueryRetrievalDetail:
     generation_doc_ids: List[str] = field(default_factory=list)
     generation_contents: List[str] = field(default_factory=list)
 
-    # FIX DT-5: IDs de los candidatos que el reranker recibio (PRE_FUSION_K).
-    # Solo IDs, sin contenidos (~3KB/query). Permite verificar post-hoc
-    # que generation_doc_ids provienen del pool de candidatos, y analizar
-    # que posiciones originales fueron promovidas por el reranker.
+    # IDs de los candidatos que el reranker recibio (PRE_FUSION_K). Solo
+    # IDs, sin contenidos (~3KB/query). Permite verificar post-hoc que
+    # generation_doc_ids provienen del pool de candidatos, y analizar que
+    # posiciones originales fueron promovidas por el reranker.
     pre_rerank_candidate_ids: List[str] = field(default_factory=list)
 
     # Metadata del retriever (strategy-specific). Ej: LIGHT_RAG graph stats.
@@ -455,13 +454,13 @@ class QueryEvaluationResult:
             result["generation_doc_ids"] = self.retrieval.generation_doc_ids
             result["generation_recall"] = round(self.retrieval.generation_recall, 4)
             result["generation_hit"] = round(self.retrieval.generation_hit, 4)
-        # FIX DT-5: incluir candidatos pre-rerank para trazabilidad
+        # Incluir candidatos pre-rerank para trazabilidad
         if self.retrieval.pre_rerank_candidate_ids:
             result["pre_rerank_candidate_ids"] = self.retrieval.pre_rerank_candidate_ids
-        # FIX DT-7: incluir metadata (contiene reranked status, etc.)
+        # Incluir metadata (contiene reranked status, etc.)
         if self.metadata:
             result["metadata"] = self.metadata
-        # Deuda #15 (cerrada): bloque filtrado de retrieval_metadata para
+        # Bloque filtrado de retrieval_metadata para
         # auditar per-query el comportamiento LIGHT_RAG. Entidades y
         # relaciones se serializan como conteos (listas completas son
         # pesadas en JSON); kg_fallback/kg_synthesis_used/_error permiten
@@ -638,9 +637,8 @@ def get_dataset_config(dataset_name: str) -> Dict[str, Any]:
 @runtime_checkable
 class LLMJudgeProtocol(Protocol):
     """Protocolo para LLM que evalua metricas y genera contextos.
-    
-    FIX DT-4: max_tokens agregado para compatibilidad con
-    generacion y metricas (limita tokens de respuesta).
+
+    max_tokens limita tokens de respuesta (compartido por generacion y metricas).
     """
 
     def invoke(
@@ -656,11 +654,7 @@ class LLMJudgeProtocol(Protocol):
 
 @runtime_checkable
 class EmbeddingModelProtocol(Protocol):
-    """Protocolo para modelos de embedding (compatible con LangChain Embeddings).
-    
-    FIX DT-4: centralizado aqui (antes en metrics.py) para que retrieval/,
-    vector_store.py y metrics.py importen del mismo lugar.
-    """
+    """Protocolo para modelos de embedding (compatible con LangChain Embeddings)."""
 
     def embed_query(self, text: str) -> List[float]: ...
 

@@ -141,7 +141,7 @@ class RerankerConfig:
     base_url: str = ""
     model_name: str = ""
     top_n: int = 20
-    fetch_k: int = 0  # Candidatos a recuperar para el reranker (0 = top_n * 3) (DTm-35)
+    fetch_k: int = 0  # Candidatos a recuperar para el reranker (0 = top_n * 3)
 
     @classmethod
     def from_env(cls) -> "RerankerConfig":

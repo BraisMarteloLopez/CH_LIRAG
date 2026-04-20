@@ -1,5 +1,5 @@
 """
-Test DT-7 #8: metadata["reranked"] se propaga al detail CSV.
+metadata["reranked"] se propaga al detail CSV.
 Columna 'reranked' con valor True, False, o vacio segun el caso.
 """
 import csv

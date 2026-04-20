@@ -1,5 +1,5 @@
 """
-Tests DTm-38: Strategy validation guardrail.
+Tests del guardrail de validacion de estrategia.
 
 Cobertura:
   S1. strategy_used=SIMPLE_VECTOR cuando LightRAGRetriever no tiene grafo activo.
@@ -7,7 +7,7 @@ Cobertura:
   S3. metadata["graph_active"] refleja estado del grafo en ambos casos.
   S4. RetrievalExecutor detecta strategy mismatch (config=LIGHT_RAG, actual=SIMPLE_VECTOR).
   S5. config_snapshot incluye strategy_actual y strategy_mismatches.
-  S6. fetch_k >= retrieval_k cuando reranker activo (DTm-35).
+  S6. fetch_k >= retrieval_k cuando reranker activo.
 """
 
 from unittest.mock import MagicMock, patch
@@ -236,7 +236,7 @@ def test_config_snapshot_no_mismatch():
 
 
 # =============================================================================
-# S6: fetch_k >= retrieval_k (DTm-35)
+# S6: fetch_k >= retrieval_k
 # =============================================================================
 
 def test_fetch_k_at_least_retrieval_k():
