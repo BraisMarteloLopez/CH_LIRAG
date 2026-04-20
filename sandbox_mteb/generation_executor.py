@@ -76,8 +76,8 @@ def _percentile(values: List[float], p: float) -> float:
 class _KGSynthesisTracker:
     """Contador + timing thread-safe de eventos de KG synthesis.
 
-    Timing (deuda #16): ademas de contadores, acumula tres listas paralelas
-    de duraciones por invocacion:
+    Ademas de contadores, acumula tres listas paralelas de duraciones por
+    invocacion:
       - `total_ms`: tiempo total de `_synthesize_kg_context_async` desde
         que entra a `asyncio.wait_for` hasta que decide el outcome
         (exito/truncacion/empty/error/timeout). Incluye cola + LLM + parsing.
@@ -88,7 +88,7 @@ class _KGSynthesisTracker:
 
     `snapshot()` expone p50/p95/max para cada lista — permite discriminar
     saturacion de cola vs llamadas LLM lentas en runs con `fallback_rate`
-    alto (ver HANDOFF paso 3).
+    alto (diagnostico documentado en CLAUDE.md, seccion observabilidad).
     """
 
     def __init__(self) -> None:
@@ -141,9 +141,9 @@ class _KGSynthesisTracker:
                 "timeouts": self._counters.get("timeouts", 0),
                 "fallback_rate": (fallbacks / n) if n else 0.0,
             }
-            # Timing por categoria (deuda #16). `n_samples` expone cuantas
-            # invocaciones poblaron cada lista (queue/llm pueden faltar en
-            # timeouts segun donde haya sido cancelada la call).
+            # Timing por categoria. `n_samples` expone cuantas invocaciones
+            # poblaron cada lista (queue/llm pueden faltar en timeouts segun
+            # donde haya sido cancelada la call).
             for key, values in self._timings.items():
                 prefix = key.replace("_ms", "")
                 stats[f"p50_{prefix}_ms"] = round(
@@ -169,7 +169,7 @@ _kg_synthesis_tracker = _KGSynthesisTracker()
 
 
 def get_kg_synthesis_stats() -> Dict[str, Any]:
-    """Snapshot del tracker de KG synthesis (divergencia LightRAG #2).
+    """Snapshot del tracker de KG synthesis.
 
     Claves devueltas:
       - invocations: queries donde se intento la synthesis
@@ -251,8 +251,8 @@ class GenerationExecutor:
         dataset_name: str,
     ) -> GenMetricsResult:
         """Procesa una query: generacion async + metricas async."""
-        # F.3/DAM-8: Contexto estructurado si hay datos KG disponibles.
-        # Divergencia #7: modo LightRAG determina presupuestos por seccion.
+        # Contexto estructurado si hay datos KG disponibles.
+        # El modo LightRAG determina presupuestos por seccion.
         kg_entities = retrieval_detail.retrieval_metadata.get("kg_entities")
         kg_relations = retrieval_detail.retrieval_metadata.get("kg_relations")
         has_kg_data = bool(kg_entities or kg_relations)
@@ -268,11 +268,10 @@ class GenerationExecutor:
                 self._max_context_chars,
                 mode=lightrag_mode,
             )
-            # Observable de divergencia #4+5: registrar si el cap al 50%
-            # del budget total escalo las secciones KG. Con la config por
-            # defecto del paper y modelos de contexto >= 112000 chars el
-            # cap no dispara; con ventanas mas pequenas discrimina
-            # "chunks starved por KG" vs "budgets del paper intactos".
+            # Registrar si el cap al 50% del budget total escalo las
+            # secciones KG. Con modelos de contexto >= 112000 chars el cap
+            # no dispara; con ventanas mas pequenas discrimina "chunks
+            # starved por KG" vs "budgets intactos".
             retrieval_detail.retrieval_metadata["kg_budget_cap_triggered"] = (
                 is_kg_budget_cap_triggered(self._max_context_chars, lightrag_mode)
             )
@@ -282,9 +281,9 @@ class GenerationExecutor:
                 self._max_context_chars,
             )
 
-        # Divergencia LightRAG #2: synthesis del contexto KG.
-        # Solo si hay datos KG y la flag esta activa. Si la synthesis falla,
-        # degradamos al contexto estructurado original (no rompemos el run).
+        # Synthesis del contexto KG: reescribe las secciones como narrativa
+        # coherente via LLM. Solo si hay datos KG y la flag esta activa. Si
+        # la synthesis falla, degradamos al contexto estructurado original.
         # `generation_context` es lo que ve el LLM generador.
         # `structured_context` es siempre el original; faithfulness se evalua
         # contra este para penalizar cualquier alucinacion introducida por
@@ -392,8 +391,8 @@ class GenerationExecutor:
     ) -> Tuple[str, Optional[str]]:
         """Reescribe el contexto KG multi-seccion como narrativa coherente.
 
-        Divergencia LightRAG #2. Usa el LLM (`self._llm_service`) con un
-        prompt query-aware que pide narrativa con citas [ref:N] preservadas.
+        Usa el LLM (`self._llm_service`) con un prompt query-aware que pide
+        narrativa con citas [ref:N] preservadas.
 
         Degradacion graceful: si el LLM falla, devuelve string vacio o
         timeout, hacemos fallback al `structured_context` original. El run
@@ -408,7 +407,7 @@ class GenerationExecutor:
                 uno de "timeout" | "error" | "empty". Usado por
                 `_process_single_async` para poblar
                 `retrieval_metadata.kg_synthesis_used` /
-                `kg_synthesis_error` per-query (deuda #15).
+                `kg_synthesis_error` per-query.
         """
         _kg_synthesis_tracker.record("invocations")
 
@@ -419,9 +418,9 @@ class GenerationExecutor:
             structured_context=structured_context,
         )
 
-        # Deuda #16: timing per-invocacion para discriminar saturacion de
-        # cola vs llamada LLM lenta. `timing_out` se popula dentro de
-        # invoke_async cuando llega al semaforo / completa la llamada.
+        # Timing per-invocacion para discriminar saturacion de cola vs
+        # llamada LLM lenta. `timing_out` se popula dentro de invoke_async
+        # cuando llega al semaforo / completa la llamada.
         timing_out: Dict[str, float] = {}
         t_start = time.perf_counter()
 
@@ -574,7 +573,7 @@ class GenerationExecutor:
                 )
                 secondary.append(r)
             except Exception as e:
-                # FIX DTm-5: registrar fallo y propagar MetricResult con error.
+                # Registrar fallo y propagar MetricResult con error.
                 logger.warning(
                     f"Metrica secundaria {mt.value} fallo: {e} "
                     f"(query: '{query_text[:80]}...')"

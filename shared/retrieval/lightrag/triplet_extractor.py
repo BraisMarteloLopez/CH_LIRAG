@@ -24,7 +24,7 @@ from .knowledge_graph import KGEntity, KGRelation
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# CONSTANTES DE VALIDACION (DTm-16)
+# CONSTANTES DE VALIDACION
 # =============================================================================
 
 from shared.constants import KG_MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS
@@ -127,17 +127,16 @@ class TripletExtractor:
       1. extract_from_doc(): tripletas de un documento (indexacion)
       2. extract_query_keywords(): keywords de una query (retrieval)
 
-    Batch processing con semaphore para concurrencia controlada.
-    Coroutines se crean en chunks para evitar presion de memoria
-    con corpus grandes (DTm-22).
+    Batch processing con semaphore para concurrencia controlada. Coroutines
+    se crean en chunks para evitar presion de memoria con corpus grandes.
 
-    Estadisticas de extraccion accesibles via get_stats() (DTm-33).
+    Estadisticas de extraccion accesibles via get_stats().
     """
 
     # Multiplicador para calcular batch de coroutines a partir del semaforo
     # HTTP del LLM. Con semaforo=32 y mult=4, batch=128 coroutines vivas
-    # simultaneamente (DTm-25). Reduce presion de memoria sin afectar
-    # throughput (el semaforo HTTP es el cuello de botella real).
+    # simultaneamente. Reduce presion de memoria sin afectar throughput
+    # (el semaforo HTTP es el cuello de botella real).
     _CONCURRENCY_MULTIPLIER = 4
     _MIN_BATCH_SIZE = 64
 
@@ -152,12 +151,11 @@ class TripletExtractor:
         self._max_text_chars = max_text_chars
         self._keyword_max_tokens = keyword_max_tokens
         self._extraction_max_tokens = extraction_max_tokens
-        # DTm-25: batch size adaptativo al semaforo HTTP
+        # Batch size adaptativo al semaforo HTTP del LLM.
         self._batch_size = max(
             self._MIN_BATCH_SIZE,
             llm_service._max_concurrent * self._CONCURRENCY_MULTIPLIER,
         )
-        # Estadisticas de extraccion (DTm-33)
         self._stats: Dict[str, int] = {
             "docs_processed": 0,
             "docs_success": 0,
@@ -173,7 +171,7 @@ class TripletExtractor:
         }
 
     def get_stats(self) -> Dict[str, int]:
-        """Devuelve estadisticas acumuladas de extraccion (DTm-33)."""
+        """Devuelve estadisticas acumuladas de extraccion."""
         return dict(self._stats)
 
     def reset_stats(self) -> None:
@@ -366,13 +364,13 @@ class TripletExtractor:
         text: str,
         previous_entities: List[KGEntity],
     ) -> Tuple[List[KGEntity], List[KGRelation]]:
-        """Gleaning: re-extraccion para capturar entidades perdidas (DAM-6).
+        """Gleaning: re-extraccion para capturar entidades perdidas.
 
         Envia el texto con un prompt de continuacion que lista las entidades
         ya extraidas y pide al LLM que busque las que faltan. El prompt de
-        gleaning no solicita keywords (divergencia #10): la extraccion de
-        chunk keywords se hace en la pasada principal; el gleaning solo
-        complementa entidades/relaciones perdidas.
+        gleaning no solicita `high_level_keywords`: el canal de chunk
+        keywords (divergencia #10) se extrae en la pasada principal; el
+        gleaning solo complementa entidades/relaciones perdidas.
 
         Referencia: gleaning loop en HKUDS/LightRAG operate.py.
         """
@@ -402,11 +400,10 @@ class TripletExtractor:
     # MULTI-DOC BATCH EXTRACTION
     # -------------------------------------------------------------------------
 
-    # Default max documents per LLM call in batch mode (DTm-67).
-    # Used as fallback if batch_docs_per_call=0 is passed. Normally
-    # overridden by KG_BATCH_DOCS_PER_CALL from config (default 5).
-    # Reduced from 10 to 5: thinking-mode models (e.g. nemotron-3-nano)
-    # exhaust output tokens on <think> tags with large batches.
+    # Fallback default si batch_docs_per_call=0. Normalmente lo sobrescribe
+    # KG_BATCH_DOCS_PER_CALL desde config (default 5). Subir solo si el
+    # modelo no es thinking-mode: con nemotron-3-nano, batches >5 agotan
+    # tokens en <think> antes de emitir el JSON.
     _DEFAULT_BATCH_DOCS_PER_CALL = 5
 
     def _group_docs_for_batch(
@@ -497,7 +494,6 @@ class TripletExtractor:
                 doc_id = entry.get("doc_id", "")
                 if not doc_id:
                     continue
-                # DTm-68: pass dict directly, no re-serialization
                 entities, relations, keywords = self._build_entities_relations(entry, doc_id)
                 results[doc_id] = (entities, relations, keywords)
 
@@ -543,10 +539,8 @@ class TripletExtractor:
 
         # Multi-doc batch call
         prompt = self._build_batch_prompt(non_empty)
-        # DTm-66: scale max_tokens per doc. Thinking-mode models need
-        # headroom for <think> tags, so we allow up to 3x single-doc limit
-        # (e.g. 4096 * 3 = 12288) instead of the old 2x cap that caused
-        # thinking exhaustion with batches of 5+ docs.
+        # Escalar max_tokens por doc dejando headroom para <think> tags de
+        # thinking-mode models (hasta 3x el limite single-doc).
         max_tokens = min(
             self._extraction_max_tokens * len(non_empty),
             self._extraction_max_tokens * 3,
@@ -582,7 +576,7 @@ class TripletExtractor:
                         results[doc_id] = ([], [], [])
                 return results
 
-            # DTm-54: batch parsing failed — fallback to single-doc (WARNING, not debug)
+            # Batch parsing failed — fallback to single-doc (WARNING, not debug).
             logger.warning(
                 f"Batch parse failed for {len(non_empty)} docs, "
                 f"falling back to single-doc extraction"
@@ -622,7 +616,7 @@ class TripletExtractor:
         if batch_docs_per_call <= 0:
             batch_docs_per_call = self._DEFAULT_BATCH_DOCS_PER_CALL
 
-        # G.5/DTm-60: reset stats al inicio para evitar acumulacion entre llamadas
+        # Reset stats al inicio para evitar acumulacion entre llamadas.
         self.reset_stats()
         t0 = time.perf_counter()
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
@@ -669,7 +663,7 @@ class TripletExtractor:
         total_relations = sum(len(v[1]) for v in results.values())
         total_keywords = sum(len(v[2]) for v in results.values())
         docs_with_keywords = sum(1 for v in results.values() if v[2])
-        # DTm-33: reportar fallos en el log del batch
+        # Reportar fallos en el log del batch.
         stats = self.get_stats()
         failed = stats["docs_failed"]
         empty_input = stats["docs_empty_input"]
@@ -728,7 +722,7 @@ class TripletExtractor:
                     f"(respuesta comenzaba con: {text[:80]!r})"
                 )
 
-            _MAX_KEYWORDS_PER_LEVEL = 20  # G.6/DTm-61: cap para respuestas patologicas
+            _MAX_KEYWORDS_PER_LEVEL = 20  # cap defensivo frente a respuestas patologicas
             low = [str(k) for k in data.get("low_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
             high = [str(k) for k in data.get("high_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
             return low, high
@@ -776,10 +770,10 @@ class TripletExtractor:
             Lista de (low_level, high_level) en mismo orden que queries.
         """
         t0 = time.perf_counter()
-        # DTm-48: list comprehension (no mutable default sharing)
+        # List comprehension para evitar mutable default sharing.
         results: List[Tuple[List[str], List[str]]] = [([], []) for _ in range(len(queries))]
 
-        # G.4/DTm-58: dedup queries identicas para evitar LLM calls duplicadas
+        # Dedup queries identicas para evitar LLM calls duplicadas.
         unique_queries: Dict[str, int] = {}  # query_text -> first index
         dedup_map: Dict[int, int] = {}  # idx -> first_idx (for duplicates)
         for i, q in enumerate(queries):
@@ -815,7 +809,7 @@ class TripletExtractor:
                 idx, low, high = r
                 results[idx] = (low, high)
 
-        # G.4: copiar resultados a queries duplicadas
+        # Copiar resultados a queries duplicadas.
         for dup_idx, src_idx in dedup_map.items():
             results[dup_idx] = results[src_idx]
 
