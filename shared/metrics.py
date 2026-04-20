@@ -742,7 +742,7 @@ def _extract_score_fallback_with_status(
 
 
 def _extract_score_fallback(response_text: str) -> float:
-    """Wrapper que descarta el status. Conservado para compat (tests DT-9)."""
+    """Wrapper que descarta el status. Conservado para compat con tests antiguos."""
     score, _ = _extract_score_fallback_with_status(response_text)
     return score
 

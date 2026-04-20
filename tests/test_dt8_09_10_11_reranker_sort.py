@@ -1,7 +1,8 @@
 """
-Test DT-8 #9:  Docs en orden ascendente -> sort los reordena descendente.
-Test DT-8 #10: Docs con scores identicos -> no falla.
-Test DT-8 #11: Doc sin relevance_score -> default 0.0, queda al final.
+Reranker sort:
+  - Docs en orden ascendente -> sort los reordena descendente.
+  - Docs con scores identicos -> no falla.
+  - Doc sin relevance_score -> default 0.0, queda al final.
 """
 from unittest.mock import MagicMock
 

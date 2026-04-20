@@ -118,7 +118,7 @@ def build_run(
                 > qr.retrieval.recall_at_k.get(retrieval_k, 0.0)
             )
 
-    # Generacion promedio - INCLUYE ZEROS (fix DT-002)
+    # Generacion promedio - INCLUYE ZEROS (los fallos cuentan como 0, no se excluyen del promedio)
     avg_gen = None
     gen_zero_count = 0
     gen_nonzero_count = 0

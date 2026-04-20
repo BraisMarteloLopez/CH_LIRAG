@@ -1,5 +1,5 @@
 """
-Test DT-7: Sin reranker -> reranked_status=None, rerank_failures=None.
+Sin reranker -> reranked_status=None, rerank_failures=None.
 """
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy, RetrievalConfig
 from shared.config_base import InfraConfig, RerankerConfig
