@@ -7,7 +7,7 @@ Sistema de evaluacion RAG para benchmarking de pipelines de recuperacion y gener
 
 **LIGHT_RAG** implementa la arquitectura de [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) (EMNLP 2025, [arxiv](https://arxiv.org/abs/2410.05779)) con adaptaciones operativas (cache KG a disco, fallbacks, observabilidad). LightRAG extrae via LLM entidades, relaciones y high-level keywords por chunk para construir un knowledge graph + indices tematicos; las queries se resuelven en dos niveles (entidades concretas y temas abstractos) contra tres VDBs dedicadas — Entity VDB (entidades), Relationship VDB (relaciones) y Chunk Keywords VDB (temas high-level por chunk) — cuyos resultados agregan al mismo scoring de chunks. Chunks seleccionados via `source_doc_ids` del KG y matching directo a temas (paper-aligned), con fallback a vector search directo cuando el KG no produce doc_ids. Tras el retrieval, una capa de synthesis LLM (query-aware, `KG_SYNTHESIS_ENABLED`) reescribe el contexto multi-seccion (entidades + relaciones + chunks) como narrativa coherente antes de la generacion final.
 
-El harness en `sandbox_mteb/` (datasets MTEB/BeIR + NVIDIA NIM) es **instrumento de verificacion temporal** — no es el producto final (en proceso de desarrollo).
+El harness en `sandbox_mteb/` (datasets MTEB/BeIR) es **instrumento de verificacion temporal** — no es el producto final (en proceso de desarrollo).
 
 **Documentacion tecnica y guia de desarrollo**: [`CLAUDE.md`](CLAUDE.md) (fuente unica para convenciones, divergencias con el paper, deuda tecnica, fases del proyecto, observabilidad, configuracion).
 **Referencia de tests**: [`TESTS.md`](TESTS.md).
