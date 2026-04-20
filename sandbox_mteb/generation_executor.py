@@ -539,6 +539,10 @@ class GenerationExecutor:
                     context=context,
                 )
         except Exception as e:
+            logger.warning(
+                "Primary metric %s calculation failed: %s",
+                ds_config["primary_metric"].value, e,
+            )
             primary = MetricResult(
                 metric_type=ds_config["primary_metric"],
                 value=0.0,
