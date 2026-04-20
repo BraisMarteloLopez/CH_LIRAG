@@ -624,7 +624,7 @@ def test_co_occurrence_caps_pairs_per_doc():
 
 
 # =============================================================================
-# get_entity / get_neighbors_ranked (divergencia #9)
+# get_entity / get_neighbors_ranked
 # =============================================================================
 
 

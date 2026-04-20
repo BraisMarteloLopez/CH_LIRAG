@@ -1,5 +1,5 @@
 # =============================================================================
-# requirements.lock — Versiones exactas para reproducibilidad (DTm-28)
+# requirements.lock — Versiones exactas para reproducibilidad.
 # =============================================================================
 # Generado con: pip freeze (entorno completo)
 # Python 3.11.14
