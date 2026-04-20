@@ -105,8 +105,6 @@ Diferencias entre esta implementacion y el [LightRAG original](https://github.co
 | 17 | Parametros fijos del canal de chunk keywords (div #10) | **BAJO** | 3 parametros hardcoded en `triplet_extractor.py`/`retriever.py`: `MAX_CHUNK_KEYWORDS_PER_DOC=10`, `MIN/MAX_CHUNK_KEYWORD_LEN=2/80`, `_CHUNK_KEYWORDS_VDB_MAX_DISTANCE=0.8`. Solo `KG_CHUNK_KEYWORDS_ENABLED`/`_TOP_K` expuestos | Exponer al `.env` solo si un run real demuestra que algun caso cae fuera de defaults |
 | 18 | Observable de citaciones #7 acoplado al prompt de synthesis | **BAJO** | Parser usa regex `\[ref:(\d+)\]` alineado con `KG_SYNTHESIS_SYSTEM_PROMPT`. Si alguien cambia formato (p.ej. `(ref N)` o `[ref:3,4,5]`), los 14 campos dejan de medir lo que dicen. Acoplamiento semantico, sin test automatico | Al tocar `KG_SYNTHESIS_SYSTEM_PROMPT`, revisar parser y actualizar regex `_VALID_RE`/`_CANDIDATE_RE` en sync |
 
-**Items resueltos (historico)**: #13 (guard reranker para LIGHT_RAG), #15 (per-query `retrieval_metadata` en exports JSON/CSV), #16 (timeouts synthesis en corpus pequeno: instrumentacion timing + config calibrada — ver "Proximos pasos / Pre-P0").
-
 ## Observabilidad de runs
 
 Los `EvaluationRun` exportados a JSON incluyen en `config_snapshot._runtime` dos bloques de stats para auditoria post-run:
