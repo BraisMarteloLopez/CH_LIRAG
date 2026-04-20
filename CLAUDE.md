@@ -80,7 +80,7 @@ Diferencias entre esta implementacion y el [LightRAG original](https://github.co
 | 10 | High-level keywords por chunk durante indexacion (piggyback) | **Presencia validada; calidad NO validada** ⚠️ | Canal arquitectonicamente presente: `retrieval_metadata.kg_chunk_keyword_matches > 0` en 35/35 queries. **Riesgo**: el paper hace llamada LLM dedicada por chunk; aqui las keywords se emiten en la misma llamada que entities/relations para ahorrar ~50% del coste. Coste teorico: el LLM puede emitir keywords genericas ("event", "person", "document") en vez de temas reales del chunk — HotpotQA es ciego a esta degradacion porque el canal vector directo satura el retrieval. **Cuando importa**: P2 (catalogo especializado 10-50 PDFs) es el caso donde el canal high-level es el unico que opera sobre conceptos que el embedding SI conoce; si piggyback lo degrada silenciosamente, se rompe la pata diferencial de LightRAG. **Bloqueante antes de P2, no de P0.** Accion pendiente: (1) observable de calidad de keywords (diversidad Jaccard intra-tema, ratio genericas/especificas via IDF intra-corpus); (2) si muestra degradacion, exponer toggle `KG_CHUNK_KEYWORDS_DEDICATED_CALL=true` |
 
 ### Hallazgo abierto
-- **# "Hallazgo abierto: gen_*=0, el generador no propaga [ref:N] al usuario. Faithfulness intacta. Mejora pendiente antes de P0 si se quiere respuesta anclada"
+— "Hallazgo abierto: gen_*=0, el generador no propaga [ref:N] al usuario. Faithfulness intacta. Mejora pendiente antes de P0 si se quiere respuesta anclada"
 
 ### Divergencias menores (cosmeticas / no funcionales)
 
