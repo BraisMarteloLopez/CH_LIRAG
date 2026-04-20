@@ -44,7 +44,7 @@ Ver [`README.md`](README.md) para setup, ejecucion, tests y preflight.
 
 - **Config via .env**: toda la parametrizacion en `sandbox_mteb/.env`, leida por `MTEBConfig.from_env()` una sola vez. Sub-configs delegadas a `InfraConfig`, `RerankerConfig`, `RetrievalConfig` en shared/. `MTEBConfig.validate()` propaga validacion a sub-configs
 - **Factory pattern**: `get_retriever(config, embedding_model)` en `shared/retrieval/__init__.py` crea el retriever correcto
-- **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas. `HYBRID_PLUS` fue eliminada (DTm-83)
+- **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
 - **Tests**: `conftest.py` mockea modulos de infra (boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Mocks siempre a nivel de funcion, nunca modulos enteros
 - **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
@@ -165,7 +165,7 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 - `shared/config_base.py` — la importan todos los modulos, cambios rompen todo
 - Tests de integracion (`tests/integration/`) — dependen de NIM + MinIO reales
 - `requirements.lock` — es un pin de produccion, no tocar sin razon
-- `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio (DTm-45). Parece complejo pero es necesario
+- `_PersistentLoop` en `shared/llm.py` — resuelve binding de event loop asyncio. Parece complejo pero es necesario
 
 ## Limitaciones de claude_code sobre este proyecto
 
