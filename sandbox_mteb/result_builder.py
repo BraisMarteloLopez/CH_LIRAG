@@ -1,8 +1,4 @@
-"""
-Result builder: agrega metricas y construye EvaluationRun.
-
-Extraido de evaluator.py para reducir su tamano (DTm-36 fase 4).
-"""
+"""Result builder: agrega metricas y construye EvaluationRun."""
 
 from __future__ import annotations
 

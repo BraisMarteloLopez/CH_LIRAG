@@ -141,7 +141,7 @@ def batch_embed_queries(
         if model_type == "asymmetric":
             payload["input_type"] = "query"
 
-        # FIX DTm-6: retry por batch antes de abandonar todo el pre-embed.
+        # Retry por batch antes de abandonar todo el pre-embed.
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:

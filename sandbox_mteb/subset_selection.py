@@ -104,7 +104,7 @@ def select_subset_standard(
     corpus_ids = list(dataset.corpus.keys())
     corpus_seed = config.corpus_shuffle_seed
     if corpus_seed is not None:
-        # Instancia aislada para no contaminar RNG global (DTm-32)
+        # Instancia aislada para no contaminar RNG global.
         rng_corpus = random.Random(corpus_seed)
         rng_corpus.shuffle(corpus_ids)
         logger.info(f"  Corpus shuffled con seed={corpus_seed}")

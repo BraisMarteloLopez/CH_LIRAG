@@ -6,15 +6,14 @@ Ubicacion: shared/llm.py
 
 Consolida llm.py + embeddings.py.
 
-Fixes aplicados:
+Notas de diseno:
   - _PersistentLoop: un unico event loop en thread daemon, elimina el ciclo
     crear/destruir loops de asyncio.run() que causaba "Semaphore bound to a
-    different event loop" (DTm-45).
+    different event loop".
   - LLMMetrics._lock: threading.Lock en vez de asyncio.Lock (no hay awaits
     dentro de la seccion critica, y elimina el binding a event loop).
   - run_sync() usa run_coroutine_threadsafe al loop persistente.
-  - Eliminados from_env() y from_settings() (el sandbox construye explicitamente)
-  - load_embedding_model acepta solo parametros explicitos (sin fallback)
+  - load_embedding_model acepta solo parametros explicitos (sin fallback).
 """
 
 import asyncio
@@ -45,7 +44,7 @@ class _ThinkingExhaustedError(ValueError):
 
 
 # =============================================================================
-# PERSISTENT EVENT LOOP (DTm-45)
+# PERSISTENT EVENT LOOP
 # =============================================================================
 
 class _PersistentLoop:

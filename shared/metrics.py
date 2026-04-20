@@ -526,8 +526,8 @@ def _prepare_faithfulness(
     if not context:
         return MetricResult(metric_type=MetricType.FAITHFULNESS, value=0.0, details={"reason": "empty_context"})
 
-    # FIX DT-6: no re-truncar contexto. El caller (evaluator) ya trunco
-    # via _format_context() al limite del modelo.
+    # No re-truncar contexto: el caller (evaluator) ya trunco via
+    # _format_context() al limite del modelo.
     user_prompt = f"""CONTEXT:
 {context}
 
@@ -693,8 +693,8 @@ def _extract_score_fallback_with_status(
     al caller distinguir "score extraido via regex" (senal debil pero real)
     de "ningun score, devolvi el centro" (sesgo silencioso).
 
-    FIX DT-9: Regex anterior capturaba parciales de numeros mayores.
-    Ahora usa word boundaries y patrones explicitos:
+    Usa word boundaries y patrones explicitos para evitar capturar
+    parciales de numeros mayores:
       1. Fraccion N/M (mas especifico)
       2. Decimal 0.X o 1.0 (rango 0-1 directo)
       3. Entero 1-10 con prefijo "score:" (normalizado a 0-1)

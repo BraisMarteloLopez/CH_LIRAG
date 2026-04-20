@@ -61,10 +61,9 @@ class ChromaVectorStore:
         self.batch_size = config.get("EMBEDDING_BATCH_SIZE", 0)
 
         # HNSW num_threads=1 reduce no-determinismo del grafo (elimina
-        # variabilidad de threading). Sin embargo, ChromaDB 0.5-0.6 no soporta
+        # variabilidad de threading). ChromaDB 0.5-0.6 no expone
         # hnsw:random_seed, por lo que la asignacion de niveles HNSW sigue
-        # siendo no-determinista entre runs con distinto collection_name.
-        # Ver DTm-13 en README.md.
+        # siendo no-determinista entre runs (ver CLAUDE.md deuda #3).
         self._hnsw_num_threads = config.get("HNSW_NUM_THREADS", 1)
         self._hnsw_space = config.get("HNSW_SPACE")  # "cosine", "l2", or None (default l2)
         self._collection_metadata = {
@@ -148,11 +147,10 @@ class ChromaVectorStore:
         vector: List[float],
         k: int = 5,
     ) -> List[Tuple[Any, float]]:
-        """
-        Busqueda por vector pre-computado. Evita llamada al embedding model.
+        """Busqueda por vector pre-computado. Evita llamada al embedding model.
 
-        FIX DTm-2: usa self._client.get_collection() (API publica de chromadb)
-        en lugar de self._store._collection (API interna de LangChain Chroma).
+        Usa self._client.get_collection() (API publica de chromadb) en lugar
+        de self._store._collection (API interna de LangChain Chroma).
         """
         try:
             from langchain_core.documents import Document

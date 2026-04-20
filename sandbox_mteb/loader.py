@@ -109,7 +109,7 @@ class MinIOLoader:
             corpus_df = self._download_parquet(f"{dataset_name}/corpus.parquet")
             qrels_df = self._download_parquet(f"{dataset_name}/qrels.parquet")
 
-            # DTm-75: detectar descargas fallidas (queries o corpus)
+            # Detectar descargas fallidas (queries o corpus).
             if queries_df is None and corpus_df is None:
                 raise ValueError(
                     f"No se pudo descargar queries ni corpus para '{dataset_name}'"
@@ -144,7 +144,7 @@ class MinIOLoader:
             return result
 
     # -----------------------------------------------------------------
-    # PRIVATE: DataFrame -> LoadedDataset (FIX DTm-1)
+    # PRIVATE: DataFrame -> LoadedDataset
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -184,7 +184,7 @@ class MinIOLoader:
                 if not raw_answer_type and raw_answer:
                     raw_answer_type = "text"
                 question_type = _safe_str(row.get("question_type")) or _safe_str(row.get("type"))
-                # DTm-15: comparison queries (yes/no) son clasificacion, no extractiva
+                # Comparison queries (yes/no) son clasificacion, no extractiva.
                 if question_type == "comparison" and raw_answer_type != "label":
                     raw_answer_type = "label"
 

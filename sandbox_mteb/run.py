@@ -106,7 +106,7 @@ def parse_args() -> argparse.Namespace:
         "--resume",
         default=None,
         metavar="RUN_ID",
-        help="Reanudar un run previo desde su checkpoint (DTm-36)",
+        help="Reanudar un run previo desde su checkpoint",
     )
     return parser.parse_args()
 

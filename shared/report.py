@@ -197,10 +197,8 @@ class RunExporter:
         # Secondary metric columns
         for sk in sorted_secondary_keys:
             fieldnames.append(f"sec_{sk}")
-        # LIGHT_RAG per-query diagnostics (deuda #15 cerrada).
-        # Guard anterior buscaba `graph_candidates`, clave eliminada con la
-        # resolucion de la divergencia #8. Usamos el subset compartido con
-        # QueryEvaluationResult.to_dict() como unica fuente de verdad: si
+        # LIGHT_RAG per-query diagnostics: usamos el subset compartido con
+        # QueryEvaluationResult.to_dict() como unica fuente de verdad. Si
         # alguna query tiene claves LightRAG (entidades, relaciones,
         # fallback, synthesis...), activamos las columnas.
         lightrag_subsets = [
@@ -274,7 +272,7 @@ class RunExporter:
                     if qr.retrieval.generation_doc_ids
                     else len(qr.retrieval.retrieved_doc_ids)
                 )
-                # FIX DT-7: exponer estado de rerank per-query para diagnostico
+                # Exponer estado de rerank per-query para diagnostico
                 reranked_val = qr.metadata.get("reranked") if qr.metadata else None
                 row["reranked"] = "" if reranked_val is None else reranked_val
                 if has_reranker:

@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
-# Tracker de KG synthesis (divergencia LightRAG #2).
+# Tracker de KG synthesis.
 #
 # La synthesis es un paso opcional que reescribe el contexto multi-seccion
 # como narrativa coherente. Si falla, hacemos fallback al contexto

@@ -349,17 +349,15 @@ class MTEBEvaluator:
                 embedding_model=self._embedding_model,
             )
 
-        # Reranker (opcional). Paper LightRAG no usa reranker — el
-        # cross-encoder single-hop penaliza chunks multi-hop del KG
-        # (divergencia #6). `retrieval_executor` ya auto-desactivaba el
-        # reranker en runtime para LIGHT_RAG, pero se inicializaba igual
-        # (conexion HTTP al NIM desperdiciada). Guard movido aqui para que
-        # no se instancie cuando la estrategia lo ignora (deuda #13).
+        # Reranker (opcional). LightRAG no usa reranker: el cross-encoder
+        # single-hop penaliza chunks multi-hop del KG. Guard aqui para que
+        # no se instancie (conexion HTTP al NIM desperdiciada) cuando la
+        # estrategia lo ignora.
         if self.config.reranker.enabled:
             if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
                 logger.warning(
                     "  Reranker habilitado en .env pero estrategia es LIGHT_RAG; "
-                    "omitiendo inicializacion (divergencia #6: el paper no usa reranker)."
+                    "omitiendo inicializacion (LightRAG no usa reranker)."
                 )
             elif not HAS_NVIDIA_RERANK:
                 logger.warning("Reranker habilitado pero NVIDIARerank no disponible")
@@ -426,9 +424,8 @@ class MTEBEvaluator:
         run_id: str = "",
     ) -> None:
         """Crea retriever e indexa el corpus."""
-        # FIX DTm-10: usar run_id (unico y determinista) en lugar de uuid
-        # corto (8 hex = 32 bits) para eliminar riesgo de colision en
-        # ejecuciones paralelas.
+        # Usar run_id (unico y determinista) en lugar de uuid corto (8 hex
+        # = 32 bits) para eliminar riesgo de colision en ejecuciones paralelas.
         collection_name = f"eval_{run_id}" if run_id else f"eval_{dataset_name}_{uuid.uuid4().hex[:8]}"
 
         assert self._embedding_model is not None, "_init_components must set _embedding_model"
@@ -489,7 +486,7 @@ class MTEBEvaluator:
         run_id: str = "",
     ) -> List[QueryEvaluationResult]:
         """
-        Pipeline de evaluacion con checkpoint/resume (DTm-36).
+        Pipeline de evaluacion con checkpoint/resume.
 
         Fases:
           0. Pre-embed: batch embed queries via REST NIM
@@ -660,7 +657,7 @@ class MTEBEvaluator:
         for query, retrieval, gm, reranked_status, exc in zip(
             queries, retrievals, gen_metrics_results, rerank_statuses, gen_errors,
         ):
-            # DTm-20: passthrough generico de metadata de la query
+            # Passthrough generico de metadata de la query.
             qr_metadata: Dict[str, Any] = {
                 k: v for k, v in query.metadata.items() if v
             }
@@ -712,7 +709,7 @@ class MTEBEvaluator:
         return results
 
     # -----------------------------------------------------------------
-    # BUILD RUN (delegado a result_builder.py — DTm-36 fase 4)
+    # BUILD RUN (delegado a result_builder.py)
     # -----------------------------------------------------------------
 
     def _build_run(

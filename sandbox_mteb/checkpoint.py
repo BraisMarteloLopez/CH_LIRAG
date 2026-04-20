@@ -1,10 +1,8 @@
 """
-Checkpoint / Resume para evaluaciones largas (DTm-36).
+Checkpoint / Resume para evaluaciones largas.
 
 Serializa/deserializa QueryEvaluationResult a JSON para persistir
 resultados parciales durante runs de miles de queries.
-
-Extraido de evaluator.py para reducir su tamano (DTm-36 fase 4).
 """
 
 from __future__ import annotations
