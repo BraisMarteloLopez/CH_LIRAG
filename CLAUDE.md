@@ -24,16 +24,16 @@ Estructura completa del repo en [`README.md`](README.md). Archivos que concentra
 
 - **Motor LIGHT_RAG**:
   - `shared/retrieval/lightrag/retriever.py` — `LightRAGRetriever`: retrieval vector + KG dual-level, agregacion de los 3 canales (entity/relationship/chunk-keywords VDBs)
-  - `shared/retrieval/lightrag/knowledge_graph.py` — KG in-memory (igraph), BFS, `get_neighbors_ranked` (div #9)
-  - `shared/retrieval/lightrag/triplet_extractor.py` — extraccion LLM de tripletas + high-level keywords por chunk (piggyback, div #10) + query keywords
+  - `shared/retrieval/lightrag/knowledge_graph.py` — KG in-memory (igraph), BFS, `get_neighbors_ranked`
+  - `shared/retrieval/lightrag/triplet_extractor.py` — extraccion LLM de tripletas + high-level keywords por chunk (piggyback) + query keywords
 - **Motor comun**:
   - `shared/retrieval/__init__.py` — factory `get_retriever()`, unico punto de entrada
   - `shared/retrieval/core.py` — `RetrievalStrategy` enum, `RetrievalConfig`, `SimpleVectorRetriever`
   - `shared/llm.py` — `AsyncLLMService` (NIM client, async/sync bridge, `_PersistentLoop`)
-  - `shared/citation_parser.py` — parser `[ref:N]` para observable de citaciones (div #7)
+  - `shared/citation_parser.py` — parser `[ref:N]` para observable de citacione
 - **Harness / evaluacion**:
   - `sandbox_mteb/evaluator.py` — orquestador principal
-  - `sandbox_mteb/generation_executor.py` — generacion async + `_synthesize_kg_context_async` (div #2) + metricas
+  - `sandbox_mteb/generation_executor.py` — generacion async + `_synthesize_kg_context_async + metricas
   - `sandbox_mteb/config.py` — `MTEBConfig`, `KG_SYNTHESIS_SYSTEM_PROMPT` (acoplado al parser de citas)
 
 ## Comandos
@@ -81,8 +81,8 @@ Diferencias entre esta implementacion y el [LightRAG original](https://github.co
 |---|---|---|---|
 | 10 | High-level keywords por chunk durante indexacion (piggyback) | **Presencia validada; calidad NO validada** ⚠️ | Canal arquitectonicamente presente: `retrieval_metadata.kg_chunk_keyword_matches > 0` en 35/35 queries. **Riesgo**: el paper hace llamada LLM dedicada por chunk; aqui las keywords se emiten en la misma llamada que entities/relations para ahorrar ~50% del coste. Coste teorico: el LLM puede emitir keywords genericas ("event", "person", "document") en vez de temas reales del chunk — HotpotQA es ciego a esta degradacion porque el canal vector directo satura el retrieval. **Cuando importa**: P2 (catalogo especializado 10-50 PDFs) es el caso donde el canal high-level es el unico que opera sobre conceptos que el embedding SI conoce; si piggyback lo degrada silenciosamente, se rompe la pata diferencial de LightRAG. **Bloqueante antes de P2, no de P0.** Accion pendiente: (1) observable de calidad de keywords (diversidad Jaccard intra-tema, ratio genericas/especificas via IDF intra-corpus); (2) si muestra degradacion, exponer toggle `KG_CHUNK_KEYWORDS_DEDICATED_CALL=true` |
 
-### Hayazgo abierto ###
-"Hallazgo abierto: gen_*=0, el generador no propaga [ref:N] al usuario. Faithfulness intacta. Mejora pendiente antes de P0 si se quiere respuesta anclada"
+### Hallazgo abierto
+- ** # "Hallazgo abierto: gen_*=0, el generador no propaga [ref:N] al usuario. Faithfulness intacta. Mejora pendiente antes de P0 si se quiere respuesta anclada"
 
 ### Divergencias menores (cosmeticas / no funcionales)
 
