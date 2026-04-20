@@ -69,7 +69,7 @@ Contenido real fetcheado por `get_documents_by_ids`. Fallback a vector directo s
 
 **Synthesis del contexto (value-add del proyecto)**: `GenerationExecutor._synthesize_kg_context_async()` reescribe las 3 secciones como narrativa coherente via LLM antes de la generacion final, con citas `[ref:N]` inline (prompt en `sandbox_mteb/config.py:KG_SYNTHESIS_SYSTEM_PROMPT`). **Faithfulness se evalua contra el contexto estructurado original**, no contra la narrativa — control anti-fabricacion para penalizar alucinacion de la propia synthesis. Degradacion graceful: error/vacio/timeout → fallback al contexto estructurado.
 
-**Fallback global**: sin igraph o sin LLM → SimpleVectorRetriever puro. El run nunca se rompe **NO DESEADO** no debe estar en P0.
+**Fallback global**: sin igraph o sin LLM → SimpleVectorRetriever puro y el run nunca se rompe, **NO DESEADO** no debe estar en P0 (KG deberia funcionar).
 
 ## Divergencias con el paper original
 
