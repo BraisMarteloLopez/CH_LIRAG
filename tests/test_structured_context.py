@@ -1,5 +1,5 @@
 """
-Tests para format_structured_context (F.3/DAM-8).
+Tests para format_structured_context.
 
 Verifica que el contexto estructurado incluye las 3 secciones
 (entidades, relaciones, chunks) y respeta el budget de caracteres.

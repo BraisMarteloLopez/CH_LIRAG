@@ -1,23 +1,23 @@
 """
-Tests unitarios para TripletExtractor (DTm-23, Fase 1.2 + DTm-16, Fase 4).
+Tests unitarios para TripletExtractor.
 
 Cobertura:
   TE1. _parse_extraction_json con JSON valido.
   TE2. _parse_extraction_json con markdown code block.
   TE3. _parse_extraction_json con JSON malformado -> re-raises exception.
   TE4. _parse_extraction_json con campos faltantes.
-  TE5. Entity type invalido -> normalizado a OTHER (DTm-16).
+  TE5. Entity type invalido -> normalizado a OTHER.
   TE6. Truncation: doc > max_text_chars se trunca.
   TE7. extract_from_doc_async: LLM lanza exception -> ([], []).
   TE8. extract_from_doc_async: texto vacio -> ([], []).
   TE9. _parse_keywords_json con JSON valido.
   TE10. _parse_keywords_json con JSON malformado -> ([], []).
-  TE11. Entity name de 1 char aceptada (DTm-27: MIN_ENTITY_NAME_LEN=1).
-  TE12. Entity name vacio rechazada (DTm-16).
-  TE13. Entity description truncada a MAX_DESCRIPTION_CHARS (DTm-16).
-  TE14. Relation description truncada a MAX_DESCRIPTION_CHARS (DTm-16).
-  TE15. Todos los VALID_ENTITY_TYPES aceptados (DTm-16).
-  TE16. Entity type case-insensitive (DTm-16).
+  TE11. Entity name de 1 char aceptada (MIN_ENTITY_NAME_LEN=1).
+  TE12. Entity name vacio rechazada.
+  TE13. Entity description truncada a MAX_DESCRIPTION_CHARS.
+  TE14. Relation description truncada a MAX_DESCRIPTION_CHARS.
+  TE15. Todos los VALID_ENTITY_TYPES aceptados.
+  TE16. Entity type case-insensitive.
 """
 
 import asyncio
@@ -142,7 +142,7 @@ def test_parse_relation_without_source():
 # =============================================================================
 
 def test_parse_invalid_entity_type_normalized_to_other():
-    """Entity con type invalido se normaliza a OTHER (DTm-16)."""
+    """Entity con type invalido se normaliza a OTHER."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "SomeThing", "type": "CUSTOM_TYPE"}], "relations": []}'
     entities, _, _ = ext._parse_extraction_json(raw, "doc1")
@@ -259,11 +259,11 @@ def test_parse_keywords_malformed():
 
 
 # =============================================================================
-# TE11-TE16: Validacion post-parse (DTm-16)
+# TE11-TE16: Validacion post-parse
 # =============================================================================
 
 def test_entity_name_min_length_accepted():
-    """Entity con nombre de 1 char se acepta (DTm-27: MIN_ENTITY_NAME_LEN=1)."""
+    """Entity con nombre de 1 char se acepta (MIN_ENTITY_NAME_LEN=1)."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "A", "type": "PERSON"}, {"name": "Bob", "type": "PERSON"}], "relations": []}'
     entities, _, _ = ext._parse_extraction_json(raw, "doc1")
@@ -273,7 +273,7 @@ def test_entity_name_min_length_accepted():
 
 
 def test_entity_empty_name_rejected():
-    """Entity con nombre vacio se rechaza (DTm-16)."""
+    """Entity con nombre vacio se rechaza."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "", "type": "PERSON"}, {"name": "  ", "type": "PERSON"}], "relations": []}'
     entities, _, _ = ext._parse_extraction_json(raw, "doc1")
@@ -281,7 +281,7 @@ def test_entity_empty_name_rejected():
 
 
 def test_entity_description_truncated():
-    """Description > MAX_DESCRIPTION_CHARS se trunca (DTm-16)."""
+    """Description > MAX_DESCRIPTION_CHARS se trunca."""
     ext = make_extractor()
     long_desc = "x" * 500
     raw = f'{{"entities": [{{"name": "Alice", "type": "PERSON", "description": "{long_desc}"}}], "relations": []}}'
@@ -291,7 +291,7 @@ def test_entity_description_truncated():
 
 
 def test_relation_description_truncated():
-    """Relation description > MAX_DESCRIPTION_CHARS se trunca (DTm-16)."""
+    """Relation description > MAX_DESCRIPTION_CHARS se trunca."""
     ext = make_extractor()
     long_desc = "y" * 500
     raw = f'{{"entities": [], "relations": [{{"source": "AA", "target": "BB", "relation": "knows", "description": "{long_desc}"}}]}}'
@@ -301,7 +301,7 @@ def test_relation_description_truncated():
 
 
 def test_valid_entity_types_accepted():
-    """Todos los VALID_ENTITY_TYPES se aceptan sin modificar (DTm-16)."""
+    """Todos los VALID_ENTITY_TYPES se aceptan sin modificar."""
     ext = make_extractor()
     from shared.retrieval.lightrag.triplet_extractor import VALID_ENTITY_TYPES
     for etype in VALID_ENTITY_TYPES:
@@ -311,7 +311,7 @@ def test_valid_entity_types_accepted():
 
 
 def test_entity_type_case_insensitive():
-    """Entity type se normaliza a uppercase (DTm-16)."""
+    """Entity type se normaliza a uppercase."""
     ext = make_extractor()
     raw = '{"entities": [{"name": "Alice", "type": "person"}], "relations": []}'
     entities, _, _ = ext._parse_extraction_json(raw, "doc1")
@@ -431,11 +431,11 @@ def test_chunk_keywords_no_keywords_no_stats_bump():
 
 
 # =============================================================================
-# TE17-TE21: Estadisticas de extraccion (DTm-33)
+# TE17-TE21: Estadisticas de extraccion
 # =============================================================================
 
 def test_stats_initial_zero():
-    """TE17: get_stats() devuelve contadores a cero al iniciar (DTm-33)."""
+    """TE17: get_stats() devuelve contadores a cero al iniciar."""
     ext = make_extractor()
     stats = ext.get_stats()
     assert all(v == 0 for v in stats.values())
@@ -444,7 +444,7 @@ def test_stats_initial_zero():
 
 
 def test_stats_success_counted():
-    """TE18: Extraccion exitosa incrementa docs_success y totales (DTm-33)."""
+    """TE18: Extraccion exitosa incrementa docs_success y totales."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value='{"entities": [{"name": "Alice", "type": "PERSON"}], "relations": []}')
     ext = make_extractor(mock_llm=mock_llm)
@@ -459,7 +459,7 @@ def test_stats_success_counted():
 
 
 def test_stats_failure_counted():
-    """TE19: Excepcion en LLM incrementa docs_failed (DTm-33)."""
+    """TE19: Excepcion en LLM incrementa docs_failed."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(side_effect=RuntimeError("LLM down"))
     ext = make_extractor(mock_llm=mock_llm)
@@ -473,7 +473,7 @@ def test_stats_failure_counted():
 
 
 def test_stats_empty_input_counted():
-    """TE20: Texto vacio incrementa docs_empty_input (DTm-33)."""
+    """TE20: Texto vacio incrementa docs_empty_input."""
     ext = make_extractor()
 
     asyncio.run(ext.extract_from_doc_async("doc1", "   "))
@@ -485,7 +485,7 @@ def test_stats_empty_input_counted():
 
 
 def test_stats_reset():
-    """TE21: reset_stats() pone todos los contadores a cero (DTm-33)."""
+    """TE21: reset_stats() pone todos los contadores a cero."""
     mock_llm = MagicMock()
     mock_llm.invoke_async = AsyncMock(return_value='{"entities": [{"name": "Bob", "type": "PERSON"}], "relations": []}')
     ext = make_extractor(mock_llm=mock_llm)

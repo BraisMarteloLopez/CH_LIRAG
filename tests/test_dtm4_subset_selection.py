@@ -1,7 +1,7 @@
 """
 Tests para _select_subset_dev() en evaluator.py.
 
-Cobertura DTm-4:
+Cobertura:
   - Gold docs presentes en corpus resultante
   - Distractores rellenan hasta dev_corpus_size
   - Seed determinista (misma seed = mismo resultado)

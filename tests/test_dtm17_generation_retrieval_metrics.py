@@ -101,7 +101,7 @@ class TestGenerationMetricsCalculation:
         assert qrd.generation_recall == 1.0
 
     def test_partial_rescue_scenario(self):
-        """Retriever finds 1/2 gold docs, reranker completes with 2/2 (DTm-21)."""
+        """Retriever finds 1/2 gold docs, reranker completes with 2/2."""
         qrd = QueryRetrievalDetail(
             retrieved_doc_ids=["x", "b", "c"],
             retrieved_contents=["cx", "cb", "cc"],

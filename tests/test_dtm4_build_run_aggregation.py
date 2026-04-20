@@ -1,7 +1,7 @@
 """
 Test de integracion para _build_run() en evaluator.py.
 
-Cobertura DTm-4:
+Cobertura:
   Valida la agregacion matematica de metricas individuales (query-level)
   a metricas agregadas (run-level) en EvaluationRun. Este es el paso
   final del pipeline: errores aqui corrompen todo el JSON de salida.

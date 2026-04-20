@@ -1,5 +1,5 @@
 """
-Tests unitarios para glean_from_doc_async() (Fase I.5, DTm-77).
+Tests unitarios para glean_from_doc_async().
 
 Cobertura:
   GL1. Gleaning con mock LLM retorna entidades adicionales

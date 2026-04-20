@@ -1,5 +1,5 @@
 """
-Tests unitarios para MTEBEvaluator (P8, Fase 4).
+Tests unitarios para MTEBEvaluator.
 
 Cobertura:
   EV1. _init_components crea embedding + LLM + metrics calculator
@@ -13,7 +13,7 @@ Cobertura:
   EV9. _assemble_results sin generacion -> COMPLETED (retrieval-only)
   EV10. _assemble_results con excepcion propaga tipo+mensaje (PENDING item A)
   EV11. _format_query_exc maneja excepciones con str() vacio
-  EV12. _init_components omite reranker cuando estrategia=LIGHT_RAG (deuda #13)
+  EV12. _init_components omite reranker cuando estrategia=LIGHT_RAG
 """
 
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -401,7 +401,7 @@ def test_format_query_exc_includes_args_when_present():
 
 
 # =============================================================================
-# EV12: _init_components skip reranker para LIGHT_RAG (deuda #13)
+# EV12: _init_components skip reranker para LIGHT_RAG
 # =============================================================================
 
 @patch("sandbox_mteb.evaluator.resolve_max_context_chars", return_value=4000)
@@ -413,8 +413,8 @@ def test_init_components_skips_reranker_for_lightrag(
 ):
     """Con RERANKER_ENABLED=true + strategy=LIGHT_RAG, no se instancia reranker.
 
-    El paper LightRAG no usa reranker (divergencia #6); inicializarlo
-    desperdicia una conexion HTTP al NIM sin efecto (deuda #13).
+    LightRAG no usa reranker (cross-encoder single-hop penaliza chunks
+    multi-hop del KG); inicializarlo desperdicia una conexion HTTP al NIM.
     """
     from shared.config_base import RerankerConfig
 

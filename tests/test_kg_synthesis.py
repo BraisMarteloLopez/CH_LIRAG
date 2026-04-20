@@ -1,5 +1,5 @@
 """
-Tests divergencia LightRAG #2: capa de KG synthesis en generacion.
+Tests de la capa de KG synthesis en generacion.
 
 Verifica:
   - synthesis se invoca solo con KG data + flag activa
@@ -396,7 +396,7 @@ class TestSynthesisTracker:
 
 
 # =============================================================================
-# Per-query metadata (deuda #15 cerrada)
+# Per-query metadata
 # =============================================================================
 
 
@@ -495,7 +495,7 @@ class TestPerQuerySynthesisMetadata:
 
 
 # =============================================================================
-# Timing instrumentation (deuda #16)
+# Timing instrumentation
 # =============================================================================
 
 

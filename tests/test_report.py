@@ -55,10 +55,10 @@ def _make_qr(
 
     retrieval = _make_retrieval()
     if graph_meta:
-        # Claves actuales emitidas por LightRAGRetriever post-#8/#10 y por
-        # GenerationExecutor.synthesis. Antes del fix de deuda #15 se usaban
-        # claves legacy (graph_candidates, etc.) que el retriever actual no
-        # emite — el guard quedaba muerto y el CSV no tenia columnas KG.
+        # Claves actuales emitidas por LightRAGRetriever y por
+        # GenerationExecutor.synthesis. El retriever ya no emite las claves
+        # legacy (graph_candidates, etc.); el guard del exporter usa las
+        # vigentes para activar las columnas KG en el CSV.
         retrieval.retrieval_metadata = {
             "lightrag_mode": "hybrid",
             "kg_entities": [{"name": "physics"}, {"name": "quantum"}],
@@ -323,7 +323,7 @@ class TestToDetailCsv:
 
     def test_lightrag_columns_when_graph_meta(self, tmp_path):
         """Con retrieval_metadata LightRAG presente, detail.csv expone las
-        columnas KG actuales (deuda #15 cerrada)."""
+        columnas KG actuales."""
         exporter = RunExporter(output_dir=tmp_path)
         qrs = [_make_qr("q1", graph_meta=True), _make_qr("q2", graph_meta=True)]
         run = _make_run(query_results=qrs)
