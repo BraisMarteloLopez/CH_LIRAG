@@ -269,7 +269,6 @@ Tres condiciones cumplidas simultaneamente:
 
 **Palanca post-Pre-P0**: `KG_GLEANING_ROUNDS` (default `0`) ejecuta una pasada extra de extraccion para recuperar entidades/relaciones perdidas (no re-extrae keywords de chunk). Coste: ~2x llamadas LLM en indexacion. Usar solo si la cobertura del KG (`num_docs_with_entities / total_docs`) baja de ~95%.
 
-
 ### P0 — Demostrar calidad de generacion · **FASE ACTUAL**
 
 **Objetivo**: demostrar que sobre al menos un benchmark donde una run reporta `LIGHT_RAG > baseline vector`, nuestra implementacion reproduce la **direccion** del delta (magnitudes exactas son secundarias; el signo y su significancia sobre el ruido es lo que importa).
