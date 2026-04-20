@@ -286,6 +286,7 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
             "You are a helpful assistant. Use the provided context to answer the question. "
             "Answer in as few words as possible — ideally a single entity, name, date, or number. "
             "For yes/no questions, answer only 'yes' or 'no'. "
+            "Preserve [ref:N] citations inline when present in the context. "
             "Do not explain, elaborate, or add extra context."
         ),
         "user_template": "CONTEXT:\n{context}\n\nQUESTION: {query}\n\nANSWER:",
