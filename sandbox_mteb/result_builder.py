@@ -6,7 +6,7 @@ import dataclasses
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from shared.types import (
     EvaluationRun,
@@ -21,6 +21,14 @@ from .config import MTEBConfig
 from .generation_executor import get_kg_synthesis_stats
 
 logger = logging.getLogger(__name__)
+
+# Etiqueta del observable `strategy_actual` en config_snapshot._runtime.
+# Valores validos: nombres de RetrievalStrategy + "FALLBACK_SIMPLE_VECTOR"
+# (fallback emitido cuando el retriever real divergio del configurado, ver
+# `strategy_mismatches`).
+StrategyActualLabel = Literal[
+    "SIMPLE_VECTOR", "LIGHT_RAG", "FALLBACK_SIMPLE_VECTOR"
+]
 
 
 def _serialize_config(config: MTEBConfig) -> Dict[str, Any]:
@@ -136,6 +144,11 @@ def build_run(
     config_snapshot = _serialize_config(config)
     # Campos derivados del run (no en config)
     judge_fallback_stats = get_judge_fallback_stats()
+    strategy_actual: StrategyActualLabel = (
+        cast(StrategyActualLabel, config.retrieval.strategy.name)
+        if strategy_mismatches == 0
+        else "FALLBACK_SIMPLE_VECTOR"
+    )
     config_snapshot["_runtime"] = {
         "max_context_chars": max_context_chars,
         "rerank_failures": rerank_failures if config.reranker.enabled else None,
@@ -144,11 +157,7 @@ def build_run(
         "corpus_indexed": indexed_corpus_size,
         "gen_zero_count": gen_zero_count,
         "gen_nonzero_count": gen_nonzero_count,
-        "strategy_actual": (
-            config.retrieval.strategy.name
-            if strategy_mismatches == 0
-            else "FALLBACK_SIMPLE_VECTOR"
-        ),
+        "strategy_actual": strategy_actual,
         # judge_fallback_stats: tasa de fallback del LLM judge por metrica.
         # default_return_rate elevado => metricas del judge sesgadas a 0.5.
         "judge_fallback_stats": judge_fallback_stats,

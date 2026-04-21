@@ -24,9 +24,11 @@ from typing import (
     Dict,
     Iterator,
     List,
+    Literal,
     Optional,
     Protocol,
     Tuple,
+    cast,
     runtime_checkable,
 )
 
@@ -65,6 +67,26 @@ class EvaluationStatus(Enum):
     SKIPPED = "skipped"
 
 
+# Tipos cerrados (R2): documentan y acotan el dominio de valores validos.
+# "text" = respuesta extractiva; "label" = clasificacion yes/no;
+# "counter_argument" = respuesta argumentativa (datasets HYBRID).
+AnswerType = Literal["text", "label", "counter_argument"]
+_VALID_ANSWER_TYPES = ("text", "label", "counter_argument")
+
+# Estado del ciclo de vida de un LoadedDataset.
+LoadStatus = Literal["pending", "success", "error"]
+
+
+def parse_answer_type(raw: Optional[str]) -> Optional[AnswerType]:
+    """Valida y estrecha un string a AnswerType. None/vacio -> None;
+    valores fuera del dominio -> None (el caller decide si avisar)."""
+    if not raw:
+        return None
+    if raw in _VALID_ANSWER_TYPES:
+        return cast(AnswerType, raw)
+    return None
+
+
 # =============================================================================
 # ESTRUCTURAS NORMALIZADAS - DATOS
 # =============================================================================
@@ -76,7 +98,7 @@ class NormalizedQuery:
     query_text: str
     relevant_doc_ids: List[str] = field(default_factory=list)
     expected_answer: Optional[str] = None
-    answer_type: Optional[str] = None  # "text", "label", "counter_argument"
+    answer_type: Optional[AnswerType] = None
     supporting_facts: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -154,7 +176,7 @@ class LoadedDataset:
     secondary_metrics: List[MetricType] = field(default_factory=list)
     total_queries: int = 0
     total_corpus: int = 0
-    load_status: str = "pending"
+    load_status: LoadStatus = "pending"
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 

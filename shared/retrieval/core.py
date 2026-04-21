@@ -14,7 +14,24 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
+
+# Tipos cerrados (R2): documentan y acotan el dominio de valores validos.
+LightRAGMode = Literal["naive", "local", "global", "hybrid"]
+# Razones posibles por las que un retrieval LIGHT_RAG cae al fallback
+# vector directo. Anotadas en `RetrievalResult.metadata["kg_fallback"]`;
+# None cuando no hubo fallback.
+KGFallbackReason = Literal["no_keywords", "no_doc_ids", "docs_not_in_store"]
+
+
+def _parse_lightrag_mode(raw: str) -> LightRAGMode:
+    """Valida LIGHTRAG_MODE y lo estrecha al tipo Literal."""
+    valid = get_args(LightRAGMode)
+    if raw not in valid:
+        raise ValueError(
+            f"LIGHTRAG_MODE='{raw}' invalido; validos: {valid}"
+        )
+    return cast(LightRAGMode, raw)
 
 from shared.types import EmbeddingModelProtocol
 
@@ -58,7 +75,7 @@ class RetrievalConfig:
     kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call
     kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction
     kg_gleaning_rounds: int = 0  # rounds de re-extraccion (0 = desactivado)
-    lightrag_mode: str = "hybrid"  # Modos del paper: "hybrid" (default), "local", "global", "naive"
+    lightrag_mode: LightRAGMode = "hybrid"  # Modos del paper (ver LightRAGMode).
     kg_max_neighbors_per_entity: int = 5  # 1-hop neighbors por entidad resuelta
 
     # Chunks enviados al LLM para generacion (post KG-scoring).
@@ -95,7 +112,7 @@ class RetrievalConfig:
             kg_extraction_max_tokens=_env_int("KG_EXTRACTION_MAX_TOKENS", 4096),
             kg_batch_docs_per_call=_env_int("KG_BATCH_DOCS_PER_CALL", 5),
             kg_gleaning_rounds=_env_int("KG_GLEANING_ROUNDS", 0),
-            lightrag_mode=_env("LIGHTRAG_MODE", "hybrid"),
+            lightrag_mode=_parse_lightrag_mode(_env("LIGHTRAG_MODE", "hybrid")),
             kg_max_neighbors_per_entity=_env_int("KG_MAX_NEIGHBORS_PER_ENTITY", 5),
             lightrag_generation_top_n=_env_int("LIGHTRAG_GENERATION_TOP_N", 0),
             kg_description_synthesis=_env("KG_DESCRIPTION_SYNTHESIS", "false").lower() == "true",

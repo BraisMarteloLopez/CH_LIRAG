@@ -29,6 +29,7 @@ from shared.types import (
     NormalizedQuery,
     NormalizedDocument,
     get_dataset_config,
+    parse_answer_type,
 )
 from .config import MinIOStorageConfig
 
@@ -192,7 +193,7 @@ class MinIOLoader:
                     query_id=qid,
                     query_text=_safe_str(row.get("text", "")),
                     expected_answer=raw_answer or None,
-                    answer_type=raw_answer_type or None,
+                    answer_type=parse_answer_type(raw_answer_type),
                     metadata={
                         "question_type": question_type,
                         "level": _safe_str(row.get("level")),

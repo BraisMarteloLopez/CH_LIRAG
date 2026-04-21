@@ -37,6 +37,7 @@ from shared.types import EmbeddingModelProtocol
 
 from ..core import (
     BaseRetriever,
+    LightRAGMode,
     RetrievalConfig,
     RetrievalResult,
     RetrievalStrategy,
@@ -100,7 +101,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
         self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
         self._kg_gleaning_rounds = config.kg_gleaning_rounds
-        self._lightrag_mode = config.lightrag_mode
+        self._lightrag_mode: LightRAGMode = config.lightrag_mode
         self._max_neighbors_per_entity = config.kg_max_neighbors_per_entity
 
         # Vector retriever (siempre disponible)

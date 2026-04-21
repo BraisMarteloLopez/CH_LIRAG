@@ -32,7 +32,12 @@ import logging
 import threading
 import time
 from collections import Counter
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+
+# Tipos cerrados (R2): dominio de `kg_synthesis_error` per-query, tambien
+# emitido por `_synthesize_kg_context_async`. `None` indica synthesis
+# exitosa; el resto son razones de fallback graceful.
+SynthesisErrorReason = Literal["timeout", "error", "empty"]
 
 from shared.types import (
     NormalizedQuery,
@@ -454,7 +459,7 @@ class GenerationExecutor:
         self,
         query_text: str,
         structured_context: str,
-    ) -> Tuple[str, Optional[str]]:
+    ) -> Tuple[str, Optional[SynthesisErrorReason]]:
         """Reescribe el contexto KG multi-seccion como narrativa coherente.
 
         Usa el LLM (`self._llm_service`) con un prompt query-aware que pide
