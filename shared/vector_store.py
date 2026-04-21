@@ -6,6 +6,23 @@ Ubicacion: shared/vector_store.py
 
 FIX: delete_all_documents() ahora elimina la coleccion subyacente
 en Chroma y la recrea, en lugar de solo reasignar el wrapper Python.
+
+Contrato externo (ChromaDB PersistentClient, >=0.5):
+  - Persistencia en `VECTOR_DB_DIR` (default `.chroma_db/`).
+  - Colecciones por run con prefijo `eval_<run_id>`; deuda
+    [#1](../CLAUDE.md#dt-1) — colecciones huerfanas si el proceso
+    muere antes de `_cleanup()`.
+  - Espacios HNSW soportados: `cosine|l2|ip` (`HNSW_SPACE` en metadata
+    de la coleccion). Default `cosine`.
+  - No determinismo: ChromaDB 0.5-0.6 no expone `hnsw:random_seed`
+    (deuda [#3](../CLAUDE.md#dt-3)).
+  - `LightRAGRetriever` accede a `_vector_store.collection_name` para
+    derivar nombres de Entity/Relationship/ChunkKeywords VDB (deuda
+    [#14](../CLAUDE.md#dt-14)).
+
+Schema del record insertado: `{id, embedding[D], document, metadata{
+  reference_id?, title?, ...}}` donde `reference_id` es requerido por el
+observable de citaciones ([div #7](../CLAUDE.md#div-7)).
 """
 
 import logging

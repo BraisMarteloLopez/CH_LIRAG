@@ -1,5 +1,5 @@
 """
-Tests deuda tecnica #4: instrumentacion de tasa de fallback del LLM judge.
+Tests judge_fallback_stats: instrumentacion de tasa de fallback del LLM judge.
 
 Verifica que el tracker contabiliza correctamente:
   - invocaciones totales

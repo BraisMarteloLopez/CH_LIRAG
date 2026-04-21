@@ -356,7 +356,7 @@ def semantic_similarity(
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Tracker de tasa de fallback del LLM judge (deuda tecnica #4)
+# Tracker de tasa de fallback del LLM judge (judge_fallback_stats)
 #
 # Contabiliza, por tipo de metrica, la proporcion de invocaciones donde el
 # judge no pudo producir un score estructurado y tuvimos que recurrir a
@@ -631,8 +631,8 @@ def _parse_judge_result(response_text: str, metric_type: MetricType) -> MetricRe
             confidence=confidence
         )
     else:
-        # Deuda tecnica #4: el JSON no parseo, caemos a regex. Esto ya
-        # es una senal de degradacion del judge.
+        # El JSON no parseo, caemos a regex. Esto ya es una senal de
+        # degradacion del judge (contabilizado en judge_fallback_stats).
         _judge_fallback_tracker.record_parse_failure(metric_type)
 
         score, was_default = _extract_score_fallback_with_status(response_text)

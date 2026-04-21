@@ -14,6 +14,22 @@ Notas de diseno:
     dentro de la seccion critica, y elimina el binding a event loop).
   - run_sync() usa run_coroutine_threadsafe al loop persistente.
   - load_embedding_model acepta solo parametros explicitos (sin fallback).
+
+Contrato externo (NVIDIA NIM, API compatible OpenAI):
+  - POST {LLM_BASE_URL}/chat/completions — cuerpo `{model, messages,
+    temperature, max_tokens}`; respuesta `choices[0].message.content`.
+  - GET  {LLM_BASE_URL}/models — `data[0].max_model_len` en tokens;
+    consumido por `embedding_service.resolve_max_context_chars` (deuda
+    [#5](../CLAUDE.md#dt-5)).
+  - POST {EMBEDDING_BASE_URL}/embeddings — cuerpo `{input, model,
+    input_type?}`; `input_type=query|passage` solo si
+    EMBEDDING_MODEL_TYPE=asymmetric.
+
+Acople event loop: TODAS las invocaciones sync->async cruzan
+`_PersistentLoop._loop` via `asyncio.run_coroutine_threadsafe`. Un segundo
+loop rompe el binding del semaforo `_concurrency_sem`. Ver deuda
+[#9](../CLAUDE.md#dt-9) (lock-in NIM) y [#12](../CLAUDE.md#dt-12) (tests
+acoplados a mensajes de error).
 """
 
 import asyncio

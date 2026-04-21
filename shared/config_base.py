@@ -10,6 +10,18 @@ en su propio entry point via from_env().
 Sub-configs compartidos:
   - InfraConfig: LLM, embeddings, concurrencia NIM
   - RerankerConfig: cross-encoder post-retrieval
+
+Contrato externo (env vars consumidas, prefijo canonico entre parentesis):
+  - LLM / NIM: LLM_BASE_URL, LLM_MODEL_NAME, LLM_TIMEOUT, LLM_MAX_TOKENS,
+    LLM_TEMPERATURE, NIM_MAX_CONCURRENT_REQUESTS.
+  - Embeddings: EMBEDDING_BASE_URL, EMBEDDING_MODEL_NAME,
+    EMBEDDING_MODEL_TYPE (asymmetric|symmetric), EMBEDDING_BATCH_SIZE.
+  - Reranker: RERANK_ENABLED, RERANK_BASE_URL, RERANK_MODEL_NAME,
+    RERANK_TOP_K, RERANK_CANDIDATES_K, RERANK_TIMEOUT.
+
+Las sub-configs que derivan de este modulo propagan validacion via
+`validate()`. Modificar los nombres de env vars rompe compatibilidad
+con `sandbox_mteb/.env` y `env.example`.
 """
 
 import logging

@@ -2,6 +2,27 @@
 Generation executor: generacion LLM + calculo de metricas.
 
 Extraido de evaluator.py para reducir su tamano (Fase B descomposicion).
+
+Contrato observable producido per-query (llega a JSON/CSV via
+`result_builder` y a `config_snapshot._runtime`):
+  - `kg_synthesis_stats` (solo LIGHT_RAG + `KG_SYNTHESIS_ENABLED=true`):
+    counters `{invocations, successes, errors, empty_returns,
+    truncations, timeouts, fallback_rate}` + timing `p50/p95/max_{total,
+    queue, llm}_ms`. Poblado por `_KGSynthesisTracker.snapshot()`;
+    reset al inicio de cada run por `reset_kg_synthesis_stats()`.
+    Guardrail: `fallback_rate > 10%` es senal roja (warning en logs,
+    sin bloqueo activo — ver CLAUDE.md §Observabilidad).
+  - `citation_refs_synth_*` y `citation_refs_gen_*` (14 campos,
+    [div #7](../CLAUDE.md#div-7)): parser `shared/citation_parser.py`
+    invocado dos veces en `_process_single_async` sobre narrativa synth
+    y respuesta final. Contadores: `total, valid, malformed, in_range,
+    out_of_range, distinct, coverage_ratio`. `out_of_range > 0` o
+    `malformed > 0` son senales rojas equivalentes a
+    `judge.default_return_rate > 2%` ([deuda #18](../CLAUDE.md#dt-18)).
+
+Fallback graceful: error/vacio/timeout en synthesis -> contexto
+estructurado original; faithfulness se evalua siempre contra el
+estructurado, no contra la narrativa (control anti-fabricacion).
 """
 
 from __future__ import annotations

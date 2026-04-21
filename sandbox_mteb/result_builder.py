@@ -149,10 +149,10 @@ def build_run(
             if strategy_mismatches == 0
             else "FALLBACK_SIMPLE_VECTOR"
         ),
-        # Deuda tecnica #4: tasa de fallback del LLM judge por metrica.
+        # judge_fallback_stats: tasa de fallback del LLM judge por metrica.
         # default_return_rate elevado => metricas del judge sesgadas a 0.5.
         "judge_fallback_stats": judge_fallback_stats,
-        # Divergencia LightRAG #2: stats de la capa de synthesis del KG.
+        # kg_synthesis_stats: stats de la capa de synthesis del KG.
         # invocations==0 => synthesis no se intento (no LIGHT_RAG, sin KG
         # data, o flag desactivada).
         "kg_synthesis_stats": get_kg_synthesis_stats(),
