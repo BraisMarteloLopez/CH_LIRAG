@@ -125,29 +125,23 @@ class MTEBEvaluator:
         reset_operational_stats()
 
         try:
-            # 1. Inicializar componentes
             self._init_components()
 
-            # 2. Cargar y preparar datos
             dataset, queries, corpus = self._load_and_prepare()
 
-            # 3. Indexar documentos
             self._index_documents(dataset.name, corpus, run_id)
 
-            # 3b. Crear retrieval executor
             self._retrieval_executor = RetrievalExecutor(
                 retriever=self._retriever,
                 reranker=self._reranker,
                 config=self.config,
             )
 
-            # 4. Evaluar queries (pipeline async)
             ds_config = get_dataset_config(dataset.name)
             query_results = self._evaluate_queries(
                 queries, ds_config, dataset.name, run_id=run_id
             )
 
-            # 5. Construir EvaluationRun
             elapsed = time.time() - start_time
             evaluation_run = self._build_run(
                 run_id=run_id,
@@ -612,7 +606,6 @@ class MTEBEvaluator:
             if run_id:
                 save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
 
-        # Log summary
         assert self._retrieval_executor is not None  # initialized in _init_components
         if self._retrieval_executor.strategy_mismatches > 0:
             logger.error(
@@ -709,10 +702,6 @@ class MTEBEvaluator:
                     metadata=qr_metadata,
                 ))
         return results
-
-    # -----------------------------------------------------------------
-    # BUILD RUN (delegado a result_builder.py)
-    # -----------------------------------------------------------------
 
     def _build_run(
         self,

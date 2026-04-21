@@ -79,7 +79,6 @@ def check_config(env_path: str) -> List[Tuple[bool, str]]:
         from sandbox_mteb.config import MTEBConfig
         config = MTEBConfig.from_env(env_path)
 
-        # Verificar que la estrategia es LIGHT_RAG
         from shared.retrieval.core import RetrievalStrategy
         strategy = config.retrieval.strategy
         if strategy != RetrievalStrategy.LIGHT_RAG:

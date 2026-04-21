@@ -257,7 +257,6 @@ class LightRAGRetriever(BaseRetriever):
             documents, batch_docs_per_call=self._kg_batch_docs_per_call,
         )
 
-        # Construir grafo
         total_triplets = 0
         for doc_id, (entities, relations, chunk_keywords) in extraction_results.items():
             added = self._kg.add_triplets(doc_id, relations)

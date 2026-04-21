@@ -425,7 +425,6 @@ class KnowledgeGraph:
         aristas del grafo asociadas. El vertice igraph queda huerfano
         (sin aristas) para evitar reindexacion O(V).
         """
-        # Remover aristas del grafo
         vid = self._name_to_vid.get(name)
         if vid is not None:
             edge_ids = self._graph.incident(vid)
@@ -439,7 +438,6 @@ class KnowledgeGraph:
             if discard_set is not None:
                 discard_set.discard(name)
 
-        # Remover relaciones asociadas del indice _doc_to_relations
         for doc_id in doc_ids:
             rels = self._doc_to_relations.get(doc_id)
             if rels is not None:
@@ -620,7 +618,6 @@ class KnowledgeGraph:
             for doc_id, rels in self._doc_to_relations.items()
         }
 
-        # Serialize graph as edge list with attributes
         graph_edges = []
         for eid in range(self._graph.ecount()):
             edge = self._graph.es[eid]

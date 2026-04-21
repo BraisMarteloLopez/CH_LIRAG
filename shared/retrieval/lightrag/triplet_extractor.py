@@ -514,7 +514,6 @@ class TripletExtractor:
         Divergencia #10: el prompt batch emite `high_level_keywords` por doc.
         Si el parsing batch falla, hace fallback a extraccion individual.
         """
-        # Filtrar docs vacios antes del batch
         non_empty = [d for d in docs if d.get("content", "").strip()]
         empty = [d for d in docs if not d.get("content", "").strip()]
 
