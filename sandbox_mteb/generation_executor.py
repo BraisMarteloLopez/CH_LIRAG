@@ -32,7 +32,7 @@ import logging
 import threading
 import time
 from collections import Counter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from shared.types import (
     NormalizedQuery,
@@ -220,6 +220,51 @@ class GenMetricsResult:
         self.primary_metric_value = primary_metric_value
         self.primary_metric_type = primary_metric_type
         self.secondary_metrics = secondary_metrics or {}
+
+
+# Dispatch table R6: resolucion de la metrica primaria por DatasetType.
+# Cada resolver retorna (MetricType, kwargs) listo para `calculate_async()`.
+# Mantener en sync con `DatasetType` (shared/types.py) y las metricas
+# declaradas en `DATASET_CONFIG`.
+
+def _resolve_primary_hybrid(
+    *, answer_type: Optional[str], expected_answer: Optional[str],
+    query_text: str, context: str, calc: MetricsCalculator,
+) -> Tuple[MetricType, Dict[str, Any]]:
+    # HYBRID: ACCURACY para clasificacion yes/no, F1_SCORE para extractiva.
+    # Para 1 token F1 ~ EM; para 2+ tokens F1 captura aciertos parciales.
+    if answer_type == "label":
+        return MetricType.ACCURACY, {"expected": expected_answer}
+    return MetricType.F1_SCORE, {"expected": expected_answer}
+
+
+def _resolve_primary_adapted(
+    *, answer_type: Optional[str], expected_answer: Optional[str],
+    query_text: str, context: str, calc: MetricsCalculator,
+) -> Tuple[MetricType, Dict[str, Any]]:
+    # ADAPTED: SEMANTIC_SIMILARITY si hay expected + embedding_model;
+    # ANSWER_RELEVANCE via LLM-judge en caso contrario.
+    if expected_answer and calc.embedding_model:
+        return MetricType.SEMANTIC_SIMILARITY, {"expected": expected_answer}
+    return MetricType.ANSWER_RELEVANCE, {"query": query_text}
+
+
+def _resolve_primary_retrieval_only(
+    *, answer_type: Optional[str], expected_answer: Optional[str],
+    query_text: str, context: str, calc: MetricsCalculator,
+) -> Tuple[MetricType, Dict[str, Any]]:
+    # RETRIEVAL_ONLY: FAITHFULNESS del generado contra el contexto.
+    return MetricType.FAITHFULNESS, {"context": context}
+
+
+_PRIMARY_METRIC_RESOLVERS: Dict[
+    DatasetType,
+    Callable[..., Tuple[MetricType, Dict[str, Any]]],
+] = {
+    DatasetType.HYBRID: _resolve_primary_hybrid,
+    DatasetType.ADAPTED: _resolve_primary_adapted,
+    DatasetType.RETRIEVAL_ONLY: _resolve_primary_retrieval_only,
+}
 
 
 class GenerationExecutor:
@@ -525,40 +570,24 @@ class GenerationExecutor:
         ds_config = get_dataset_config(dataset_name)
         calc = self._metrics_calculator
 
-        # Metrica principal
+        # Metrica principal via dispatch table (R6).
         try:
-            if dataset_type == DatasetType.HYBRID:
-                if answer_type == "label":
-                    primary = await calc.calculate_async(
-                        MetricType.ACCURACY,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-                else:
-                    primary = await calc.calculate_async(
-                        MetricType.F1_SCORE,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-            elif dataset_type == DatasetType.ADAPTED:
-                if expected_answer and calc.embedding_model:
-                    primary = await calc.calculate_async(
-                        MetricType.SEMANTIC_SIMILARITY,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-                else:
-                    primary = await calc.calculate_async(
-                        MetricType.ANSWER_RELEVANCE,
-                        generated=generated,
-                        query=query_text,
-                    )
-            else:  # RETRIEVAL_ONLY
-                primary = await calc.calculate_async(
-                    MetricType.FAITHFULNESS,
-                    generated=generated,
-                    context=context,
+            try:
+                resolver = _PRIMARY_METRIC_RESOLVERS[dataset_type]
+            except KeyError:
+                raise ValueError(
+                    f"DatasetType sin resolver de metrica primaria: {dataset_type}"
                 )
+            metric_type, extra_kwargs = resolver(
+                answer_type=answer_type,
+                expected_answer=expected_answer,
+                query_text=query_text,
+                context=context,
+                calc=calc,
+            )
+            primary = await calc.calculate_async(
+                metric_type, generated=generated, **extra_kwargs,
+            )
         except Exception as e:
             logger.warning(
                 "Primary metric %s calculation failed: %s",

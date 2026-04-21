@@ -70,12 +70,12 @@ def parse_citation_refs(
 
     candidate_matches = _CANDIDATE_RE.findall(text)
     # malformed = candidates - valid. El regex de candidates captura tambien
-    # los valid; restamos para que las categorias sean disjuntas.
+    # los valid; restamos para que las categorias sean disjuntas. Invariante:
+    # _CANDIDATE_RE es superset estricto de _VALID_RE, por tanto diff >= 0.
     malformed_count = len(candidate_matches) - valid_count
-    if malformed_count < 0:
-        # Paranoia: si _CANDIDATE_RE deja pasar menos que _VALID_RE (no
-        # deberia), no contamos negativos.
-        malformed_count = 0
+    assert malformed_count >= 0, (
+        "_CANDIDATE_RE debe ser superset de _VALID_RE"
+    )
 
     in_range_ns = [n for n in valid_ns if 1 <= n <= n_valid_chunks]
     out_of_range_count = valid_count - len(in_range_ns)
