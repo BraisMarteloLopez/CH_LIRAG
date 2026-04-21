@@ -367,9 +367,6 @@ class GenerationResult:
     model_name: str = "unknown"
 
 
-# Claves de retrieval_metadata que se serializan per-query en JSON/CSV.
-# Conteos para kg_entities/kg_relations (listas completas son pesadas) +
-# flags diagnosticos. Deuda #15 (cerrada).
 _RETRIEVAL_METADATA_PASSTHROUGH_KEYS = (
     "kg_fallback",
     "kg_chunk_keyword_matches",

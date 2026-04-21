@@ -143,8 +143,8 @@ class TestToJson:
         assert path.name == "custom.json"
 
     def test_retrieval_metadata_serialized_when_lightrag(self, tmp_path):
-        """Deuda #15 cerrada: el JSON serializa el subset de retrieval_metadata
-        con conteos de entidades/relaciones + flags de synthesis."""
+        """El JSON serializa el subset de retrieval_metadata con conteos
+        de entidades/relaciones + flags de synthesis."""
         exporter = RunExporter(output_dir=tmp_path)
         qrs = [_make_qr("q1", graph_meta=True, synthesis_error="timeout")]
         run = _make_run(query_results=qrs)
