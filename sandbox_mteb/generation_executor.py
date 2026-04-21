@@ -49,6 +49,7 @@ from shared.types import (
 )
 from shared.llm import AsyncLLMService
 from shared.metrics import MetricsCalculator, MetricResult
+from shared.operational_tracker import record_operational_event
 
 from shared.constants import GENERATION_QUERY_TIMEOUT_S
 from .config import (
@@ -453,6 +454,7 @@ class GenerationExecutor:
             )
         except Exception as e:
             logger.warning(f"Error generacion async: {e}")
+            record_operational_event("generation_error")
             return GenerationResult(f"[ERROR: {e}]", 0.0)
 
     async def _synthesize_kg_context_async(

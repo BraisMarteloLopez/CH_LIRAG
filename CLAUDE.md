@@ -123,7 +123,7 @@ Items cerrados cuyo ID sigue apareciendo en codigo como anotacion historica. No 
 
 ## Observabilidad de runs
 
-Los `EvaluationRun` exportados a JSON incluyen en `config_snapshot._runtime` dos bloques de stats para auditoria post-run:
+Los `EvaluationRun` exportados a JSON incluyen en `config_snapshot._runtime` tres bloques de stats para auditoria post-run:
 
 **`judge_fallback_stats`**: solo aparecen las `MetricType` del judge **efectivamente invocadas**. Por metrica: `invocations`, `parse_failures`, `default_returns` (0.5), `parse_failure_rate`, `default_return_rate`. Si `default_return_rate > JUDGE_FALLBACK_THRESHOLD` (default 2%) en cualquier metrica invocada, el run falla con `RuntimeError`. Que una metrica no aparezca no es bug — significa no invocada; auditar `primary_metric_type`/`secondary_metrics` en `query_results`.
 
@@ -138,6 +138,24 @@ jq '.config_snapshot._runtime.kg_synthesis_stats' <run_export.json>
 ```
 
 Ambos tambien se emiten en el evento estructurado `run_complete` del JSONL y en logs INFO al final de cada run.
+
+**`operational_stats`** (R14): contador per-evento de degradaciones silenciosas en 7 puntos del pipeline donde un bare-except traga la excepcion y continua con fallback. Siempre presente con los 7 tipos (valor 0 si no ocurrio):
+
+| Evento | Sitio | Fallback |
+|---|---|---|
+| `neighbor_lookup_failure` | `retriever.py` enrichment 1-hop (div #9) | entidad sin vecinos |
+| `chunk_keywords_vdb_error` | `retriever.py` canal div #10 | keyword omitido |
+| `description_synthesis_error` | `retriever.py` merge LLM de descripciones | descripcion concatenada |
+| `gleaning_error` | `triplet_extractor.py` `KG_GLEANING_ROUNDS` | sin tripletas extra |
+| `keywords_parse_failure` | `triplet_extractor.py` parse JSON keywords | keywords vacias |
+| `retrieval_error` | `retriever.py` build del KG en `index_documents` | vector puro sin KG |
+| `generation_error` | `generation_executor.py` llamada LLM final | respuesta con `[ERROR: ...]` |
+
+Valores altos indican degradacion del canal aunque el run termine sin error fatal. No bloquean el run — son senal para inspeccion post-hoc.
+
+```bash
+jq '.config_snapshot._runtime.operational_stats' <run_export.json>
+```
 
 **`citation_refs_{synth,gen}_*` (div #7, 14 campos per-query)**: solo LIGHT_RAG con synthesis activa. Parser `shared/citation_parser.py::parse_citation_refs` invocado dos veces en `_process_single_async`: sobre narrativa synth y sobre respuesta final, cada una con `n_chunks_emitted` como rango valido. 7 contadores por prefijo: `total`, `valid` (formato estricto `[ref:N]`), `malformed` (variantes), `in_range`, `out_of_range` (**senal roja**), `distinct`, `coverage_ratio`.
 
@@ -155,13 +173,16 @@ Ambos tambien se emiten en el evento estructurado `run_complete` del JSONL y en 
 
 ## Bare excepts tolerados (con criterio)
 
-Estos `except Exception as e:` logean el error y devuelven un fallback en vez de re-lanzar. El criterio para tolerarlos: estan en wrappers de infraestructura donde el run debe continuar ante errores operacionales puntuales (ChromaDB transitorio, NIM latencia), cada uno contabiliza el evento en stats (`kg_synthesis_stats`, `rerank_failures`) o loguea a `logger.warning`/`debug` para trazabilidad post-mortem, y el fallback es observable desde el JSON del run. Si un bare except no cumple las tres condiciones, es candidato a reclasificar:
+Estos `except Exception as e:` logean el error y devuelven un fallback en vez de re-lanzar. El criterio para tolerarlos: estan en wrappers de infraestructura donde el run debe continuar ante errores operacionales puntuales (ChromaDB transitorio, NIM latencia), cada uno contabiliza el evento en stats (`kg_synthesis_stats`, `operational_stats`, `rerank_failures`) o loguea a `logger.warning`/`debug` para trazabilidad post-mortem, y el fallback es observable desde el JSON del run. Si un bare except no cumple las tres condiciones, es candidato a reclasificar:
 
-| Ubicacion | Contexto |
-|---|---|
-| `reranker.py:147` | Reranking error — retorna fallback sin rerank |
-| `vector_store.py:126, 142, 179, 232, 247` | Operaciones ChromaDB — retorna fallback (lista vacia, dict vacio, o continua cleanup) |
-| `generation_executor.py` (`_synthesize_kg_context_async`) | `asyncio.TimeoutError` + `Exception` genericos durante synthesis KG — fallback al contexto estructurado. Eventos contabilizados en `kg_synthesis_stats` (errors/timeouts) |
+| Ubicacion | Contexto | Contador |
+|---|---|---|
+| `reranker.py:147` | Reranking error — retorna fallback sin rerank | `rerank_failures` |
+| `vector_store.py:126, 142, 179, 232, 247` | Operaciones ChromaDB — retorna fallback (lista vacia, dict vacio, o continua cleanup) | — (log-only) |
+| `generation_executor.py` (`_synthesize_kg_context_async`) | `asyncio.TimeoutError` + `Exception` genericos durante synthesis KG — fallback al contexto estructurado | `kg_synthesis_stats.errors/timeouts` |
+| `retriever.py:204` (KG build), `retriever.py:404` (description synthesis), `retriever.py:703` (chunk keywords VDB), `retriever.py:930` (neighbor lookup) | Degradaciones del KG en indexacion/retrieval | `operational_stats.*` |
+| `triplet_extractor.py:397` (gleaning), `triplet_extractor.py:732` (keywords parse) | Extraccion LLM degradada | `operational_stats.*` |
+| `generation_executor.py:456` (generation) | Fallo LLM en generacion final | `operational_stats.generation_error` |
 
 ## Test coverage
 

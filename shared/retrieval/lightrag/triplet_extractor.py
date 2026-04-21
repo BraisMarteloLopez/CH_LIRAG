@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.llm import AsyncLLMService, run_sync
+from shared.operational_tracker import record_operational_event
 
 from .knowledge_graph import KGEntity, KGRelation
 
@@ -394,6 +395,7 @@ class TripletExtractor:
             return entities, relations
         except Exception as e:
             logger.debug(f"Gleaning fallo para {doc_id}: {e}")
+            record_operational_event("gleaning_error")
             return [], []
 
     # -------------------------------------------------------------------------
@@ -728,6 +730,7 @@ class TripletExtractor:
             return low, high
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error parseando keywords JSON: {e}")
+            record_operational_event("keywords_parse_failure")
             return [], []
 
     async def extract_query_keywords_async(

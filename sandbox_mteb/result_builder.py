@@ -15,6 +15,7 @@ from shared.types import (
     LoadedDataset,
 )
 from shared.metrics import get_judge_fallback_stats
+from shared.operational_tracker import get_operational_stats
 from shared.retrieval import RetrievalStrategy
 
 from .config import MTEBConfig
@@ -165,6 +166,12 @@ def build_run(
         # invocations==0 => synthesis no se intento (no LIGHT_RAG, sin KG
         # data, o flag desactivada).
         "kg_synthesis_stats": get_kg_synthesis_stats(),
+        # operational_stats: contador de degradaciones silenciosas en 7
+        # puntos del pipeline (neighbor lookup, chunk keywords VDB,
+        # description synthesis, gleaning, keywords parse, retrieval build,
+        # generation). Valores altos => degradacion del canal aunque el
+        # run termine sin error fatal.
+        "operational_stats": get_operational_stats(),
     }
 
     return EvaluationRun(

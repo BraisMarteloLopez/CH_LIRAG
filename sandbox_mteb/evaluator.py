@@ -35,6 +35,7 @@ from shared.metrics import (
     max_judge_default_return_rate,
     reset_judge_fallback_stats,
 )
+from shared.operational_tracker import reset_operational_stats
 from shared.retrieval import get_retriever, RetrievalStrategy
 from shared.retrieval.core import BaseRetriever
 from shared.retrieval.reranker import CrossEncoderReranker, HAS_NVIDIA_RERANK
@@ -119,6 +120,9 @@ class MTEBEvaluator:
         reset_judge_fallback_stats()
         # Reset equivalente para el tracker de synthesis (kg_synthesis_stats).
         reset_kg_synthesis_stats()
+        # Reset del tracker de eventos operacionales (operational_stats):
+        # contadores de degradaciones silenciosas en 7 puntos del pipeline.
+        reset_operational_stats()
 
         try:
             # 1. Inicializar componentes
