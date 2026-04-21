@@ -430,6 +430,30 @@ def test_chunk_keywords_no_keywords_no_stats_bump():
     assert stats["total_chunk_keywords"] == 0
 
 
+def test_chunk_keywords_filter_observables_dt17():
+    """dt-17: contadores de keywords rechazadas por length y por cap."""
+    ext = make_extractor()
+    # 12 keywords validas + 1 too-short + 1 too-long => se acumulan
+    # 2 rechazos por length, el cap de 10 deja caer 2 adicionales.
+    long_kw = "a" * 100
+    keywords_in = (
+        ["x", long_kw]
+        + [f"theme {i:02d}" for i in range(12)]
+    )
+    raw = (
+        '{"entities": [], "relations": [], '
+        f'"high_level_keywords": {keywords_in!r}'
+        '}'
+    ).replace("'", '"')
+    _, _, keywords = ext._parse_extraction_json(raw, "doc1")
+    assert len(keywords) == 10  # cap activo
+
+    stats = ext.get_stats()
+    assert stats["chunk_keywords_rejected_len"] == 2  # "x" y long_kw
+    assert stats["chunk_keywords_dropped_by_cap"] == 2  # 12 - 10
+    assert stats["docs_chunk_keywords_capped"] == 1
+
+
 # =============================================================================
 # TE17-TE21: Estadisticas de extraccion
 # =============================================================================
