@@ -1,10 +1,5 @@
 """
-Modulo: LLM & Embeddings Service
-Descripcion: Servicios NIM para inferencia LLM y embeddings.
-
-Ubicacion: shared/llm.py
-
-Consolida llm.py + embeddings.py.
+Servicios NIM para inferencia LLM y embeddings.
 
 Notas de diseno:
   - _PersistentLoop: un unico event loop en thread daemon, elimina el ciclo

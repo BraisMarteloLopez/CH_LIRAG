@@ -1,11 +1,8 @@
 """
-Modulo: Knowledge Graph
-Descripcion: Grafo de conocimiento in-memory basado en igraph (C-backed).
-             Almacena entidades, relaciones y chunk keywords extraidos por LLM.
+Grafo de conocimiento in-memory basado en igraph (C-backed). Almacena
+entidades, relaciones y chunk keywords extraidos por LLM.
 
-Ubicacion: shared/retrieval/lightrag/knowledge_graph.py
-
-Uso: LIGHT_RAG construye el grafo durante indexacion. Durante retrieval, las
+LIGHT_RAG construye el grafo durante indexacion. Durante retrieval, las
 entidades resueltas via Entity VDB proveen source_doc_ids para obtener
 chunks; relaciones y chunk keywords (divergencia #10) son los otros dos
 canales que aportan al scoring agregado en `LightRAGRetriever`.

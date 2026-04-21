@@ -1,15 +1,4 @@
-"""
-Modulo: Shared Types
-Descripcion: Estructuras de datos normalizadas para evaluacion RAG.
-
-Ubicacion: shared/types.py
-
-Cambios respecto a la version original:
-  - EvaluationRun (plano) reemplaza GlobalEvaluationReport (matrix multi-modelo)
-  - LoadedDataset usa Dict index para queries (O(1) lookup vs O(n))
-  - NormalizedDocument sin parent_content (eso vive en sandbox_anthropic)
-  - Eliminado DatasetEvaluationResult (redundante con EvaluationRun)
-"""
+"""Estructuras de datos normalizadas para evaluacion RAG."""
 
 from __future__ import annotations
 
@@ -553,10 +542,6 @@ class EvaluationRun:
             self.run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         if not self.timestamp:
             self.timestamp = datetime.now().isoformat()
-
-    # NOTE: calculate_aggregates() eliminado (v3.2 cleanup).
-    # La agregacion se hace en MTEBEvaluator._build_run(), que es el unico
-    # punto de construccion de EvaluationRun. No habia callers de este metodo.
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializacion sin detalle de queries."""

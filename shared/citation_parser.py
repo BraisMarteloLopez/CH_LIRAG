@@ -1,7 +1,6 @@
 """
-Modulo: Citation Reference Parser
-Descripcion: Parseo de citas `[ref:N]` emitidas por el LLM, observable para
-             divergencia #7 (contexto estructurado JSON-lines con reference_id).
+Parseo de citas `[ref:N]` emitidas por el LLM, observable para divergencia #7
+(contexto estructurado JSON-lines con reference_id).
 
 El parser produce 7 contadores por cada texto analizado, discriminando formato
 (valid vs malformed), rango (in_range vs out_of_range respecto a los chunks

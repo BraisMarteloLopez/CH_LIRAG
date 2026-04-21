@@ -1,11 +1,5 @@
 """
-Modulo: Report Exporter
-Descripcion: Exportador plano para resultados de evaluacion.
-
-Ubicacion: shared/report.py
-
-Reemplaza evaluation_report.py (~500 lineas de boilerplate
-orientado a matrices de comparacion multi-modelo).
+Exportador plano para resultados de evaluacion.
 
 Un run = un JSON + un CSV resumen + un CSV detalle.
 """

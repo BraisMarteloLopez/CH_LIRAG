@@ -345,7 +345,6 @@ class TestToDetailCsv:
         assert rows[0]["kg_relations_count"] == "1"
         assert rows[0]["kg_chunk_keyword_matches"] == "3"
         assert rows[0]["kg_synthesis_used"] == "true"
-        # Claves legacy eliminadas: `graph_candidates` ya no aparece.
         assert "graph_candidates" not in rows[0]
 
     def test_lightrag_columns_absent_for_simple_vector_run(self, tmp_path):

@@ -1,7 +1,6 @@
 """
-Modulo: LightRAG Retriever
-Descripcion: Retriever basado en LightRAG (EMNLP 2025). Chunks obtenidos a
-             traves del KG con tres canales agregados al mismo doc_scores.
+Retriever basado en LightRAG (EMNLP 2025). Chunks obtenidos a traves del KG
+con tres canales agregados al mismo doc_scores.
 
 Flujo:
     Indexacion:

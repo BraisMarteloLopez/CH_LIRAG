@@ -1,11 +1,6 @@
 """
-Modulo: Structured Logging
-Descripcion: Logging JSONL estructurado para analisis post-hoc de runs.
-
-Ubicacion: shared/structured_logging.py
-
-Proporciona logging estructurado (JSONL) ademas del logging human-readable
-existente. Controlado por variable de entorno LOG_FORMAT.
+Logging JSONL estructurado para analisis post-hoc de runs, controlado por
+variable de entorno LOG_FORMAT.
 
 Uso:
     from shared.structured_logging import configure_logging, structured_log

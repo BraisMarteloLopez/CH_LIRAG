@@ -1,8 +1,5 @@
 """
-Modulo: Config Base
-Descripcion: Helpers para lectura de .env y sub-configs compartidos.
-
-Ubicacion: shared/config_base.py
+Helpers para lectura de .env y sub-configs compartidos.
 
 NO contiene instancias globales. Cada sandbox construye su config
 en su propio entry point via from_env().
@@ -152,13 +149,6 @@ class InfraConfig:
                 f"NIM_MAX_CONCURRENT={self.nim_max_concurrent} fuera de rango (1-128)"
             )
         return errors
-
-
-# NOTA: GenerationConfig y EvaluationConfig eliminadas (codigo muerto).
-# - GenerationConfig: parametros (temperature, max_tokens) se pasan
-#   directamente a AsyncLLMService, no via config.
-# - EvaluationConfig: max_queries/max_corpus estan en MTEBConfig;
-#   db_type/continue_on_error/verbose/log_every_n nunca se usaron.
 
 
 @dataclass

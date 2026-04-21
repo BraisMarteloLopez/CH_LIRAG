@@ -1,8 +1,5 @@
 """
-Modulo: Evaluation Metrics
-Descripcion: Metricas para evaluacion RAG.
-
-Ubicacion: shared/metrics.py
+Metricas para evaluacion RAG.
 
 Dos categorias:
   A) Con referencia: exact_match, f1_score, accuracy, semantic_similarity

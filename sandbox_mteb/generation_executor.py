@@ -1,8 +1,6 @@
 """
 Generation executor: generacion LLM + calculo de metricas.
 
-Extraido de evaluator.py para reducir su tamano (Fase B descomposicion).
-
 Contrato observable producido per-query (llega a JSON/CSV via
 `result_builder` y a `config_snapshot._runtime`):
   - `kg_synthesis_stats` (solo LIGHT_RAG + `KG_SYNTHESIS_ENABLED=true`):

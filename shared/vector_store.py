@@ -1,11 +1,5 @@
 """
-Modulo: Vector Store
-Descripcion: Wrapper ChromaDB para evaluacion RAG.
-
-Ubicacion: shared/vector_store.py
-
-FIX: delete_all_documents() ahora elimina la coleccion subyacente
-en Chroma y la recrea, en lugar de solo reasignar el wrapper Python.
+Wrapper ChromaDB para evaluacion RAG.
 
 Contrato externo (ChromaDB PersistentClient, >=0.5):
   - Persistencia en `VECTOR_DB_DIR` (default `.chroma_db/`).

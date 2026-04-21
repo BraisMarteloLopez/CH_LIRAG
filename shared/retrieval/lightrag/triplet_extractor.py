@@ -1,12 +1,9 @@
 """
-Modulo: Triplet Extractor
-Descripcion: Extraccion de tripletas (entidad, relacion, entidad) y
-             keywords de query usando LLM (AsyncLLMService via NIM).
+Extraccion de tripletas (entidad, relacion, entidad) y keywords de query
+usando LLM (AsyncLLMService via NIM).
 
-Ubicacion: shared/retrieval/triplet_extractor.py
-
-Uso: LIGHT_RAG usa este modulo durante indexacion (extraccion de
-tripletas del corpus) y durante retrieval (analisis de query).
+LIGHT_RAG usa este modulo durante indexacion (extraccion de tripletas del
+corpus) y durante retrieval (analisis de query).
 """
 
 from __future__ import annotations

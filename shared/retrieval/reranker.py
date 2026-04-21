@@ -1,8 +1,5 @@
 """
-Modulo: Reranker
-Descripcion: Cross-encoder reranking para post-filtrado de candidatos.
-
-Ubicacion: shared/retrieval/reranker.py
+Cross-encoder reranking para post-filtrado de candidatos.
 
 Flujo:
     Retriever -> top-N candidatos -> Reranker -> top-K reordenados

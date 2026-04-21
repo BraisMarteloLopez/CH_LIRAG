@@ -1,11 +1,4 @@
-"""
-Modulo: Retrieval Core
-Descripcion: Tipos base, configuracion, y SimpleVectorRetriever.
-
-Ubicacion: shared/retrieval/core.py
-
-Consolida base.py + simple_retriever.py en un unico archivo.
-"""
+"""Tipos base, configuracion, y SimpleVectorRetriever."""
 
 from __future__ import annotations
 
