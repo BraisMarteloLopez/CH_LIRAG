@@ -208,9 +208,9 @@ class SimpleVectorRetriever(BaseRetriever):
         self._vector_store: Any = None  # ChromaVectorStore, lazy import
 
     def _init_vector_store(self, collection_name: str) -> None:
-        from shared.vector_store import ChromaVectorStore
+        from shared.vector_store import ChromaStoreConfig, ChromaVectorStore
 
-        store_config = {
+        store_config: ChromaStoreConfig = {
             "CHROMA_COLLECTION_NAME": collection_name,
             "EMBEDDING_BATCH_SIZE": self.embedding_batch_size,
             "HNSW_NUM_THREADS": self.config.hnsw_num_threads,

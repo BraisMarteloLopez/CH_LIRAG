@@ -28,10 +28,31 @@ observable de citaciones ([div #7](../CLAUDE.md#div-7)).
 import logging
 import os
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 from shared.types import EmbeddingModelProtocol
 from shared.constants import CHROMA_IN_BATCH_SIZE
+
+
+# Espacios HNSW soportados por ChromaDB 0.5-0.6. `None` → default interno de
+# Chroma (l2). Ver CLAUDE.md deuda #3 sobre no-determinismo del grafo.
+HNSWSpace = Literal["cosine", "l2", "ip"]
+
+
+class ChromaStoreConfig(TypedDict, total=False):
+    """Config pasada al constructor de `ChromaVectorStore` (R5).
+
+    `total=False` porque todos los campos son opcionales: los consumidores
+    usan `config.get(...)` con defaults. `CHROMA_COLLECTION_NAME` se
+    autogenera si falta; `CHROMA_PERSIST_DIRECTORY=None` usa cliente
+    in-memory.
+    """
+
+    CHROMA_COLLECTION_NAME: str
+    CHROMA_PERSIST_DIRECTORY: Optional[str]
+    EMBEDDING_BATCH_SIZE: int
+    HNSW_NUM_THREADS: int
+    HNSW_SPACE: HNSWSpace
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +86,7 @@ class ChromaVectorStore:
         store.delete_all_documents()
     """
 
-    def __init__(self, config: Dict[str, Any], embedding_model: EmbeddingModelProtocol):
+    def __init__(self, config: ChromaStoreConfig, embedding_model: EmbeddingModelProtocol):
         if not HAS_CHROMA:
             raise ImportError("pip install langchain-chroma chromadb")
 

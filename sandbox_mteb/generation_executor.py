@@ -32,12 +32,42 @@ import logging
 import threading
 import time
 from collections import Counter
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, TypedDict
 
 # Tipos cerrados (R2): dominio de `kg_synthesis_error` per-query, tambien
 # emitido por `_synthesize_kg_context_async`. `None` indica synthesis
 # exitosa; el resto son razones de fallback graceful.
 SynthesisErrorReason = Literal["timeout", "error", "empty"]
+
+
+class KGSynthesisStats(TypedDict):
+    """Stats agregadas de la capa de synthesis KG (R5/R14).
+
+    Counters + timing per-invocacion (3 categorias: total/queue/llm).
+    `n_*_samples` reportan cuantas invocaciones contribuyeron al timing:
+    queue/llm pueden tener menos que total cuando un timeout cancelo la
+    coroutine antes del acquire o de la respuesta del LLM.
+    """
+
+    invocations: int
+    successes: int
+    errors: int
+    empty_returns: int
+    truncations: int
+    timeouts: int
+    fallback_rate: float
+    p50_total_ms: float
+    p95_total_ms: float
+    max_total_ms: float
+    n_total_samples: int
+    p50_queue_ms: float
+    p95_queue_ms: float
+    max_queue_ms: float
+    n_queue_samples: int
+    p50_llm_ms: float
+    p95_llm_ms: float
+    max_llm_ms: float
+    n_llm_samples: int
 
 from shared.types import (
     NormalizedQuery,
@@ -47,7 +77,7 @@ from shared.types import (
     MetricType,
     get_dataset_config,
 )
-from shared.llm import AsyncLLMService
+from shared.llm import AsyncLLMService, InvokeTiming
 from shared.metrics import MetricsCalculator, MetricResult
 from shared.operational_tracker import record_operational_event
 
@@ -151,7 +181,7 @@ class _KGSynthesisTracker:
             if llm_ms is not None:
                 self._timings["llm_ms"].append(llm_ms)
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> KGSynthesisStats:
         with self._lock:
             n = self._counters.get("invocations", 0)
             fallbacks = (
@@ -159,31 +189,30 @@ class _KGSynthesisTracker:
                 + self._counters.get("empty_returns", 0)
                 + self._counters.get("timeouts", 0)
             )
-            stats: Dict[str, Any] = {
-                "invocations": n,
-                "successes": self._counters.get("successes", 0),
-                "errors": self._counters.get("errors", 0),
-                "empty_returns": self._counters.get("empty_returns", 0),
-                "truncations": self._counters.get("truncations", 0),
-                "timeouts": self._counters.get("timeouts", 0),
-                "fallback_rate": (fallbacks / n) if n else 0.0,
-            }
-            # Timing por categoria. `n_samples` expone cuantas invocaciones
-            # poblaron cada lista (queue/llm pueden faltar en timeouts segun
-            # donde haya sido cancelada la call).
-            for key, values in self._timings.items():
-                prefix = key.replace("_ms", "")
-                stats[f"p50_{prefix}_ms"] = round(
-                    _percentile(values, 0.50), 1
-                )
-                stats[f"p95_{prefix}_ms"] = round(
-                    _percentile(values, 0.95), 1
-                )
-                stats[f"max_{prefix}_ms"] = round(
-                    max(values) if values else 0.0, 1
-                )
-                stats[f"n_{prefix}_samples"] = len(values)
-            return stats
+            total = self._timings["total_ms"]
+            queue = self._timings["queue_ms"]
+            llm = self._timings["llm_ms"]
+            return KGSynthesisStats(
+                invocations=n,
+                successes=self._counters.get("successes", 0),
+                errors=self._counters.get("errors", 0),
+                empty_returns=self._counters.get("empty_returns", 0),
+                truncations=self._counters.get("truncations", 0),
+                timeouts=self._counters.get("timeouts", 0),
+                fallback_rate=(fallbacks / n) if n else 0.0,
+                p50_total_ms=round(_percentile(total, 0.50), 1),
+                p95_total_ms=round(_percentile(total, 0.95), 1),
+                max_total_ms=round(max(total) if total else 0.0, 1),
+                n_total_samples=len(total),
+                p50_queue_ms=round(_percentile(queue, 0.50), 1),
+                p95_queue_ms=round(_percentile(queue, 0.95), 1),
+                max_queue_ms=round(max(queue) if queue else 0.0, 1),
+                n_queue_samples=len(queue),
+                p50_llm_ms=round(_percentile(llm, 0.50), 1),
+                p95_llm_ms=round(_percentile(llm, 0.95), 1),
+                max_llm_ms=round(max(llm) if llm else 0.0, 1),
+                n_llm_samples=len(llm),
+            )
 
     def reset(self) -> None:
         with self._lock:
@@ -195,13 +224,14 @@ class _KGSynthesisTracker:
 _kg_synthesis_tracker = _KGSynthesisTracker()
 
 
-def get_kg_synthesis_stats() -> Dict[str, Any]:
+def get_kg_synthesis_stats() -> KGSynthesisStats:
     """Snapshot del tracker de KG synthesis.
 
     Claves devueltas:
       - invocations: queries donde se intento la synthesis
       - successes, errors, empty_returns, truncations, timeouts
       - fallback_rate: (errors + empty_returns + timeouts) / invocations
+      - timing per-categoria (total/queue/llm): p50/p95/max_*_ms + n_*_samples
     """
     return _kg_synthesis_tracker.snapshot()
 
@@ -494,7 +524,7 @@ class GenerationExecutor:
         # Timing per-invocacion para discriminar saturacion de cola vs
         # llamada LLM lenta. `timing_out` se popula dentro de invoke_async
         # cuando llega al semaforo / completa la llamada.
-        timing_out: Dict[str, float] = {}
+        timing_out: InvokeTiming = {}
         t_start = time.perf_counter()
 
         def _record_timing() -> None:
@@ -651,6 +681,8 @@ class GenerationExecutor:
 __all__ = [
     "GenerationExecutor",
     "GenMetricsResult",
+    "KGSynthesisStats",
+    "SynthesisErrorReason",
     "get_kg_synthesis_stats",
     "reset_kg_synthesis_stats",
 ]

@@ -19,7 +19,24 @@ metricas — ver deuda tecnica asociada en CLAUDE.md.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Optional, TypedDict
+
+
+class CitationStats(TypedDict):
+    """7 contadores por texto analizado para el observable de citas (div #7).
+
+    total, valid y malformed son disjuntos (union cubre cada cita una vez).
+    in_range + out_of_range == valid. distinct <= in_range. coverage_ratio
+    en [0, 1] redondeado a 3 decimales.
+    """
+
+    total: int
+    valid: int
+    malformed: int
+    in_range: int
+    out_of_range: int
+    distinct: int
+    coverage_ratio: float
 
 # Formato estricto aceptado: [ref:N] con N entero sin espacios ni mayusculas.
 _VALID_RE = re.compile(r"\[ref:(\d+)\]")
@@ -33,7 +50,7 @@ _CANDIDATE_RE = re.compile(r"\[\s*[Rr][Ee][Ff]\s*:?\s*[^\]]*\]")
 
 def parse_citation_refs(
     text: Optional[str], n_valid_chunks: int,
-) -> Dict[str, Any]:
+) -> CitationStats:
     """Parse citas `[ref:N]` y variantes reconocibles.
 
     Args:
@@ -97,4 +114,4 @@ def parse_citation_refs(
     }
 
 
-__all__ = ["parse_citation_refs"]
+__all__ = ["CitationStats", "parse_citation_refs"]

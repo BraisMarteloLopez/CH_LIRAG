@@ -42,7 +42,7 @@ el prompt de keywords o el modelo LLM).
 from __future__ import annotations
 
 import threading
-from typing import Dict, Literal, get_args
+from typing import Dict, Literal, TypedDict, get_args
 
 
 OperationalEventType = Literal[
@@ -54,6 +54,22 @@ OperationalEventType = Literal[
     "retrieval_error",
     "generation_error",
 ]
+
+
+class OperationalStats(TypedDict):
+    """Contadores por tipo de evento operacional (R14).
+
+    Siempre presente con los 7 tipos, valor 0 si no ocurrio. Valores altos
+    indican degradacion del canal aunque el run termine sin error fatal.
+    """
+
+    neighbor_lookup_failure: int
+    chunk_keywords_vdb_error: int
+    description_synthesis_error: int
+    gleaning_error: int
+    keywords_parse_failure: int
+    retrieval_error: int
+    generation_error: int
 
 
 class _OperationalTracker:
@@ -72,9 +88,19 @@ class _OperationalTracker:
         with self._lock:
             self._counters[event] = self._counters.get(event, 0) + 1
 
-    def snapshot(self) -> Dict[str, int]:
+    def snapshot(self) -> OperationalStats:
         with self._lock:
-            return dict(self._counters)
+            # Construccion explicita para no depender de **kwargs sobre un
+            # dict[Literal, int] (mypy no lo estrecha a OperationalStats).
+            return OperationalStats(
+                neighbor_lookup_failure=self._counters["neighbor_lookup_failure"],
+                chunk_keywords_vdb_error=self._counters["chunk_keywords_vdb_error"],
+                description_synthesis_error=self._counters["description_synthesis_error"],
+                gleaning_error=self._counters["gleaning_error"],
+                keywords_parse_failure=self._counters["keywords_parse_failure"],
+                retrieval_error=self._counters["retrieval_error"],
+                generation_error=self._counters["generation_error"],
+            )
 
     def reset(self) -> None:
         with self._lock:
@@ -90,7 +116,7 @@ def record_operational_event(event: OperationalEventType) -> None:
     _operational_tracker.record(event)
 
 
-def get_operational_stats() -> Dict[str, int]:
+def get_operational_stats() -> OperationalStats:
     """Snapshot del tracker. Incluye siempre los 7 tipos (0 si no ocurrio)."""
     return _operational_tracker.snapshot()
 
@@ -102,6 +128,7 @@ def reset_operational_stats() -> None:
 
 __all__ = [
     "OperationalEventType",
+    "OperationalStats",
     "record_operational_event",
     "get_operational_stats",
     "reset_operational_stats",

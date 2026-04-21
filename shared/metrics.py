@@ -28,8 +28,23 @@ from typing import (
     List,
     Optional,
     Tuple,
+    TypedDict,
     Union,
 )
+
+
+class JudgeMetricStats(TypedDict):
+    """Contadores por metrica para `judge_fallback_stats` (R14).
+
+    Una entrada por cada `MetricType.value` invocada. Cuando invocations=0,
+    las tasas se reportan como 0.0 (no NaN) para simplificar el post-mortem.
+    """
+
+    invocations: int
+    parse_failures: int
+    default_returns: int
+    parse_failure_rate: float
+    default_return_rate: float
 
 # Importacion condicional de numpy
 try:
@@ -397,7 +412,7 @@ class _JudgeFallbackTracker:
         with self._lock:
             self._default_returns[metric_type.value] += 1
 
-    def snapshot(self) -> Dict[str, Dict[str, Any]]:
+    def snapshot(self) -> Dict[str, JudgeMetricStats]:
         """Snapshot por metrica con contadores absolutos y tasas."""
         with self._lock:
             metric_names = (
@@ -405,7 +420,7 @@ class _JudgeFallbackTracker:
                 | set(self._parse_failures)
                 | set(self._default_returns)
             )
-            result: Dict[str, Dict[str, Any]] = {}
+            result: Dict[str, JudgeMetricStats] = {}
             for name in metric_names:
                 n = self._invocations[name]
                 result[name] = {
@@ -431,7 +446,7 @@ class _JudgeFallbackTracker:
 _judge_fallback_tracker = _JudgeFallbackTracker()
 
 
-def get_judge_fallback_stats() -> Dict[str, Dict[str, Any]]:
+def get_judge_fallback_stats() -> Dict[str, JudgeMetricStats]:
     """Retorna snapshot del tracker de fallback del judge.
 
     Cada clave es el nombre de una metrica (MetricType.value). Valores:
@@ -454,7 +469,7 @@ def reset_judge_fallback_stats() -> None:
 
 
 def max_judge_default_return_rate(
-    stats: Dict[str, Dict[str, Any]],
+    stats: Dict[str, JudgeMetricStats],
 ) -> Tuple[Optional[str], float]:
     """Devuelve (nombre_metrica, tasa) con el mayor default_return_rate.
 

@@ -6,7 +6,7 @@ import dataclasses
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, cast
+from typing import Any, Dict, List, Literal, Optional, TypedDict, cast
 
 from shared.types import (
     EvaluationRun,
@@ -14,12 +14,12 @@ from shared.types import (
     QueryEvaluationResult,
     LoadedDataset,
 )
-from shared.metrics import get_judge_fallback_stats
-from shared.operational_tracker import get_operational_stats
+from shared.metrics import JudgeMetricStats, get_judge_fallback_stats
+from shared.operational_tracker import OperationalStats, get_operational_stats
 from shared.retrieval import RetrievalStrategy
 
 from .config import MTEBConfig
-from .generation_executor import get_kg_synthesis_stats
+from .generation_executor import KGSynthesisStats, get_kg_synthesis_stats
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,28 @@ logger = logging.getLogger(__name__)
 StrategyActualLabel = Literal[
     "SIMPLE_VECTOR", "LIGHT_RAG", "FALLBACK_SIMPLE_VECTOR"
 ]
+
+
+class RuntimeSnapshot(TypedDict):
+    """Forma del dict `config_snapshot["_runtime"]` (R5).
+
+    Campos derivados del run (no parte de la config estatica). Se anade
+    al dict producido por `_serialize_config`; consumido por
+    `EvaluationRun.to_dict()` y el JSON export. Cambios de schema aqui
+    impactan dashboards y scripts post-hoc (`jq '.config_snapshot._runtime'`).
+    """
+
+    max_context_chars: int
+    rerank_failures: Optional[int]
+    strategy_mismatches: int
+    corpus_total_available: int
+    corpus_indexed: int
+    gen_zero_count: int
+    gen_nonzero_count: int
+    strategy_actual: StrategyActualLabel
+    judge_fallback_stats: Dict[str, JudgeMetricStats]
+    kg_synthesis_stats: KGSynthesisStats
+    operational_stats: OperationalStats
 
 
 def _serialize_config(config: MTEBConfig) -> Dict[str, Any]:
@@ -150,7 +172,7 @@ def build_run(
         if strategy_mismatches == 0
         else "FALLBACK_SIMPLE_VECTOR"
     )
-    config_snapshot["_runtime"] = {
+    runtime_snapshot: RuntimeSnapshot = {
         "max_context_chars": max_context_chars,
         "rerank_failures": rerank_failures if config.reranker.enabled else None,
         "strategy_mismatches": strategy_mismatches,
@@ -173,6 +195,7 @@ def build_run(
         # run termine sin error fatal.
         "operational_stats": get_operational_stats(),
     }
+    config_snapshot["_runtime"] = runtime_snapshot
 
     return EvaluationRun(
         run_id=run_id,
@@ -200,4 +223,4 @@ def build_run(
     )
 
 
-__all__ = ["build_run"]
+__all__ = ["RuntimeSnapshot", "StrategyActualLabel", "build_run"]

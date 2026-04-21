@@ -28,6 +28,7 @@ from typing import (
     Optional,
     Protocol,
     Tuple,
+    TypedDict,
     cast,
     runtime_checkable,
 )
@@ -617,7 +618,23 @@ class EvaluationRun:
 # CONFIGURACION DE DATASETS
 # =============================================================================
 
-DATASET_CONFIG: Dict[str, Dict[str, Any]] = {
+class DatasetSpec(TypedDict):
+    """Forma de cada entrada de `DATASET_CONFIG` (R5).
+
+    `answer_field=None` indica que el dataset no expone respuesta textual
+    en queries.parquet (p.ej. solo retrieval). Consumido por loader,
+    generation_executor y evaluator.
+    """
+
+    type: "DatasetType"
+    primary_metric: "MetricType"
+    secondary_metrics: List["MetricType"]
+    has_supporting_facts: bool
+    answer_field: Optional[str]
+    description: str
+
+
+DATASET_CONFIG: Dict[str, DatasetSpec] = {
     "hotpotqa": {
         "type": DatasetType.HYBRID,
         "primary_metric": MetricType.F1_SCORE,
@@ -631,7 +648,7 @@ DATASET_CONFIG: Dict[str, Dict[str, Any]] = {
 }
 
 
-def get_dataset_config(dataset_name: str) -> Dict[str, Any]:
+def get_dataset_config(dataset_name: str) -> DatasetSpec:
     """Obtiene la configuracion para un dataset especifico."""
     normalized_name = dataset_name.lower().replace("-", "").replace("_", "")
 
@@ -684,19 +701,23 @@ class EmbeddingModelProtocol(Protocol):
 
 
 __all__ = [
-    "DatasetType",
-    "MetricType",
-    "EvaluationStatus",
-    "NormalizedQuery",
-    "NormalizedDocument",
-    "LoadedDataset",
-    "QueryRetrievalDetail",
-    "GenerationResult",
-    "QueryEvaluationResult",
-    "EvaluationRun",
+    "AnswerType",
     "DATASET_CONFIG",
-    "get_dataset_config",
-    "LLMJudgeProtocol",
+    "DatasetSpec",
+    "DatasetType",
     "EmbeddingModelProtocol",
+    "EvaluationRun",
+    "EvaluationStatus",
+    "GenerationResult",
+    "LLMJudgeProtocol",
+    "LoadStatus",
+    "LoadedDataset",
+    "MetricType",
+    "NormalizedDocument",
+    "NormalizedQuery",
+    "QueryEvaluationResult",
+    "QueryRetrievalDetail",
     "extract_retrieval_metadata_subset",
+    "get_dataset_config",
+    "parse_answer_type",
 ]

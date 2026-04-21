@@ -38,7 +38,20 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Coroutine, Dict, Optional, TypeVar
+from typing import Any, Coroutine, Dict, Optional, TypedDict, TypeVar
+
+
+class InvokeTiming(TypedDict, total=False):
+    """Timing populado por `AsyncLLMService.invoke_async` via `timing_out=`.
+
+    Ambas claves son opcionales porque una invocacion puede cancelarse
+    antes de poblarlas: p.ej. timeout antes de `acquire()` deja
+    ambos unset; timeout tras `acquire()` pero antes de respuesta deja
+    solo `queue_wait_ms` populado.
+    """
+
+    queue_wait_ms: float
+    llm_ms: float
 
 from shared.types import EmbeddingModelProtocol
 
@@ -289,7 +302,7 @@ class AsyncLLMService:
 
     async def _invoke_with_retry(
         self, messages: list, max_tokens: int = 4096,
-        timing_out: Optional[Dict[str, float]] = None,
+        timing_out: Optional[InvokeTiming] = None,
     ) -> str:
         """Invoca el LLM con reintentos y reporta timing opcional.
 
@@ -396,7 +409,7 @@ class AsyncLLMService:
         prompt: str,
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
-        timing_out: Optional[Dict[str, float]] = None,
+        timing_out: Optional[InvokeTiming] = None,
     ) -> str:
         """API async principal.
 
