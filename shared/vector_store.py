@@ -6,15 +6,53 @@ Ubicacion: shared/vector_store.py
 
 FIX: delete_all_documents() ahora elimina la coleccion subyacente
 en Chroma y la recrea, en lugar de solo reasignar el wrapper Python.
+
+Contrato externo (ChromaDB PersistentClient, >=0.5):
+  - Persistencia en `VECTOR_DB_DIR` (default `.chroma_db/`).
+  - Colecciones por run con prefijo `eval_<run_id>`; deuda
+    [#1](../CLAUDE.md#dt-1) — colecciones huerfanas si el proceso
+    muere antes de `_cleanup()`.
+  - Espacios HNSW soportados: `cosine|l2|ip` (`HNSW_SPACE` en metadata
+    de la coleccion). Default `cosine`.
+  - No determinismo: ChromaDB 0.5-0.6 no expone `hnsw:random_seed`
+    (deuda [#3](../CLAUDE.md#dt-3)).
+  - `LightRAGRetriever` accede a `_vector_store.collection_name` para
+    derivar nombres de Entity/Relationship/ChunkKeywords VDB (deuda
+    [#14](../CLAUDE.md#dt-14)).
+
+Schema del record insertado: `{id, embedding[D], document, metadata{
+  reference_id?, title?, ...}}` donde `reference_id` es requerido por el
+observable de citaciones ([div #7](../CLAUDE.md#div-7)).
 """
 
 import logging
 import os
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 from shared.types import EmbeddingModelProtocol
 from shared.constants import CHROMA_IN_BATCH_SIZE
+
+
+# Espacios HNSW soportados por ChromaDB 0.5-0.6. `None` → default interno de
+# Chroma (l2). Ver CLAUDE.md deuda #3 sobre no-determinismo del grafo.
+HNSWSpace = Literal["cosine", "l2", "ip"]
+
+
+class ChromaStoreConfig(TypedDict, total=False):
+    """Config pasada al constructor de `ChromaVectorStore` (R5).
+
+    `total=False` porque todos los campos son opcionales: los consumidores
+    usan `config.get(...)` con defaults. `CHROMA_COLLECTION_NAME` se
+    autogenera si falta; `CHROMA_PERSIST_DIRECTORY=None` usa cliente
+    in-memory.
+    """
+
+    CHROMA_COLLECTION_NAME: str
+    CHROMA_PERSIST_DIRECTORY: Optional[str]
+    EMBEDDING_BATCH_SIZE: int
+    HNSW_NUM_THREADS: int
+    HNSW_SPACE: HNSWSpace
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +86,7 @@ class ChromaVectorStore:
         store.delete_all_documents()
     """
 
-    def __init__(self, config: Dict[str, Any], embedding_model: EmbeddingModelProtocol):
+    def __init__(self, config: ChromaStoreConfig, embedding_model: EmbeddingModelProtocol):
         if not HAS_CHROMA:
             raise ImportError("pip install langchain-chroma chromadb")
 

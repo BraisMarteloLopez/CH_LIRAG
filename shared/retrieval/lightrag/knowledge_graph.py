@@ -21,7 +21,51 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
+
+
+class KGStats(TypedDict):
+    """Estadisticas del grafo para logging y observabilidad (R5).
+
+    Consumido por `LightRAGRetriever.index_documents` (log INFO) y por
+    `result_builder` via `retrieval_metadata`. Cambios aqui impactan el
+    JSON export.
+    """
+
+    num_entities: int
+    num_relations: int
+    num_docs_with_entities: int
+    avg_entities_per_doc: float
+    graph_connected_components: int
+    entities_dropped: int
+    entities_evicted: int
+    triplets_dropped_by_cap: int
+    max_entities: int
+    approx_memory_mb: float
+    num_docs_with_keywords: int
+    total_chunk_keywords: int
+
+
+class KGSerialized(TypedDict):
+    """Forma del JSON persistido por `KnowledgeGraph.save()` (R5).
+
+    La forma es contrato de disco: modificar las claves obliga a bumpear
+    `version` e invalidar los caches existentes en `KG_CACHE_DIR`. La
+    version actual (3) incluye `doc_to_keywords` (div #10); caches v<3
+    se rechazan en `from_dict()`.
+    """
+
+    version: int
+    max_entities: int
+    entities_dropped: int
+    triplets_dropped_by_cap: int
+    entities_evicted: int
+    entities: Dict[str, Dict[str, Any]]
+    doc_to_relations: Dict[str, List[Dict[str, str]]]
+    entity_to_docs: Dict[str, List[str]]
+    doc_to_entities: Dict[str, List[str]]
+    doc_to_keywords: Dict[str, List[str]]
+    graph: Dict[str, List[Dict[str, Any]]]
 
 from shared.constants import KG_DEFAULT_MAX_ENTITIES
 
@@ -864,7 +908,7 @@ class KnowledgeGraph:
         size += sys.getsizeof(self._doc_to_relations)
         return size
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> KGStats:
         """Estadisticas del grafo para logging."""
         mem_bytes = self._estimate_memory_bytes()
         components = 0
@@ -898,5 +942,7 @@ __all__ = [
     "HAS_IGRAPH",
     "KGEntity",
     "KGRelation",
+    "KGSerialized",
+    "KGStats",
     "KnowledgeGraph",
 ]

@@ -19,7 +19,24 @@ metricas — ver deuda tecnica asociada en CLAUDE.md.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Optional, TypedDict
+
+
+class CitationStats(TypedDict):
+    """7 contadores por texto analizado para el observable de citas (div #7).
+
+    total, valid y malformed son disjuntos (union cubre cada cita una vez).
+    in_range + out_of_range == valid. distinct <= in_range. coverage_ratio
+    en [0, 1] redondeado a 3 decimales.
+    """
+
+    total: int
+    valid: int
+    malformed: int
+    in_range: int
+    out_of_range: int
+    distinct: int
+    coverage_ratio: float
 
 # Formato estricto aceptado: [ref:N] con N entero sin espacios ni mayusculas.
 _VALID_RE = re.compile(r"\[ref:(\d+)\]")
@@ -33,7 +50,7 @@ _CANDIDATE_RE = re.compile(r"\[\s*[Rr][Ee][Ff]\s*:?\s*[^\]]*\]")
 
 def parse_citation_refs(
     text: Optional[str], n_valid_chunks: int,
-) -> Dict[str, Any]:
+) -> CitationStats:
     """Parse citas `[ref:N]` y variantes reconocibles.
 
     Args:
@@ -70,12 +87,12 @@ def parse_citation_refs(
 
     candidate_matches = _CANDIDATE_RE.findall(text)
     # malformed = candidates - valid. El regex de candidates captura tambien
-    # los valid; restamos para que las categorias sean disjuntas.
+    # los valid; restamos para que las categorias sean disjuntas. Invariante:
+    # _CANDIDATE_RE es superset estricto de _VALID_RE, por tanto diff >= 0.
     malformed_count = len(candidate_matches) - valid_count
-    if malformed_count < 0:
-        # Paranoia: si _CANDIDATE_RE deja pasar menos que _VALID_RE (no
-        # deberia), no contamos negativos.
-        malformed_count = 0
+    assert malformed_count >= 0, (
+        "_CANDIDATE_RE debe ser superset de _VALID_RE"
+    )
 
     in_range_ns = [n for n in valid_ns if 1 <= n <= n_valid_chunks]
     out_of_range_count = valid_count - len(in_range_ns)
@@ -97,4 +114,4 @@ def parse_citation_refs(
     }
 
 
-__all__ = ["parse_citation_refs"]
+__all__ = ["CitationStats", "parse_citation_refs"]

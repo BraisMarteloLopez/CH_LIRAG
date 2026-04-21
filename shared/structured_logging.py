@@ -26,13 +26,16 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional, cast
 
 
 logger = logging.getLogger(__name__)
 
+# Tipos cerrados (R2): documentan y acotan el dominio de valores validos.
+LogFormat = Literal["text", "jsonl"]
+
 # Formato controlado por env var: "text" (default, human-readable) o "jsonl"
-_LOG_FORMAT: str = "text"
+_LOG_FORMAT: LogFormat = "text"
 _JSONL_FILE = None
 
 
@@ -65,7 +68,9 @@ def configure_logging(
     global _LOG_FORMAT
 
     fmt = log_format or os.environ.get("LOG_FORMAT", "text").lower()
-    _LOG_FORMAT = fmt
+    if fmt not in ("text", "jsonl"):
+        raise ValueError(f"LOG_FORMAT='{fmt}' invalido; validos: ('text', 'jsonl')")
+    _LOG_FORMAT = cast(LogFormat, fmt)
 
     root = logging.getLogger()
     root.setLevel(level)

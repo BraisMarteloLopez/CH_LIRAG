@@ -6,7 +6,7 @@ import dataclasses
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, TypedDict, cast
 
 from shared.types import (
     EvaluationRun,
@@ -14,13 +14,44 @@ from shared.types import (
     QueryEvaluationResult,
     LoadedDataset,
 )
-from shared.metrics import get_judge_fallback_stats
+from shared.metrics import JudgeMetricStats, get_judge_fallback_stats
+from shared.operational_tracker import OperationalStats, get_operational_stats
 from shared.retrieval import RetrievalStrategy
 
 from .config import MTEBConfig
-from .generation_executor import get_kg_synthesis_stats
+from .generation_executor import KGSynthesisStats, get_kg_synthesis_stats
 
 logger = logging.getLogger(__name__)
+
+# Etiqueta del observable `strategy_actual` en config_snapshot._runtime.
+# Valores validos: nombres de RetrievalStrategy + "FALLBACK_SIMPLE_VECTOR"
+# (fallback emitido cuando el retriever real divergio del configurado, ver
+# `strategy_mismatches`).
+StrategyActualLabel = Literal[
+    "SIMPLE_VECTOR", "LIGHT_RAG", "FALLBACK_SIMPLE_VECTOR"
+]
+
+
+class RuntimeSnapshot(TypedDict):
+    """Forma del dict `config_snapshot["_runtime"]` (R5).
+
+    Campos derivados del run (no parte de la config estatica). Se anade
+    al dict producido por `_serialize_config`; consumido por
+    `EvaluationRun.to_dict()` y el JSON export. Cambios de schema aqui
+    impactan dashboards y scripts post-hoc (`jq '.config_snapshot._runtime'`).
+    """
+
+    max_context_chars: int
+    rerank_failures: Optional[int]
+    strategy_mismatches: int
+    corpus_total_available: int
+    corpus_indexed: int
+    gen_zero_count: int
+    gen_nonzero_count: int
+    strategy_actual: StrategyActualLabel
+    judge_fallback_stats: Dict[str, JudgeMetricStats]
+    kg_synthesis_stats: KGSynthesisStats
+    operational_stats: OperationalStats
 
 
 def _serialize_config(config: MTEBConfig) -> Dict[str, Any]:
@@ -136,7 +167,12 @@ def build_run(
     config_snapshot = _serialize_config(config)
     # Campos derivados del run (no en config)
     judge_fallback_stats = get_judge_fallback_stats()
-    config_snapshot["_runtime"] = {
+    strategy_actual: StrategyActualLabel = (
+        cast(StrategyActualLabel, config.retrieval.strategy.name)
+        if strategy_mismatches == 0
+        else "FALLBACK_SIMPLE_VECTOR"
+    )
+    runtime_snapshot: RuntimeSnapshot = {
         "max_context_chars": max_context_chars,
         "rerank_failures": rerank_failures if config.reranker.enabled else None,
         "strategy_mismatches": strategy_mismatches,
@@ -144,19 +180,22 @@ def build_run(
         "corpus_indexed": indexed_corpus_size,
         "gen_zero_count": gen_zero_count,
         "gen_nonzero_count": gen_nonzero_count,
-        "strategy_actual": (
-            config.retrieval.strategy.name
-            if strategy_mismatches == 0
-            else "FALLBACK_SIMPLE_VECTOR"
-        ),
-        # Deuda tecnica #4: tasa de fallback del LLM judge por metrica.
+        "strategy_actual": strategy_actual,
+        # judge_fallback_stats: tasa de fallback del LLM judge por metrica.
         # default_return_rate elevado => metricas del judge sesgadas a 0.5.
         "judge_fallback_stats": judge_fallback_stats,
-        # Divergencia LightRAG #2: stats de la capa de synthesis del KG.
+        # kg_synthesis_stats: stats de la capa de synthesis del KG.
         # invocations==0 => synthesis no se intento (no LIGHT_RAG, sin KG
         # data, o flag desactivada).
         "kg_synthesis_stats": get_kg_synthesis_stats(),
+        # operational_stats: contador de degradaciones silenciosas en 7
+        # puntos del pipeline (neighbor lookup, chunk keywords VDB,
+        # description synthesis, gleaning, keywords parse, retrieval build,
+        # generation). Valores altos => degradacion del canal aunque el
+        # run termine sin error fatal.
+        "operational_stats": get_operational_stats(),
     }
+    config_snapshot["_runtime"] = runtime_snapshot
 
     return EvaluationRun(
         run_id=run_id,
@@ -184,4 +223,4 @@ def build_run(
     )
 
 
-__all__ = ["build_run"]
+__all__ = ["RuntimeSnapshot", "StrategyActualLabel", "build_run"]

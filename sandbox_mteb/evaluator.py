@@ -35,6 +35,7 @@ from shared.metrics import (
     max_judge_default_return_rate,
     reset_judge_fallback_stats,
 )
+from shared.operational_tracker import reset_operational_stats
 from shared.retrieval import get_retriever, RetrievalStrategy
 from shared.retrieval.core import BaseRetriever
 from shared.retrieval.reranker import CrossEncoderReranker, HAS_NVIDIA_RERANK
@@ -67,8 +68,8 @@ def _format_query_exc(exc: BaseException) -> str:
 
     Algunas excepciones (p.ej. `asyncio.TimeoutError` instanciado sin args)
     tienen `str(exc) == ""`, lo que dejaba `error_message` vacio y perdia
-    el diagnostico (PENDING_AUDIT item A). Incluimos siempre el tipo y
-    caemos a repr() si el mensaje esta vacio.
+    el diagnostico. Incluimos siempre el tipo y caemos a repr() si el
+    mensaje esta vacio.
     """
     return f"{type(exc).__name__}: {str(exc) or repr(exc)}"
 
@@ -113,12 +114,15 @@ class MTEBEvaluator:
 
         self._log_run_start(run_id)
 
-        # Deuda tecnica #4: resetear tracker del judge al inicio de cada run
-        # para que las tasas reflejen solo este run y no estado acumulado
+        # Resetear tracker del judge (judge_fallback_stats) al inicio de cada
+        # run para que las tasas reflejen solo este run y no estado acumulado
         # de runs previos en el mismo proceso.
         reset_judge_fallback_stats()
-        # Divergencia LightRAG #2: resetear tambien el tracker de synthesis.
+        # Reset equivalente para el tracker de synthesis (kg_synthesis_stats).
         reset_kg_synthesis_stats()
+        # Reset del tracker de eventos operacionales (operational_stats):
+        # contadores de degradaciones silenciosas en 7 puntos del pipeline.
+        reset_operational_stats()
 
         try:
             # 1. Inicializar componentes
@@ -155,7 +159,7 @@ class MTEBEvaluator:
 
             self._log_run_complete(run_id, elapsed, evaluation_run)
 
-            # 6. Validar tasa de fallback del judge (deuda tecnica #4).
+            # 6. Validar tasa de fallback del judge (judge_fallback_stats).
             # Se hace DESPUES de construir el run para que las stats queden
             # persistidas en `config_snapshot._runtime` incluso si fallamos.
             self._validate_judge_fallback_threshold(run_id)
@@ -225,7 +229,7 @@ class MTEBEvaluator:
             f"MRR={evaluation_run.avg_mrr:.4f}"
         )
 
-        # Deuda tecnica #4: reporte visible de tasa de fallback del judge.
+        # Reporte visible de judge_fallback_stats (tasa de fallback del judge).
         judge_stats = get_judge_fallback_stats()
         if judge_stats:
             for metric_name, s in judge_stats.items():
@@ -238,7 +242,7 @@ class MTEBEvaluator:
                     s["default_return_rate"] * 100,
                 )
 
-        # Divergencia LightRAG #2: reporte de stats del KG synthesis.
+        # Reporte visible de kg_synthesis_stats (capa de synthesis del KG).
         synthesis_stats = get_kg_synthesis_stats()
         if synthesis_stats["invocations"] > 0:
             logger.info(
@@ -274,9 +278,9 @@ class MTEBEvaluator:
     def _validate_judge_fallback_threshold(self, run_id: str) -> None:
         """Falla el run si algun judge metric supera el threshold configurado.
 
-        Deuda tecnica #4: protege el experimento 3 (y cualquier run futuro
-        sobre corpus especializados) de reportar deltas artefacto causados
-        por el judge devolviendo 0.5 por defecto. Las stats ya estan
+        Guardrail de `judge_fallback_stats`: protege P2 (experimento 3) y
+        cualquier run sobre corpus especializados de reportar deltas artefacto
+        causados por el judge devolviendo 0.5 por defecto. Las stats ya estan
         persistidas en `evaluation_run.config_snapshot._runtime` antes de
         llegar aqui, asi que el usuario siempre puede inspeccionarlas.
         """
@@ -584,9 +588,9 @@ class MTEBEvaluator:
                 )
                 for idx, item in enumerate(raw):
                     if isinstance(item, BaseException):
-                        # PENDING_AUDIT item A: preservar tipo y mensaje para
-                        # que _assemble_results los escriba en error_message
-                        # (antes se perdian al quedarse solo en el log).
+                        # Preservar tipo y mensaje para que _assemble_results
+                        # los escriba en error_message (antes se perdian al
+                        # quedarse solo en el log).
                         gen_errors[idx] = item
                         logger.warning(
                             f"  Error async query {chunk_queries[idx].query_id}: "
@@ -649,7 +653,7 @@ class MTEBEvaluator:
 
         gen_errors: lista paralela a gen_metrics_results con la excepcion
         capturada (si la hubo) para cada query. Se usa para poblar
-        error_message en los FAILED (PENDING_AUDIT item A).
+        error_message en los FAILED.
         """
         if gen_errors is None:
             gen_errors = [None] * len(queries)
@@ -680,7 +684,7 @@ class MTEBEvaluator:
                     metadata=qr_metadata,
                 ))
             elif self.config.generation_enabled:
-                # PENDING_AUDIT item A: si hubo excepcion, preservar tipo+mensaje.
+                # Si hubo excepcion, preservar tipo+mensaje (diagnostico post-run).
                 error_message = (
                     _format_query_exc(exc) if exc is not None
                     else "Error en generacion/metricas async"

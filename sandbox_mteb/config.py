@@ -3,6 +3,15 @@ Configuracion para sandbox MTEB.
 
 Toda la parametrizacion viene del .env. El entry point (run.py)
 construye MTEBConfig.from_env() una sola vez.
+
+Contrato acoplado: `KG_SYNTHESIS_SYSTEM_PROMPT` instruye al LLM a emitir
+citas con formato literal `[ref:N]`. El parser en
+`shared/citation_parser.py` (regex `_VALID_RE = r"\\[ref:(\\d+)\\]"`)
+depende de ese formato exacto. Cambiar el prompt (p.ej. a `(ref:N)` o
+`[ref N]`) invalida silenciosamente los 14 campos `citation_refs_*`:
+el run sigue pasando pero el observable deja de medir lo que declara.
+Ver CLAUDE.md §deuda [#18](../CLAUDE.md#dt-18) y §divergencias
+[#7](../CLAUDE.md#div-7).
 """
 
 from __future__ import annotations

@@ -328,7 +328,7 @@ def test_assemble_results_no_generation():
 
 
 # =============================================================================
-# EV10: _assemble_results con excepcion capturada (PENDING_AUDIT item A)
+# EV10: _assemble_results con excepcion capturada (preserva tipo+mensaje)
 # =============================================================================
 
 def test_assemble_results_failed_with_exception_preserves_type_and_message():

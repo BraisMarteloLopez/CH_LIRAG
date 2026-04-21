@@ -14,6 +14,22 @@ Notas de diseno:
     dentro de la seccion critica, y elimina el binding a event loop).
   - run_sync() usa run_coroutine_threadsafe al loop persistente.
   - load_embedding_model acepta solo parametros explicitos (sin fallback).
+
+Contrato externo (NVIDIA NIM, API compatible OpenAI):
+  - POST {LLM_BASE_URL}/chat/completions — cuerpo `{model, messages,
+    temperature, max_tokens}`; respuesta `choices[0].message.content`.
+  - GET  {LLM_BASE_URL}/models — `data[0].max_model_len` en tokens;
+    consumido por `embedding_service.resolve_max_context_chars` (deuda
+    [#5](../CLAUDE.md#dt-5)).
+  - POST {EMBEDDING_BASE_URL}/embeddings — cuerpo `{input, model,
+    input_type?}`; `input_type=query|passage` solo si
+    EMBEDDING_MODEL_TYPE=asymmetric.
+
+Acople event loop: TODAS las invocaciones sync->async cruzan
+`_PersistentLoop._loop` via `asyncio.run_coroutine_threadsafe`. Un segundo
+loop rompe el binding del semaforo `_concurrency_sem`. Ver deuda
+[#9](../CLAUDE.md#dt-9) (lock-in NIM) y [#12](../CLAUDE.md#dt-12) (tests
+acoplados a mensajes de error).
 """
 
 import asyncio
@@ -22,7 +38,20 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Coroutine, Dict, Optional, TypeVar
+from typing import Any, Coroutine, Dict, Optional, TypedDict, TypeVar
+
+
+class InvokeTiming(TypedDict, total=False):
+    """Timing populado por `AsyncLLMService.invoke_async` via `timing_out=`.
+
+    Ambas claves son opcionales porque una invocacion puede cancelarse
+    antes de poblarlas: p.ej. timeout antes de `acquire()` deja
+    ambos unset; timeout tras `acquire()` pero antes de respuesta deja
+    solo `queue_wait_ms` populado.
+    """
+
+    queue_wait_ms: float
+    llm_ms: float
 
 from shared.types import EmbeddingModelProtocol
 
@@ -273,7 +302,7 @@ class AsyncLLMService:
 
     async def _invoke_with_retry(
         self, messages: list, max_tokens: int = 4096,
-        timing_out: Optional[Dict[str, float]] = None,
+        timing_out: Optional[InvokeTiming] = None,
     ) -> str:
         """Invoca el LLM con reintentos y reporta timing opcional.
 
@@ -380,7 +409,7 @@ class AsyncLLMService:
         prompt: str,
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
-        timing_out: Optional[Dict[str, float]] = None,
+        timing_out: Optional[InvokeTiming] = None,
     ) -> str:
         """API async principal.
 

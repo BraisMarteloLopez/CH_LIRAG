@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 from shared.types import (
     DatasetType,
@@ -25,6 +25,49 @@ from shared.types import (
 logger = logging.getLogger(__name__)
 
 from shared.constants import CHECKPOINT_CHUNK_SIZE  # queries per checkpoint
+
+
+class CheckpointRetrievalRecord(TypedDict):
+    """Bloque `retrieval` dentro de `CheckpointQueryRecord` (R5)."""
+
+    retrieved_doc_ids: List[str]
+    retrieved_contents: List[str]
+    retrieval_scores: List[float]
+    expected_doc_ids: List[str]
+    retrieval_time_ms: float
+    generation_doc_ids: List[str]
+    generation_contents: List[str]
+    pre_rerank_candidate_ids: List[str]
+    retrieval_metadata: Dict[str, Any]
+
+
+class CheckpointGenerationRecord(TypedDict):
+    """Bloque `generation` dentro de `CheckpointQueryRecord` (R5)."""
+
+    generated_response: str
+    generation_time_ms: float
+
+
+class CheckpointQueryRecord(TypedDict):
+    """Forma del dict serializado por `serialize_query_result` (R5).
+
+    Contrato de disco (JSON). Cambios de schema rompen checkpoints
+    existentes; bumpear esquema e invalidar cuando se anadan claves.
+    """
+
+    query_id: str
+    query_text: str
+    dataset_name: str
+    dataset_type: str
+    status: str
+    error_message: Optional[str]
+    expected_response: Optional[str]
+    primary_metric_type: str
+    primary_metric_value: float
+    secondary_metrics: Dict[str, float]
+    metadata: Dict[str, Any]
+    retrieval: CheckpointRetrievalRecord
+    generation: Optional[CheckpointGenerationRecord]
 
 
 def checkpoint_path(results_dir: str, run_id: str) -> Path:
@@ -84,7 +127,7 @@ def delete_checkpoint(results_dir: str, run_id: str) -> None:
         logger.info(f"  Checkpoint eliminado: {path.name}")
 
 
-def serialize_query_result(qr: QueryEvaluationResult) -> Dict[str, Any]:
+def serialize_query_result(qr: QueryEvaluationResult) -> CheckpointQueryRecord:
     """Serializa un QueryEvaluationResult a dict JSON-compatible."""
     r = qr.retrieval
     gen = qr.generation

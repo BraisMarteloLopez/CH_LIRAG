@@ -2,6 +2,27 @@
 Generation executor: generacion LLM + calculo de metricas.
 
 Extraido de evaluator.py para reducir su tamano (Fase B descomposicion).
+
+Contrato observable producido per-query (llega a JSON/CSV via
+`result_builder` y a `config_snapshot._runtime`):
+  - `kg_synthesis_stats` (solo LIGHT_RAG + `KG_SYNTHESIS_ENABLED=true`):
+    counters `{invocations, successes, errors, empty_returns,
+    truncations, timeouts, fallback_rate}` + timing `p50/p95/max_{total,
+    queue, llm}_ms`. Poblado por `_KGSynthesisTracker.snapshot()`;
+    reset al inicio de cada run por `reset_kg_synthesis_stats()`.
+    Guardrail: `fallback_rate > 10%` es senal roja (warning en logs,
+    sin bloqueo activo — ver CLAUDE.md §Observabilidad).
+  - `citation_refs_synth_*` y `citation_refs_gen_*` (14 campos,
+    [div #7](../CLAUDE.md#div-7)): parser `shared/citation_parser.py`
+    invocado dos veces en `_process_single_async` sobre narrativa synth
+    y respuesta final. Contadores: `total, valid, malformed, in_range,
+    out_of_range, distinct, coverage_ratio`. `out_of_range > 0` o
+    `malformed > 0` son senales rojas equivalentes a
+    `judge.default_return_rate > 2%` ([deuda #18](../CLAUDE.md#dt-18)).
+
+Fallback graceful: error/vacio/timeout en synthesis -> contexto
+estructurado original; faithfulness se evalua siempre contra el
+estructurado, no contra la narrativa (control anti-fabricacion).
 """
 
 from __future__ import annotations
@@ -11,7 +32,42 @@ import logging
 import threading
 import time
 from collections import Counter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, TypedDict
+
+# Tipos cerrados (R2): dominio de `kg_synthesis_error` per-query, tambien
+# emitido por `_synthesize_kg_context_async`. `None` indica synthesis
+# exitosa; el resto son razones de fallback graceful.
+SynthesisErrorReason = Literal["timeout", "error", "empty"]
+
+
+class KGSynthesisStats(TypedDict):
+    """Stats agregadas de la capa de synthesis KG (R5/R14).
+
+    Counters + timing per-invocacion (3 categorias: total/queue/llm).
+    `n_*_samples` reportan cuantas invocaciones contribuyeron al timing:
+    queue/llm pueden tener menos que total cuando un timeout cancelo la
+    coroutine antes del acquire o de la respuesta del LLM.
+    """
+
+    invocations: int
+    successes: int
+    errors: int
+    empty_returns: int
+    truncations: int
+    timeouts: int
+    fallback_rate: float
+    p50_total_ms: float
+    p95_total_ms: float
+    max_total_ms: float
+    n_total_samples: int
+    p50_queue_ms: float
+    p95_queue_ms: float
+    max_queue_ms: float
+    n_queue_samples: int
+    p50_llm_ms: float
+    p95_llm_ms: float
+    max_llm_ms: float
+    n_llm_samples: int
 
 from shared.types import (
     NormalizedQuery,
@@ -21,8 +77,9 @@ from shared.types import (
     MetricType,
     get_dataset_config,
 )
-from shared.llm import AsyncLLMService
+from shared.llm import AsyncLLMService, InvokeTiming
 from shared.metrics import MetricsCalculator, MetricResult
+from shared.operational_tracker import record_operational_event
 
 from shared.constants import GENERATION_QUERY_TIMEOUT_S
 from .config import (
@@ -124,7 +181,7 @@ class _KGSynthesisTracker:
             if llm_ms is not None:
                 self._timings["llm_ms"].append(llm_ms)
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> KGSynthesisStats:
         with self._lock:
             n = self._counters.get("invocations", 0)
             fallbacks = (
@@ -132,31 +189,30 @@ class _KGSynthesisTracker:
                 + self._counters.get("empty_returns", 0)
                 + self._counters.get("timeouts", 0)
             )
-            stats: Dict[str, Any] = {
-                "invocations": n,
-                "successes": self._counters.get("successes", 0),
-                "errors": self._counters.get("errors", 0),
-                "empty_returns": self._counters.get("empty_returns", 0),
-                "truncations": self._counters.get("truncations", 0),
-                "timeouts": self._counters.get("timeouts", 0),
-                "fallback_rate": (fallbacks / n) if n else 0.0,
-            }
-            # Timing por categoria. `n_samples` expone cuantas invocaciones
-            # poblaron cada lista (queue/llm pueden faltar en timeouts segun
-            # donde haya sido cancelada la call).
-            for key, values in self._timings.items():
-                prefix = key.replace("_ms", "")
-                stats[f"p50_{prefix}_ms"] = round(
-                    _percentile(values, 0.50), 1
-                )
-                stats[f"p95_{prefix}_ms"] = round(
-                    _percentile(values, 0.95), 1
-                )
-                stats[f"max_{prefix}_ms"] = round(
-                    max(values) if values else 0.0, 1
-                )
-                stats[f"n_{prefix}_samples"] = len(values)
-            return stats
+            total = self._timings["total_ms"]
+            queue = self._timings["queue_ms"]
+            llm = self._timings["llm_ms"]
+            return KGSynthesisStats(
+                invocations=n,
+                successes=self._counters.get("successes", 0),
+                errors=self._counters.get("errors", 0),
+                empty_returns=self._counters.get("empty_returns", 0),
+                truncations=self._counters.get("truncations", 0),
+                timeouts=self._counters.get("timeouts", 0),
+                fallback_rate=(fallbacks / n) if n else 0.0,
+                p50_total_ms=round(_percentile(total, 0.50), 1),
+                p95_total_ms=round(_percentile(total, 0.95), 1),
+                max_total_ms=round(max(total) if total else 0.0, 1),
+                n_total_samples=len(total),
+                p50_queue_ms=round(_percentile(queue, 0.50), 1),
+                p95_queue_ms=round(_percentile(queue, 0.95), 1),
+                max_queue_ms=round(max(queue) if queue else 0.0, 1),
+                n_queue_samples=len(queue),
+                p50_llm_ms=round(_percentile(llm, 0.50), 1),
+                p95_llm_ms=round(_percentile(llm, 0.95), 1),
+                max_llm_ms=round(max(llm) if llm else 0.0, 1),
+                n_llm_samples=len(llm),
+            )
 
     def reset(self) -> None:
         with self._lock:
@@ -168,13 +224,14 @@ class _KGSynthesisTracker:
 _kg_synthesis_tracker = _KGSynthesisTracker()
 
 
-def get_kg_synthesis_stats() -> Dict[str, Any]:
+def get_kg_synthesis_stats() -> KGSynthesisStats:
     """Snapshot del tracker de KG synthesis.
 
     Claves devueltas:
       - invocations: queries donde se intento la synthesis
       - successes, errors, empty_returns, truncations, timeouts
       - fallback_rate: (errors + empty_returns + timeouts) / invocations
+      - timing per-categoria (total/queue/llm): p50/p95/max_*_ms + n_*_samples
     """
     return _kg_synthesis_tracker.snapshot()
 
@@ -199,6 +256,51 @@ class GenMetricsResult:
         self.primary_metric_value = primary_metric_value
         self.primary_metric_type = primary_metric_type
         self.secondary_metrics = secondary_metrics or {}
+
+
+# Dispatch table R6: resolucion de la metrica primaria por DatasetType.
+# Cada resolver retorna (MetricType, kwargs) listo para `calculate_async()`.
+# Mantener en sync con `DatasetType` (shared/types.py) y las metricas
+# declaradas en `DATASET_CONFIG`.
+
+def _resolve_primary_hybrid(
+    *, answer_type: Optional[str], expected_answer: Optional[str],
+    query_text: str, context: str, calc: MetricsCalculator,
+) -> Tuple[MetricType, Dict[str, Any]]:
+    # HYBRID: ACCURACY para clasificacion yes/no, F1_SCORE para extractiva.
+    # Para 1 token F1 ~ EM; para 2+ tokens F1 captura aciertos parciales.
+    if answer_type == "label":
+        return MetricType.ACCURACY, {"expected": expected_answer}
+    return MetricType.F1_SCORE, {"expected": expected_answer}
+
+
+def _resolve_primary_adapted(
+    *, answer_type: Optional[str], expected_answer: Optional[str],
+    query_text: str, context: str, calc: MetricsCalculator,
+) -> Tuple[MetricType, Dict[str, Any]]:
+    # ADAPTED: SEMANTIC_SIMILARITY si hay expected + embedding_model;
+    # ANSWER_RELEVANCE via LLM-judge en caso contrario.
+    if expected_answer and calc.embedding_model:
+        return MetricType.SEMANTIC_SIMILARITY, {"expected": expected_answer}
+    return MetricType.ANSWER_RELEVANCE, {"query": query_text}
+
+
+def _resolve_primary_retrieval_only(
+    *, answer_type: Optional[str], expected_answer: Optional[str],
+    query_text: str, context: str, calc: MetricsCalculator,
+) -> Tuple[MetricType, Dict[str, Any]]:
+    # RETRIEVAL_ONLY: FAITHFULNESS del generado contra el contexto.
+    return MetricType.FAITHFULNESS, {"context": context}
+
+
+_PRIMARY_METRIC_RESOLVERS: Dict[
+    DatasetType,
+    Callable[..., Tuple[MetricType, Dict[str, Any]]],
+] = {
+    DatasetType.HYBRID: _resolve_primary_hybrid,
+    DatasetType.ADAPTED: _resolve_primary_adapted,
+    DatasetType.RETRIEVAL_ONLY: _resolve_primary_retrieval_only,
+}
 
 
 class GenerationExecutor:
@@ -382,13 +484,14 @@ class GenerationExecutor:
             )
         except Exception as e:
             logger.warning(f"Error generacion async: {e}")
+            record_operational_event("generation_error")
             return GenerationResult(f"[ERROR: {e}]", 0.0)
 
     async def _synthesize_kg_context_async(
         self,
         query_text: str,
         structured_context: str,
-    ) -> Tuple[str, Optional[str]]:
+    ) -> Tuple[str, Optional[SynthesisErrorReason]]:
         """Reescribe el contexto KG multi-seccion como narrativa coherente.
 
         Usa el LLM (`self._llm_service`) con un prompt query-aware que pide
@@ -421,7 +524,7 @@ class GenerationExecutor:
         # Timing per-invocacion para discriminar saturacion de cola vs
         # llamada LLM lenta. `timing_out` se popula dentro de invoke_async
         # cuando llega al semaforo / completa la llamada.
-        timing_out: Dict[str, float] = {}
+        timing_out: InvokeTiming = {}
         t_start = time.perf_counter()
 
         def _record_timing() -> None:
@@ -504,40 +607,24 @@ class GenerationExecutor:
         ds_config = get_dataset_config(dataset_name)
         calc = self._metrics_calculator
 
-        # Metrica principal
+        # Metrica principal via dispatch table (R6).
         try:
-            if dataset_type == DatasetType.HYBRID:
-                if answer_type == "label":
-                    primary = await calc.calculate_async(
-                        MetricType.ACCURACY,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-                else:
-                    primary = await calc.calculate_async(
-                        MetricType.F1_SCORE,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-            elif dataset_type == DatasetType.ADAPTED:
-                if expected_answer and calc.embedding_model:
-                    primary = await calc.calculate_async(
-                        MetricType.SEMANTIC_SIMILARITY,
-                        generated=generated,
-                        expected=expected_answer,
-                    )
-                else:
-                    primary = await calc.calculate_async(
-                        MetricType.ANSWER_RELEVANCE,
-                        generated=generated,
-                        query=query_text,
-                    )
-            else:  # RETRIEVAL_ONLY
-                primary = await calc.calculate_async(
-                    MetricType.FAITHFULNESS,
-                    generated=generated,
-                    context=context,
+            try:
+                resolver = _PRIMARY_METRIC_RESOLVERS[dataset_type]
+            except KeyError:
+                raise ValueError(
+                    f"DatasetType sin resolver de metrica primaria: {dataset_type}"
                 )
+            metric_type, extra_kwargs = resolver(
+                answer_type=answer_type,
+                expected_answer=expected_answer,
+                query_text=query_text,
+                context=context,
+                calc=calc,
+            )
+            primary = await calc.calculate_async(
+                metric_type, generated=generated, **extra_kwargs,
+            )
         except Exception as e:
             logger.warning(
                 "Primary metric %s calculation failed: %s",
@@ -594,6 +681,8 @@ class GenerationExecutor:
 __all__ = [
     "GenerationExecutor",
     "GenMetricsResult",
+    "KGSynthesisStats",
+    "SynthesisErrorReason",
     "get_kg_synthesis_stats",
     "reset_kg_synthesis_stats",
 ]

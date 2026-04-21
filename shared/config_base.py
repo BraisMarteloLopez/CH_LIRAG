@@ -10,13 +10,38 @@ en su propio entry point via from_env().
 Sub-configs compartidos:
   - InfraConfig: LLM, embeddings, concurrencia NIM
   - RerankerConfig: cross-encoder post-retrieval
+
+Contrato externo (env vars consumidas, prefijo canonico entre parentesis):
+  - LLM / NIM: LLM_BASE_URL, LLM_MODEL_NAME, LLM_TIMEOUT, LLM_MAX_TOKENS,
+    LLM_TEMPERATURE, NIM_MAX_CONCURRENT_REQUESTS.
+  - Embeddings: EMBEDDING_BASE_URL, EMBEDDING_MODEL_NAME,
+    EMBEDDING_MODEL_TYPE (asymmetric|symmetric), EMBEDDING_BATCH_SIZE.
+  - Reranker: RERANK_ENABLED, RERANK_BASE_URL, RERANK_MODEL_NAME,
+    RERANK_TOP_K, RERANK_CANDIDATES_K, RERANK_TIMEOUT.
+
+Las sub-configs que derivan de este modulo propagan validacion via
+`validate()`. Modificar los nombres de env vars rompe compatibilidad
+con `sandbox_mteb/.env` y `env.example`.
 """
 
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional, cast, get_args
+
+# Tipos cerrados (R2): documentan y acotan el dominio de valores validos.
+EmbeddingModelType = Literal["symmetric", "asymmetric"]
+
+
+def _parse_embedding_model_type(raw: str) -> EmbeddingModelType:
+    """Valida EMBEDDING_MODEL_TYPE y lo estrecha al tipo Literal."""
+    valid = get_args(EmbeddingModelType)
+    if raw not in valid:
+        raise ValueError(
+            f"EMBEDDING_MODEL_TYPE='{raw}' invalido; validos: {valid}"
+        )
+    return cast(EmbeddingModelType, raw)
 
 from dotenv import load_dotenv
 
@@ -87,7 +112,7 @@ class InfraConfig:
     llm_model_name: str = ""
     embedding_base_url: str = ""
     embedding_model_name: str = ""
-    embedding_model_type: str = "symmetric"  # "symmetric" | "asymmetric"
+    embedding_model_type: EmbeddingModelType = "symmetric"
     embedding_batch_size: int = 50
     nim_max_concurrent: int = 32
     nim_timeout: int = 120
@@ -100,7 +125,9 @@ class InfraConfig:
             llm_model_name=_env("LLM_MODEL_NAME"),
             embedding_base_url=_env("EMBEDDING_BASE_URL"),
             embedding_model_name=_env("EMBEDDING_MODEL_NAME"),
-            embedding_model_type=_env("EMBEDDING_MODEL_TYPE", "symmetric"),
+            embedding_model_type=_parse_embedding_model_type(
+                _env("EMBEDDING_MODEL_TYPE", "symmetric")
+            ),
             embedding_batch_size=_env_int("EMBEDDING_BATCH_SIZE", 50),
             nim_max_concurrent=_env_int("NIM_MAX_CONCURRENT_REQUESTS", 32),
             nim_timeout=_env_int("NIM_REQUEST_TIMEOUT", 120),

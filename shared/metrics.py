@@ -22,12 +22,29 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import (
     Any,
+    Awaitable,
+    Callable,
     Dict,
     List,
     Optional,
     Tuple,
+    TypedDict,
     Union,
 )
+
+
+class JudgeMetricStats(TypedDict):
+    """Contadores por metrica para `judge_fallback_stats` (R14).
+
+    Una entrada por cada `MetricType.value` invocada. Cuando invocations=0,
+    las tasas se reportan como 0.0 (no NaN) para simplificar el post-mortem.
+    """
+
+    invocations: int
+    parse_failures: int
+    default_returns: int
+    parse_failure_rate: float
+    default_return_rate: float
 
 # Importacion condicional de numpy
 try:
@@ -356,7 +373,7 @@ def semantic_similarity(
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Tracker de tasa de fallback del LLM judge (deuda tecnica #4)
+# Tracker de tasa de fallback del LLM judge (judge_fallback_stats)
 #
 # Contabiliza, por tipo de metrica, la proporcion de invocaciones donde el
 # judge no pudo producir un score estructurado y tuvimos que recurrir a
@@ -395,7 +412,7 @@ class _JudgeFallbackTracker:
         with self._lock:
             self._default_returns[metric_type.value] += 1
 
-    def snapshot(self) -> Dict[str, Dict[str, Any]]:
+    def snapshot(self) -> Dict[str, JudgeMetricStats]:
         """Snapshot por metrica con contadores absolutos y tasas."""
         with self._lock:
             metric_names = (
@@ -403,7 +420,7 @@ class _JudgeFallbackTracker:
                 | set(self._parse_failures)
                 | set(self._default_returns)
             )
-            result: Dict[str, Dict[str, Any]] = {}
+            result: Dict[str, JudgeMetricStats] = {}
             for name in metric_names:
                 n = self._invocations[name]
                 result[name] = {
@@ -429,7 +446,7 @@ class _JudgeFallbackTracker:
 _judge_fallback_tracker = _JudgeFallbackTracker()
 
 
-def get_judge_fallback_stats() -> Dict[str, Dict[str, Any]]:
+def get_judge_fallback_stats() -> Dict[str, JudgeMetricStats]:
     """Retorna snapshot del tracker de fallback del judge.
 
     Cada clave es el nombre de una metrica (MetricType.value). Valores:
@@ -452,7 +469,7 @@ def reset_judge_fallback_stats() -> None:
 
 
 def max_judge_default_return_rate(
-    stats: Dict[str, Dict[str, Any]],
+    stats: Dict[str, JudgeMetricStats],
 ) -> Tuple[Optional[str], float]:
     """Devuelve (nombre_metrica, tasa) con el mayor default_return_rate.
 
@@ -631,8 +648,8 @@ def _parse_judge_result(response_text: str, metric_type: MetricType) -> MetricRe
             confidence=confidence
         )
     else:
-        # Deuda tecnica #4: el JSON no parseo, caemos a regex. Esto ya
-        # es una senal de degradacion del judge.
+        # El JSON no parseo, caemos a regex. Esto ya es una senal de
+        # degradacion del judge (contabilizado en judge_fallback_stats).
         _judge_fallback_tracker.record_parse_failure(metric_type)
 
         score, was_default = _extract_score_fallback_with_status(response_text)
@@ -801,6 +818,100 @@ async def answer_relevance_async(
 # SECCION 5: CLASE ORQUESTADORA DE METRICAS
 # =============================================================================
 
+# Dispatch tables R6: despacho por MetricType sin if/elif en `calculate()`/
+# `calculate_async()`. Cada helper valida sus precondiciones y retorna el
+# MetricResult. Los async dispatchers solo existen para metricas LLM-judge;
+# las metricas con referencia reutilizan la version sync (instantanea).
+
+def _call_exact_match(*, generated: str, expected: Optional[str],
+                      calc: "MetricsCalculator", **_: Any) -> MetricResult:
+    if expected is None:
+        raise ValueError("EXACT_MATCH requiere 'expected'")
+    return exact_match(generated, expected)
+
+
+def _call_f1_score(*, generated: str, expected: Optional[str],
+                   calc: "MetricsCalculator", **_: Any) -> MetricResult:
+    if expected is None:
+        raise ValueError("F1_SCORE requiere 'expected'")
+    return f1_score(generated, expected)
+
+
+def _call_accuracy(*, generated: str, expected: Optional[str],
+                   calc: "MetricsCalculator", **_: Any) -> MetricResult:
+    if expected is None:
+        raise ValueError("ACCURACY requiere 'expected'")
+    return accuracy(generated, expected)
+
+
+def _call_semantic_similarity(*, generated: str, expected: Optional[str],
+                              calc: "MetricsCalculator",
+                              **_: Any) -> MetricResult:
+    if expected is None:
+        raise ValueError("SEMANTIC_SIMILARITY requiere 'expected'")
+    if calc.embedding_model is None:
+        raise ValueError("SEMANTIC_SIMILARITY requiere embedding_model configurado")
+    return semantic_similarity(generated, expected, calc.embedding_model)
+
+
+def _call_faithfulness(*, generated: str, context: Optional[str],
+                       calc: "MetricsCalculator", **_: Any) -> MetricResult:
+    if context is None:
+        raise ValueError("FAITHFULNESS requiere 'context'")
+    if calc.llm_judge is None:
+        raise ValueError("FAITHFULNESS requiere llm_judge configurado")
+    return faithfulness(generated, context, calc.llm_judge)
+
+
+def _call_answer_relevance(*, generated: str, query: Optional[str],
+                           calc: "MetricsCalculator",
+                           **_: Any) -> MetricResult:
+    if query is None:
+        raise ValueError("ANSWER_RELEVANCE requiere 'query'")
+    if calc.llm_judge is None:
+        raise ValueError("ANSWER_RELEVANCE requiere llm_judge configurado")
+    return answer_relevance(generated, query, calc.llm_judge)
+
+
+_METRIC_DISPATCH: Dict[MetricType, Callable[..., MetricResult]] = {
+    MetricType.EXACT_MATCH: _call_exact_match,
+    MetricType.F1_SCORE: _call_f1_score,
+    MetricType.ACCURACY: _call_accuracy,
+    MetricType.SEMANTIC_SIMILARITY: _call_semantic_similarity,
+    MetricType.FAITHFULNESS: _call_faithfulness,
+    MetricType.ANSWER_RELEVANCE: _call_answer_relevance,
+}
+
+
+async def _call_faithfulness_async(*, generated: str, context: Optional[str],
+                                   calc: "MetricsCalculator",
+                                   **_: Any) -> MetricResult:
+    if context is None:
+        raise ValueError("FAITHFULNESS requiere 'context'")
+    if calc.llm_judge is None:
+        raise ValueError("FAITHFULNESS requiere llm_judge configurado")
+    return await faithfulness_async(generated, context, calc.llm_judge)
+
+
+async def _call_answer_relevance_async(*, generated: str,
+                                       query: Optional[str],
+                                       calc: "MetricsCalculator",
+                                       **_: Any) -> MetricResult:
+    if query is None:
+        raise ValueError("ANSWER_RELEVANCE requiere 'query'")
+    if calc.llm_judge is None:
+        raise ValueError("ANSWER_RELEVANCE requiere llm_judge configurado")
+    return await answer_relevance_async(generated, query, calc.llm_judge)
+
+
+_METRIC_DISPATCH_ASYNC: Dict[
+    MetricType, Callable[..., Awaitable[MetricResult]]
+] = {
+    MetricType.FAITHFULNESS: _call_faithfulness_async,
+    MetricType.ANSWER_RELEVANCE: _call_answer_relevance_async,
+}
+
+
 class MetricsCalculator:
     """Orquestador de metricas segun tipo de dataset y disponibilidad de ground truth."""
 
@@ -827,44 +938,17 @@ class MetricsCalculator:
         query: Optional[str] = None
     ) -> MetricResult:
         """Calcula una metrica. Raises ValueError si faltan argumentos requeridos."""
-        if metric_type == MetricType.EXACT_MATCH:
-            if expected is None:
-                raise ValueError("EXACT_MATCH requiere 'expected'")
-            return exact_match(generated, expected)
-
-        elif metric_type == MetricType.F1_SCORE:
-            if expected is None:
-                raise ValueError("F1_SCORE requiere 'expected'")
-            return f1_score(generated, expected)
-
-        elif metric_type == MetricType.ACCURACY:
-            if expected is None:
-                raise ValueError("ACCURACY requiere 'expected'")
-            return accuracy(generated, expected)
-
-        elif metric_type == MetricType.SEMANTIC_SIMILARITY:
-            if expected is None:
-                raise ValueError("SEMANTIC_SIMILARITY requiere 'expected'")
-            if self.embedding_model is None:
-                raise ValueError("SEMANTIC_SIMILARITY requiere embedding_model configurado")
-            return semantic_similarity(generated, expected, self.embedding_model)
-
-        elif metric_type == MetricType.FAITHFULNESS:
-            if context is None:
-                raise ValueError("FAITHFULNESS requiere 'context'")
-            if self.llm_judge is None:
-                raise ValueError("FAITHFULNESS requiere llm_judge configurado")
-            return faithfulness(generated, context, self.llm_judge)
-
-        elif metric_type == MetricType.ANSWER_RELEVANCE:
-            if query is None:
-                raise ValueError("ANSWER_RELEVANCE requiere 'query'")
-            if self.llm_judge is None:
-                raise ValueError("ANSWER_RELEVANCE requiere llm_judge configurado")
-            return answer_relevance(generated, query, self.llm_judge)
-
-        else:
+        try:
+            fn = _METRIC_DISPATCH[metric_type]
+        except KeyError:
             raise ValueError(f"Tipo de metrica no soportado: {metric_type}")
+        return fn(
+            generated=generated,
+            expected=expected,
+            context=context,
+            query=query,
+            calc=self,
+        )
 
     def calculate_all(
         self,
@@ -924,29 +1008,15 @@ class MetricsCalculator:
         context: Optional[str] = None,
         query: Optional[str] = None,
     ) -> MetricResult:
-        """Version async de calculate(). Metricas con referencia son sync; LLM-judge usa invoke_async."""
-        # Metricas con referencia: compute sync (instantaneo)
-        if metric_type in (
-            MetricType.EXACT_MATCH,
-            MetricType.F1_SCORE,
-            MetricType.ACCURACY,
-            MetricType.SEMANTIC_SIMILARITY,
-        ):
+        """Version async de calculate(). Metricas con referencia reutilizan la
+        version sync (instantanea); solo LLM-judge ejecuta async."""
+        async_fn = _METRIC_DISPATCH_ASYNC.get(metric_type)
+        if async_fn is None:
             return self.calculate(metric_type, generated, expected, context, query)
-
-        # Metricas LLM Judge: compute async
-        if self.llm_judge is None:
-            raise ValueError(f"{metric_type.value} requiere llm_judge configurado")
-
-        if metric_type == MetricType.FAITHFULNESS:
-            if context is None:
-                raise ValueError("FAITHFULNESS requiere 'context'")
-            return await faithfulness_async(generated, context, self.llm_judge)
-
-        elif metric_type == MetricType.ANSWER_RELEVANCE:
-            if query is None:
-                raise ValueError("ANSWER_RELEVANCE requiere 'query'")
-            return await answer_relevance_async(generated, query, self.llm_judge)
-
-        else:
-            raise ValueError(f"Tipo de metrica no soportado: {metric_type}")
+        return await async_fn(
+            generated=generated,
+            expected=expected,
+            context=context,
+            query=query,
+            calc=self,
+        )

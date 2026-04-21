@@ -33,10 +33,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.llm import AsyncLLMService, run_sync
+from shared.operational_tracker import record_operational_event
 from shared.types import EmbeddingModelProtocol
 
 from ..core import (
     BaseRetriever,
+    LightRAGMode,
     RetrievalConfig,
     RetrievalResult,
     RetrievalStrategy,
@@ -100,7 +102,7 @@ class LightRAGRetriever(BaseRetriever):
         self._kg_extraction_max_tokens = config.kg_extraction_max_tokens
         self._kg_batch_docs_per_call = config.kg_batch_docs_per_call
         self._kg_gleaning_rounds = config.kg_gleaning_rounds
-        self._lightrag_mode = config.lightrag_mode
+        self._lightrag_mode: LightRAGMode = config.lightrag_mode
         self._max_neighbors_per_entity = config.kg_max_neighbors_per_entity
 
         # Vector retriever (siempre disponible)
@@ -205,6 +207,7 @@ class LightRAGRetriever(BaseRetriever):
                     f"LightRAGRetriever: error construyendo KG: {e}. "
                     f"Continuando solo con vector search."
                 )
+                record_operational_event("retrieval_error")
                 self._has_graph = False
                 if self._extractor:
                     self._extractor.reset_stats()
@@ -404,6 +407,7 @@ class LightRAGRetriever(BaseRetriever):
                     f"LLM synthesis failed for entity '{name}': {e}. "
                     "Keeping concatenated description."
                 )
+                record_operational_event("description_synthesis_error")
 
         return synthesized
 
@@ -702,6 +706,7 @@ class LightRAGRetriever(BaseRetriever):
                 logger.debug(
                     "Chunk keywords VDB search failed for '%s': %s", kw, e
                 )
+                record_operational_event("chunk_keywords_vdb_error")
                 continue
             for doc, distance in results:
                 if distance > self._CHUNK_KEYWORDS_VDB_MAX_DISTANCE:
@@ -930,6 +935,7 @@ class LightRAGRetriever(BaseRetriever):
                                 "Neighbor lookup failed for %s, continuing without",
                                 name,
                             )
+                            record_operational_event("neighbor_lookup_failure")
                         kg_entities.append(entry)
                     if len(kg_entities) >= self._MAX_CONTEXT_ENTITIES:
                         break
