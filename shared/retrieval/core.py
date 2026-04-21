@@ -180,6 +180,18 @@ class SimpleVectorRetriever(BaseRetriever):
         self.embedding_batch_size = embedding_batch_size
         self._vector_store: Any = None  # ChromaVectorStore, lazy import
 
+    @property
+    def active_collection_name(self) -> Optional[str]:
+        """Nombre real de la coleccion ChromaDB activa, o None si no indexado.
+
+        Consumidores externos (p.ej. LightRAGRetriever construyendo VDBs
+        auxiliares) deben usar esta property en vez de acceder a
+        `_vector_store.collection_name` directamente.
+        """
+        if self._vector_store is not None:
+            return self._vector_store.collection_name
+        return self.collection_name
+
     def _init_vector_store(self, collection_name: str) -> None:
         from shared.vector_store import ChromaStoreConfig, ChromaVectorStore
 

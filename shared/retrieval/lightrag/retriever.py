@@ -150,6 +150,18 @@ class LightRAGRetriever(BaseRetriever):
         self._query_keywords_cache: OrderedDict[str, Tuple[List[str], List[str]]] = OrderedDict()
         self._cache_lock = threading.Lock()
 
+    def _aux_vdb_collection_name(self, suffix: str) -> str:
+        """Deriva el nombre de una VDB auxiliar (entities/relationships/chunk_keywords)
+        del nombre activo del ChromaVectorStore principal.
+        """
+        base = self._vector_retriever.active_collection_name
+        if not base:
+            raise RuntimeError(
+                "No se puede derivar nombre de VDB auxiliar: vector store "
+                "principal no tiene coleccion activa"
+            )
+        return f"{base}_{suffix}"
+
     def index_documents(
         self,
         documents: List[Dict[str, Any]],
@@ -426,9 +438,7 @@ class LightRAGRetriever(BaseRetriever):
         from shared.vector_store import ChromaVectorStore
         from langchain_core.documents import Document
 
-        # Collection name: {base}_entities para no colisionar con docs
-        base_name = self._vector_retriever._vector_store.collection_name
-        entity_collection_name = f"{base_name}_entities"
+        entity_collection_name = self._aux_vdb_collection_name("entities")
 
         # Limpiar VDB anterior si existe
         if self._entities_vdb is not None:
@@ -532,8 +542,7 @@ class LightRAGRetriever(BaseRetriever):
         from shared.vector_store import ChromaVectorStore
         from langchain_core.documents import Document
 
-        base_name = self._vector_retriever._vector_store.collection_name
-        rel_collection_name = f"{base_name}_relationships"
+        rel_collection_name = self._aux_vdb_collection_name("relationships")
 
         if self._relationships_vdb is not None:
             try:
@@ -625,8 +634,7 @@ class LightRAGRetriever(BaseRetriever):
         from shared.vector_store import ChromaVectorStore
         from langchain_core.documents import Document
 
-        base_name = self._vector_retriever._vector_store.collection_name
-        ck_collection_name = f"{base_name}_chunk_keywords"
+        ck_collection_name = self._aux_vdb_collection_name("chunk_keywords")
 
         if self._chunk_keywords_vdb is not None:
             try:
