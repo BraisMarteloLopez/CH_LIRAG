@@ -68,10 +68,6 @@ from shared.constants import KG_DEFAULT_MAX_ENTITIES
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# IMPORTACION CONDICIONAL — igraph
-# =============================================================================
-
 try:
     import igraph as ig
     HAS_IGRAPH = True
@@ -80,10 +76,6 @@ except ImportError:
     ig = None  # type: ignore[assignment,unused-ignore]
 
 
-
-# =============================================================================
-# TIPOS
-# =============================================================================
 
 @dataclass
 class KGEntity:
@@ -104,10 +96,6 @@ class KGRelation:
     description: str = ""           # descripcion del LLM
     source_doc_id: str = ""         # doc de donde se extrajo
 
-
-# =============================================================================
-# KNOWLEDGE GRAPH
-# =============================================================================
 
 class KnowledgeGraph:
     """Knowledge graph in-memory basado en igraph (C-backed).

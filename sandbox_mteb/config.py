@@ -33,10 +33,6 @@ from shared.config_base import (
 from shared.retrieval.core import RetrievalConfig
 
 
-# =========================================================================
-# STORAGE (MinIO)
-# =========================================================================
-
 @dataclass
 class MinIOStorageConfig:
     """Config de almacenamiento MinIO para datasets MTEB pre-descargados."""
@@ -70,10 +66,6 @@ class MinIOStorageConfig:
             errors.append("MINIO_BUCKET_NAME no configurado")
         return errors
 
-
-# =========================================================================
-# CONFIG PRINCIPAL
-# =========================================================================
 
 @dataclass
 class MTEBConfig:
@@ -285,10 +277,6 @@ class MTEBConfig:
         return "\n".join(lines)
 
 
-# =========================================================================
-# PROMPTS DE GENERACION POR DATASET
-# =========================================================================
-
 GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
     "hotpotqa": {
         "system": (
@@ -308,9 +296,6 @@ GENERATION_PROMPTS: Dict[str, Dict[str, str]] = {
 }
 
 
-# =========================================================================
-# PROMPT DE SYNTHESIS DE CONTEXTO KG
-# =========================================================================
 # El system prompt acepta un placeholder {max_chars} que se rellena en
 # runtime con kg_synthesis_max_chars (o max_context_chars si es 0).
 # El user prompt recibe la pregunta y el contexto multi-seccion ya

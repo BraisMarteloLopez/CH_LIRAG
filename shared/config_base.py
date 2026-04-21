@@ -45,10 +45,6 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# HELPERS .env
-# =============================================================================
-
 def load_env_file(env_path: Optional[str] = None) -> None:
     """Carga .env una unica vez. Llamar desde el entry point del sandbox."""
     if env_path:
@@ -97,10 +93,6 @@ def _env_path(var: str, default: str = "") -> Path:
 # Alias
 load_dotenv_file = load_env_file
 
-
-# =============================================================================
-# SUB-CONFIGS COMPARTIDOS
-# =============================================================================
 
 @dataclass
 class InfraConfig:

@@ -31,19 +31,11 @@ from shared.types import EmbeddingModelProtocol
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# ENUMERACIONES
-# =============================================================================
-
 class RetrievalStrategy(Enum):
     """Estrategias de retrieval disponibles."""
     SIMPLE_VECTOR = auto()
     LIGHT_RAG = auto()
 
-
-# =============================================================================
-# CONFIGURACION
-# =============================================================================
 
 @dataclass
 class RetrievalConfig:
@@ -115,10 +107,6 @@ class RetrievalConfig:
         )
 
 
-# =============================================================================
-# RESULTADO
-# =============================================================================
-
 @dataclass
 class RetrievalResult:
     """Resultado de una operacion de retrieval."""
@@ -132,10 +120,6 @@ class RetrievalResult:
     strategy_used: RetrievalStrategy = RetrievalStrategy.SIMPLE_VECTOR
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-
-# =============================================================================
-# CLASE BASE ABSTRACTA
-# =============================================================================
 
 class BaseRetriever(ABC):
     """Clase base abstracta para implementaciones de retrieval."""
@@ -179,10 +163,6 @@ class BaseRetriever(ABC):
     def is_indexed(self) -> bool:
         return self._is_indexed
 
-
-# =============================================================================
-# SIMPLE VECTOR RETRIEVER
-# =============================================================================
 
 class SimpleVectorRetriever(BaseRetriever):
     """Retriever usando solo busqueda vectorial (ChromaDB)."""

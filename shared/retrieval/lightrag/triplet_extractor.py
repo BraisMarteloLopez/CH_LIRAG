@@ -21,10 +21,6 @@ from .knowledge_graph import KGEntity, KGRelation
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# CONSTANTES DE VALIDACION
-# =============================================================================
-
 from shared.constants import KG_MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS
 from shared.constants import KG_MIN_ENTITY_NAME_LEN as MIN_ENTITY_NAME_LEN
 
@@ -39,10 +35,6 @@ MAX_CHUNK_KEYWORDS_PER_DOC = 10
 MIN_CHUNK_KEYWORD_LEN = 2
 MAX_CHUNK_KEYWORD_LEN = 80
 
-
-# =============================================================================
-# PROMPTS
-# =============================================================================
 
 TRIPLET_EXTRACTION_SYSTEM = """You are a knowledge graph extraction system.
 Extract entities and their relationships from the given text.
@@ -113,10 +105,6 @@ Return JSON in this exact format:
 
 Query: {query}"""
 
-
-# =============================================================================
-# TRIPLET EXTRACTOR
-# =============================================================================
 
 class TripletExtractor:
     """Extrae tripletas y keywords usando LLM.

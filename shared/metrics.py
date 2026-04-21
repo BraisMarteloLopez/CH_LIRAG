@@ -60,11 +60,6 @@ from shared.constants import MAX_RESPONSE_CHARS_FOR_JUDGE as _MAX_RESPONSE_CHARS
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECCION 1: TIPOS
-# =============================================================================
-
-
 @dataclass
 class MetricResult:
     """Resultado de una evaluacion de metrica. Valor en [0.0, 1.0]."""
@@ -94,10 +89,6 @@ class MetricResult:
             "error": self.error
         }
 
-
-# =============================================================================
-# SECCION 2: NORMALIZACION DE TEXTO
-# =============================================================================
 
 _ARTICLES_EN = {'a', 'an', 'the'}
 _ARTICLES_ES = {'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas'}
@@ -173,11 +164,6 @@ def get_token_counts(text: str, normalize: bool = True) -> Counter:
     """Retorna Counter con frecuencia de tokens."""
     tokens = tokenize_text(text, normalize)
     return Counter(tokens)
-
-
-# =============================================================================
-# SECCION 3: METRICAS CON REFERENCIA (Reference-Based)
-# =============================================================================
 
 
 def exact_match(
@@ -364,10 +350,6 @@ def semantic_similarity(
             error=str(e)
         )
 
-
-# =============================================================================
-# SECCION 4: METRICAS SIN REFERENCIA (LLM-Judge)
-# =============================================================================
 
 # -----------------------------------------------------------------------------
 # Tracker de tasa de fallback del LLM judge (judge_fallback_stats)
@@ -798,10 +780,6 @@ async def answer_relevance_async(
     return await _invoke_judge_async(llm_judge, *prep)
 
 
-
-# =============================================================================
-# SECCION 5: CLASE ORQUESTADORA DE METRICAS
-# =============================================================================
 
 # Dispatch tables R6: despacho por MetricType sin if/elif en `calculate()`/
 # `calculate_async()`. Cada helper valida sus precondiciones y retorna el

@@ -25,10 +25,6 @@ from typing import (
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# ENUMERACIONES
-# =============================================================================
-
 class DatasetType(Enum):
     """Clasificacion de datasets segun disponibilidad de Ground Truth."""
     HYBRID = auto()          # Tiene respuesta textual (F1, EM, Accuracy)
@@ -76,10 +72,6 @@ def parse_answer_type(raw: Optional[str]) -> Optional[AnswerType]:
         return cast(AnswerType, raw)
     return None
 
-
-# =============================================================================
-# ESTRUCTURAS NORMALIZADAS - DATOS
-# =============================================================================
 
 @dataclass
 class NormalizedQuery:
@@ -232,10 +224,6 @@ class LoadedDataset:
             "load_status": self.load_status,
         }
 
-
-# =============================================================================
-# RESULTADOS - NIVEL QUERY
-# =============================================================================
 
 @dataclass
 class QueryRetrievalDetail:
@@ -482,10 +470,6 @@ class QueryEvaluationResult:
         return result
 
 
-# =============================================================================
-# RESULTADO - NIVEL RUN (reemplaza GlobalEvaluationReport)
-# =============================================================================
-
 @dataclass
 class EvaluationRun:
     """
@@ -596,10 +580,6 @@ class EvaluationRun:
         return d
 
 
-# =============================================================================
-# CONFIGURACION DE DATASETS
-# =============================================================================
-
 class DatasetSpec(TypedDict):
     """Forma de cada entrada de `DATASET_CONFIG` (R5).
 
@@ -650,10 +630,6 @@ def get_dataset_config(dataset_name: str) -> DatasetSpec:
         "description": "Dataset sin configuracion predefinida",
     }
 
-
-# =============================================================================
-# PROTOCOLOS
-# =============================================================================
 
 @runtime_checkable
 class LLMJudgeProtocol(Protocol):
