@@ -280,6 +280,8 @@ def test_chunk_keywords_distance_threshold_filters():
     assert result.doc_ids == ["close"]
     assert "far" not in result.doc_ids
     assert result.metadata["kg_chunk_keyword_matches"] == 1
+    # dt-17: observable de filter pressure
+    assert result.metadata["kg_chunk_keywords_distance_filtered"] == 1
 
 
 # =============================================================================

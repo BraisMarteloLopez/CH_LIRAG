@@ -676,7 +676,7 @@ class LightRAGRetriever(BaseRetriever):
         self,
         keywords: List[str],
         top_k: int,
-    ) -> List[Tuple[str, float]]:
+    ) -> Tuple[List[Tuple[str, float]], int]:
         """Resuelve query high_level keywords contra Chunk Keywords VDB
         (divergencia #10: canal adicional del path high-level).
 
@@ -685,16 +685,22 @@ class LightRAGRetriever(BaseRetriever):
         su mejor distancia (menor cosine distance = mas similar).
 
         Returns:
-            Lista de (doc_id, best_distance) ordenada por orden de
-            aparicion (primera keyword de la query domina); cada doc_id
-            aparece una sola vez con la mejor distancia observada.
+            Tupla (matches, distance_filtered):
+              - matches: lista de (doc_id, best_distance) ordenada por
+                orden de aparicion (primera keyword de la query domina);
+                cada doc_id una sola vez con la mejor distancia observada.
+              - distance_filtered: total de resultados descartados por
+                `_CHUNK_KEYWORDS_VDB_MAX_DISTANCE` (observable dt-17). Si
+                crece consistentemente respecto a `top_k * len(keywords)`,
+                el umbral esta cortando senal util.
         """
         if not self._chunk_keywords_vdb or not keywords:
-            return []
+            return [], 0
 
         best_distance: Dict[str, float] = {}
         first_seen: Dict[str, int] = {}
         seq = 0
+        distance_filtered = 0
         for keyword in keywords:
             kw = keyword.strip()
             if not kw:
@@ -711,6 +717,7 @@ class LightRAGRetriever(BaseRetriever):
                 continue
             for doc, distance in results:
                 if distance > self._CHUNK_KEYWORDS_VDB_MAX_DISTANCE:
+                    distance_filtered += 1
                     continue
                 doc_id = doc.metadata.get("doc_id", "")
                 if not doc_id:
@@ -724,10 +731,11 @@ class LightRAGRetriever(BaseRetriever):
                         seq += 1
 
         # Orden de aparicion (mantiene la semantica de rank de la query)
-        return sorted(
+        ordered = sorted(
             best_distance.items(),
             key=lambda kv: first_seen.get(kv[0], 1 << 30),
         )
+        return ordered, distance_filtered
 
     @staticmethod
     def _corpus_fingerprint(
@@ -949,15 +957,18 @@ class LightRAGRetriever(BaseRetriever):
         # Chunk Keywords VDB. Si el flag esta off o la VDB no existe,
         # resolved_chunk_matches queda vacio y no contribuye al scoring.
         resolved_chunk_matches: List[Tuple[str, float]] = []
+        chunk_keywords_distance_filtered = 0
         if (
             use_global
             and high_level
             and self.config.kg_chunk_keywords_enabled
             and self._chunk_keywords_vdb is not None
         ):
-            resolved_chunk_matches = self._resolve_chunks_via_keywords_vdb(
-                high_level,
-                top_k=self.config.kg_chunk_keywords_top_k,
+            resolved_chunk_matches, chunk_keywords_distance_filtered = (
+                self._resolve_chunks_via_keywords_vdb(
+                    high_level,
+                    top_k=self.config.kg_chunk_keywords_top_k,
+                )
             )
 
         doc_scores: Dict[str, float] = {}
@@ -1010,6 +1021,9 @@ class LightRAGRetriever(BaseRetriever):
             result.metadata["kg_entities"] = kg_entities
             result.metadata["kg_relations"] = resolved_relations
             result.metadata["kg_chunk_keyword_matches"] = len(resolved_chunk_matches)
+            result.metadata["kg_chunk_keywords_distance_filtered"] = (
+                chunk_keywords_distance_filtered
+            )
             with_nb, mean_nb = _neighbor_coverage_stats(kg_entities)
             result.metadata["kg_entities_with_neighbors"] = with_nb
             result.metadata["kg_mean_neighbors_per_entity"] = mean_nb
@@ -1045,6 +1059,9 @@ class LightRAGRetriever(BaseRetriever):
             result.metadata["kg_entities"] = kg_entities
             result.metadata["kg_relations"] = resolved_relations
             result.metadata["kg_chunk_keyword_matches"] = len(resolved_chunk_matches)
+            result.metadata["kg_chunk_keywords_distance_filtered"] = (
+                chunk_keywords_distance_filtered
+            )
             with_nb, mean_nb = _neighbor_coverage_stats(kg_entities)
             result.metadata["kg_entities_with_neighbors"] = with_nb
             result.metadata["kg_mean_neighbors_per_entity"] = mean_nb
@@ -1067,6 +1084,7 @@ class LightRAGRetriever(BaseRetriever):
                 "kg_entities": kg_entities,
                 "kg_relations": resolved_relations,
                 "kg_chunk_keyword_matches": len(resolved_chunk_matches),
+                "kg_chunk_keywords_distance_filtered": chunk_keywords_distance_filtered,
                 "kg_entities_with_neighbors": with_nb,
                 "kg_mean_neighbors_per_entity": mean_nb,
                 "kg_doc_scores": {did: s for did, s in ranked_doc_ids},

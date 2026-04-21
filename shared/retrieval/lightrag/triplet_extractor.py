@@ -154,6 +154,13 @@ class TripletExtractor:
             # Divergencia #10: chunk high-level keywords por doc
             "docs_with_keywords": 0,
             "total_chunk_keywords": 0,
+            # Observables de filtros hardcoded (dt-17): si estos contadores
+            # son altos respecto a total_chunk_keywords, los defaults
+            # (MIN/MAX_CHUNK_KEYWORD_LEN, MAX_CHUNK_KEYWORDS_PER_DOC) estan
+            # recortando senal util. Exponer al .env si se observa.
+            "chunk_keywords_rejected_len": 0,
+            "chunk_keywords_dropped_by_cap": 0,
+            "docs_chunk_keywords_capped": 0,
         }
 
     def get_stats(self) -> Dict[str, int]:
@@ -277,20 +284,28 @@ class TripletExtractor:
         # Divergencia #10: chunk high-level keywords
         chunk_keywords: List[str] = []
         seen_lower: set = set()
+        cap_hit = False
         for k in data.get("high_level_keywords", []):
             if not isinstance(k, str):
                 continue
             kw = k.strip()
             if len(kw) < MIN_CHUNK_KEYWORD_LEN or len(kw) > MAX_CHUNK_KEYWORD_LEN:
+                self._stats["chunk_keywords_rejected_len"] += 1
                 continue
             # Dedup case-insensitive preservando el primer casing visto
             key = kw.lower()
             if key in seen_lower:
                 continue
             seen_lower.add(key)
-            chunk_keywords.append(kw)
             if len(chunk_keywords) >= MAX_CHUNK_KEYWORDS_PER_DOC:
-                break
+                # Seguimos iterando para contar cuantas keywords validas
+                # perdemos por el cap (observable dt-17).
+                self._stats["chunk_keywords_dropped_by_cap"] += 1
+                cap_hit = True
+                continue
+            chunk_keywords.append(kw)
+        if cap_hit:
+            self._stats["docs_chunk_keywords_capped"] += 1
 
         return entities, relations, chunk_keywords
 

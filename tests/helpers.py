@@ -93,6 +93,10 @@ def make_extractor(mock_llm=None, max_text_chars=3000, batch_size=64):
         "total_entities": 0, "total_relations": 0,
         # Divergencia #10
         "docs_with_keywords": 0, "total_chunk_keywords": 0,
+        # Observables dt-17
+        "chunk_keywords_rejected_len": 0,
+        "chunk_keywords_dropped_by_cap": 0,
+        "docs_chunk_keywords_capped": 0,
     }
     return ext
 
