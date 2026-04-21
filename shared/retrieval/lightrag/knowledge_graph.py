@@ -282,30 +282,6 @@ class KnowledgeGraph:
         neighbor_vids = self._graph.neighbors(vid)
         return [self._graph.vs[nv]["name"] for nv in neighbor_vids]
 
-    def _get_neighbors_weighted(self, name: str) -> List[Tuple[str, float]]:
-        """Return neighbors with edge weight factor.
-
-        Weight = log(1 + unique_docs_on_edge). Co-occurrence edges (1 doc)
-        get ~0.69, strong LLM edges (10 docs) get ~2.40.
-
-        Returns:
-            List of (neighbor_name, weight_factor) tuples.
-        """
-        vid = self._name_to_vid.get(name)
-        if vid is None:
-            return []
-        result: List[Tuple[str, float]] = []
-        for eid in self._graph.incident(vid):
-            edge = self._graph.es[eid]
-            neighbor_vid = edge.target if edge.source == vid else edge.source
-            neighbor_name = self._graph.vs[neighbor_vid]["name"]
-            # Edge weight = unique docs mentioning this edge
-            relations = edge["relations"]
-            unique_docs = len({r.get("doc_id", "") for r in relations if r.get("doc_id")})
-            weight_factor = math.log1p(max(unique_docs, 1))
-            result.append((neighbor_name, weight_factor))
-        return result
-
     def get_neighbors_ranked(
         self, name: str, max_neighbors: int = 5,
     ) -> List[Dict[str, Any]]:

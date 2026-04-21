@@ -10,9 +10,6 @@ Contrato externo (ChromaDB PersistentClient, >=0.5):
     de la coleccion). Default `cosine`.
   - No determinismo: ChromaDB 0.5-0.6 no expone `hnsw:random_seed`
     (deuda [#3](../CLAUDE.md#dt-3)).
-  - `LightRAGRetriever` accede a `_vector_store.collection_name` para
-    derivar nombres de Entity/Relationship/ChunkKeywords VDB (deuda
-    [#14](../CLAUDE.md#dt-14)).
 
 Schema del record insertado: `{id, embedding[D], document, metadata{
   reference_id?, title?, ...}}` donde `reference_id` es requerido por el
