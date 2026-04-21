@@ -581,9 +581,6 @@ class MTEBEvaluator:
                 )
                 for idx, item in enumerate(raw):
                     if isinstance(item, BaseException):
-                        # Preservar tipo y mensaje para que _assemble_results
-                        # los escriba en error_message (antes se perdian al
-                        # quedarse solo en el log).
                         gen_errors[idx] = item
                         logger.warning(
                             f"  Error async query {chunk_queries[idx].query_id}: "

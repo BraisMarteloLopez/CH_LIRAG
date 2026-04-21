@@ -108,10 +108,9 @@ def structured_log(
     }
 
     if _LOG_FORMAT == "jsonl":
-        # Emitir JSON puro a stderr (capturado por el handler JSONL)
+        # JSON puro a stderr, capturado por el handler JSONL.
         logger.info(json.dumps(entry, ensure_ascii=False, default=str))
     else:
-        # Emitir formato legible
         detail = ", ".join(f"{k}={v}" for k, v in kwargs.items())
         logger.info(f"[{event}] {detail}")
 

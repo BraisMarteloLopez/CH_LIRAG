@@ -472,12 +472,7 @@ class QueryEvaluationResult:
 
 @dataclass
 class EvaluationRun:
-    """
-    Resultado de UNA ejecucion: 1 dataset + 1 embedding + 1 estrategia.
-
-    Reemplaza GlobalEvaluationReport y DatasetEvaluationResult.
-    No hay results_matrix, no hay dimension multi-modelo.
-    """
+    """Resultado de UNA ejecucion: 1 dataset + 1 embedding + 1 estrategia."""
     # Identificacion del run
     run_id: str = ""
     dataset_name: str = ""
