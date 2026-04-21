@@ -225,14 +225,7 @@ _kg_synthesis_tracker = _KGSynthesisTracker()
 
 
 def get_kg_synthesis_stats() -> KGSynthesisStats:
-    """Snapshot del tracker de KG synthesis.
-
-    Claves devueltas:
-      - invocations: queries donde se intento la synthesis
-      - successes, errors, empty_returns, truncations, timeouts
-      - fallback_rate: (errors + empty_returns + timeouts) / invocations
-      - timing per-categoria (total/queue/llm): p50/p95/max_*_ms + n_*_samples
-    """
+    """Snapshot del tracker de KG synthesis. Ver `KGSynthesisStats`."""
     return _kg_synthesis_tracker.snapshot()
 
 
@@ -450,7 +443,6 @@ class GenerationExecutor:
             dataset_name=dataset_name,
         )
 
-        # Convertir secondary a dict
         secondary_dict = {}
         for sr in secondary_results:
             secondary_dict[sr.metric_type.value] = sr.value

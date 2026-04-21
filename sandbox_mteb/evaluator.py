@@ -514,7 +514,6 @@ class MTEBEvaluator:
                     f"{n - len(evaluated_ids)} pendientes"
                 )
 
-        # Filtrar queries pendientes
         pending_queries = [q for q in queries if q.query_id not in evaluated_ids]
         n_pending = len(pending_queries)
 
@@ -607,7 +606,6 @@ class MTEBEvaluator:
             )
             all_results.extend(chunk_results)
 
-            # Update evaluated IDs and save checkpoint
             for qr in chunk_results:
                 evaluated_ids.add(qr.query_id)
 

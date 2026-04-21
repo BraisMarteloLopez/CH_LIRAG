@@ -278,7 +278,6 @@ class ChromaVectorStore:
         Ahora se usa el cliente nativo para delete + recreate.
         """
         try:
-            # Eliminar coleccion via cliente nativo
             self._client.delete_collection(self.collection_name)
         except Exception as e:
             logger.error(f"Error eliminando coleccion: {e}")

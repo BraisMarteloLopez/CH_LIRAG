@@ -428,7 +428,6 @@ class KnowledgeGraph:
         # Remover aristas del grafo
         vid = self._name_to_vid.get(name)
         if vid is not None:
-            # Eliminar todas las aristas conectadas a este nodo
             edge_ids = self._graph.incident(vid)
             if edge_ids:
                 self._graph.delete_edges(edge_ids)
@@ -516,7 +515,6 @@ class KnowledgeGraph:
             if skip_triplet:
                 continue
 
-            # Anadir nodos y arista al grafo
             src_vid = self._ensure_node(src_name, self._entities[src_name].entity_type)
             tgt_vid = self._ensure_node(tgt_name, self._entities[tgt_name].entity_type)
 

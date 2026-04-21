@@ -520,7 +520,6 @@ class TripletExtractor:
 
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
 
-        # Registrar vacios
         for d in empty:
             doc_id = d.get("doc_id", "")
             self._stats["docs_processed"] += 1
@@ -557,7 +556,6 @@ class TripletExtractor:
 
             batch_results = self._parse_batch_extraction_json(raw, non_empty)
             if batch_results is not None:
-                # Update stats for each doc that came back
                 for doc in non_empty:
                     doc_id = doc.get("doc_id", "")
                     self._stats["docs_processed"] += 1

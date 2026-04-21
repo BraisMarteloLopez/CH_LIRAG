@@ -103,7 +103,6 @@ class CrossEncoderReranker:
             new_scores = []
             new_vector_scores = []
 
-            # Mapear vector_scores originales por doc_id
             orig_vector_scores: Dict[str, float] = {}
             if retrieval_result.vector_scores:
                 for i, did in enumerate(retrieval_result.doc_ids):

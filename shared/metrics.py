@@ -449,16 +449,7 @@ _judge_fallback_tracker = _JudgeFallbackTracker()
 def get_judge_fallback_stats() -> Dict[str, JudgeMetricStats]:
     """Retorna snapshot del tracker de fallback del judge.
 
-    Cada clave es el nombre de una metrica (MetricType.value). Valores:
-      - invocations: llamadas totales al judge
-      - parse_failures: respuestas no parseables como JSON
-      - default_returns: casos donde se devolvio 0.5 por defecto
-      - parse_failure_rate, default_return_rate: ratios contra invocations
-
-    Uso tipico: inspeccionar tras un run para detectar degradacion del judge.
-    `default_return_rate` es la senal clave — valores altos indican que el
-    judge esta fallando a producir scores interpretables y las metricas
-    (especialmente faithfulness) estan sesgadas hacia 0.5.
+    Dict metric_name (MetricType.value) -> `JudgeMetricStats`.
     """
     return _judge_fallback_tracker.snapshot()
 
@@ -718,7 +709,6 @@ def _extract_score_fallback_with_status(
     """
     text = response_text.lower()
 
-    # 1. Fracciones como 8/10
     fraction_pattern = r'(\d+)\s*/\s*(\d+)'
     match = re.search(fraction_pattern, response_text)
 
@@ -731,7 +721,6 @@ def _extract_score_fallback_with_status(
         except ValueError:
             pass
 
-    # 2. Decimal en rango 0-1
     decimal_pattern = r'(?:score[:\s]*)?\b(0(?:\.\d+)?|1(?:\.0+)?)\b'
     match = re.search(decimal_pattern, text)
 
@@ -743,7 +732,6 @@ def _extract_score_fallback_with_status(
         except ValueError:
             pass
 
-    # 3. Entero 1-10 con prefijo "score:"
     int_scale_pattern = r'(?:score[:\s]*)\b(\d{1,2})\b'
     match = re.search(int_scale_pattern, text)
 
