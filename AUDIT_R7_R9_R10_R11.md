@@ -35,6 +35,15 @@ Producir un **reporte** (formato en seccion 6) que enumere las violaciones a las
 
 **Tiempo estimado**: 90-120 minutos de exploracion automatizada + revision manual de falsos positivos.
 
+## 3.1 · Intuicion rapida de cada regla
+
+Antes de las reglas literales (seccion 4) y la metodologia detallada (seccion 5), el objetivo de cada una en lenguaje llano:
+
+- **R7** — contar comentarios que traducen literalmente la siguiente linea ("incrementa contador", "abre archivo", "retorna True si X"). Suelen detectarse por proximidad semantica comentario↔codigo.
+- **R9** — detectar docstring + comentario inline adyacente repitiendo la misma razon en el mismo bloque.
+- **R10** — identificar funciones con regex, parsing, dispatch o edge cases que no tienen bloque `>>>` ejecutable en su docstring.
+- **R11** — detectar docstrings que re-listan las claves de un `TypedDict` o los campos de un `@dataclass` que acabamos de tipar en PR-4.
+
 ## 4 · Las cuatro reglas, literales
 
 ### R7 — Un comentario explica por que, no que
