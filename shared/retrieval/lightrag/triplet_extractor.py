@@ -1,12 +1,9 @@
 """
-Modulo: Triplet Extractor
-Descripcion: Extraccion de tripletas (entidad, relacion, entidad) y
-             keywords de query usando LLM (AsyncLLMService via NIM).
+Extraccion de tripletas (entidad, relacion, entidad) y keywords de query
+usando LLM (AsyncLLMService via NIM).
 
-Ubicacion: shared/retrieval/triplet_extractor.py
-
-Uso: LIGHT_RAG usa este modulo durante indexacion (extraccion de
-tripletas del corpus) y durante retrieval (analisis de query).
+LIGHT_RAG usa este modulo durante indexacion (extraccion de tripletas del
+corpus) y durante retrieval (analisis de query).
 """
 
 from __future__ import annotations
@@ -24,10 +21,6 @@ from .knowledge_graph import KGEntity, KGRelation
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# CONSTANTES DE VALIDACION
-# =============================================================================
-
 from shared.constants import KG_MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS
 from shared.constants import KG_MIN_ENTITY_NAME_LEN as MIN_ENTITY_NAME_LEN
 
@@ -42,10 +35,6 @@ MAX_CHUNK_KEYWORDS_PER_DOC = 10
 MIN_CHUNK_KEYWORD_LEN = 2
 MAX_CHUNK_KEYWORD_LEN = 80
 
-
-# =============================================================================
-# PROMPTS
-# =============================================================================
 
 TRIPLET_EXTRACTION_SYSTEM = """You are a knowledge graph extraction system.
 Extract entities and their relationships from the given text.
@@ -116,10 +105,6 @@ Return JSON in this exact format:
 
 Query: {query}"""
 
-
-# =============================================================================
-# TRIPLET EXTRACTOR
-# =============================================================================
 
 class TripletExtractor:
     """Extrae tripletas y keywords usando LLM.
@@ -514,13 +499,11 @@ class TripletExtractor:
         Divergencia #10: el prompt batch emite `high_level_keywords` por doc.
         Si el parsing batch falla, hace fallback a extraccion individual.
         """
-        # Filtrar docs vacios antes del batch
         non_empty = [d for d in docs if d.get("content", "").strip()]
         empty = [d for d in docs if not d.get("content", "").strip()]
 
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
 
-        # Registrar vacios
         for d in empty:
             doc_id = d.get("doc_id", "")
             self._stats["docs_processed"] += 1
@@ -557,7 +540,6 @@ class TripletExtractor:
 
             batch_results = self._parse_batch_extraction_json(raw, non_empty)
             if batch_results is not None:
-                # Update stats for each doc that came back
                 for doc in non_empty:
                     doc_id = doc.get("doc_id", "")
                     self._stats["docs_processed"] += 1

@@ -500,7 +500,7 @@ class TestPerQuerySynthesisMetadata:
 
 
 class TestSynthesisTiming:
-    """Deuda #16: p50/p95/max por categoria (total/queue/llm) en snapshot."""
+    """p50/p95/max por categoria (total/queue/llm) en snapshot."""
 
     def test_empty_tracker_reports_zero_timings(self):
         """Tracker sin invocaciones expone p50/p95/max=0 y n_samples=0."""

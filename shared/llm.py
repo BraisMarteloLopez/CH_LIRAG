@@ -1,10 +1,5 @@
 """
-Modulo: LLM & Embeddings Service
-Descripcion: Servicios NIM para inferencia LLM y embeddings.
-
-Ubicacion: shared/llm.py
-
-Consolida llm.py + embeddings.py.
+Servicios NIM para inferencia LLM y embeddings.
 
 Notas de diseno:
   - _PersistentLoop: un unico event loop en thread daemon, elimina el ciclo
@@ -72,10 +67,6 @@ class _ThinkingExhaustedError(ValueError):
     """Model used all tokens for <think> reasoning, producing no content."""
 
 
-# =============================================================================
-# PERSISTENT EVENT LOOP
-# =============================================================================
-
 class _PersistentLoop:
     """Singleton: un unico event loop en un thread daemon.
 
@@ -142,10 +133,6 @@ class _PersistentLoop:
 _persistent_loop = _PersistentLoop()
 
 
-# =============================================================================
-# METRICAS
-# =============================================================================
-
 @dataclass
 class LLMMetrics:
     """Metricas de rendimiento del servicio LLM.
@@ -206,10 +193,6 @@ class LLMMetrics:
         return self.__copy__()
 
 
-# =============================================================================
-# HELPER: ejecutar coroutine de forma segura
-# =============================================================================
-
 _T = TypeVar("_T")
 
 
@@ -227,10 +210,6 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     """
     return _persistent_loop.run(coro)  # type: ignore[no-any-return]
 
-
-# =============================================================================
-# SERVICIO LLM ASINCRONO
-# =============================================================================
 
 class AsyncLLMService:
     """
@@ -443,10 +422,6 @@ class AsyncLLMService:
     def reset_metrics(self) -> None:
         self.metrics = LLMMetrics()
 
-
-# =============================================================================
-# EMBEDDINGS (consolidado desde embeddings.py)
-# =============================================================================
 
 try:
     from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings

@@ -1,11 +1,8 @@
 """
-Modulo: Knowledge Graph
-Descripcion: Grafo de conocimiento in-memory basado en igraph (C-backed).
-             Almacena entidades, relaciones y chunk keywords extraidos por LLM.
+Grafo de conocimiento in-memory basado en igraph (C-backed). Almacena
+entidades, relaciones y chunk keywords extraidos por LLM.
 
-Ubicacion: shared/retrieval/lightrag/knowledge_graph.py
-
-Uso: LIGHT_RAG construye el grafo durante indexacion. Durante retrieval, las
+LIGHT_RAG construye el grafo durante indexacion. Durante retrieval, las
 entidades resueltas via Entity VDB proveen source_doc_ids para obtener
 chunks; relaciones y chunk keywords (divergencia #10) son los otros dos
 canales que aportan al scoring agregado en `LightRAGRetriever`.
@@ -71,10 +68,6 @@ from shared.constants import KG_DEFAULT_MAX_ENTITIES
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# IMPORTACION CONDICIONAL — igraph
-# =============================================================================
-
 try:
     import igraph as ig
     HAS_IGRAPH = True
@@ -83,10 +76,6 @@ except ImportError:
     ig = None  # type: ignore[assignment,unused-ignore]
 
 
-
-# =============================================================================
-# TIPOS
-# =============================================================================
 
 @dataclass
 class KGEntity:
@@ -107,10 +96,6 @@ class KGRelation:
     description: str = ""           # descripcion del LLM
     source_doc_id: str = ""         # doc de donde se extrajo
 
-
-# =============================================================================
-# KNOWLEDGE GRAPH
-# =============================================================================
 
 class KnowledgeGraph:
     """Knowledge graph in-memory basado en igraph (C-backed).
@@ -425,10 +410,8 @@ class KnowledgeGraph:
         aristas del grafo asociadas. El vertice igraph queda huerfano
         (sin aristas) para evitar reindexacion O(V).
         """
-        # Remover aristas del grafo
         vid = self._name_to_vid.get(name)
         if vid is not None:
-            # Eliminar todas las aristas conectadas a este nodo
             edge_ids = self._graph.incident(vid)
             if edge_ids:
                 self._graph.delete_edges(edge_ids)
@@ -440,7 +423,6 @@ class KnowledgeGraph:
             if discard_set is not None:
                 discard_set.discard(name)
 
-        # Remover relaciones asociadas del indice _doc_to_relations
         for doc_id in doc_ids:
             rels = self._doc_to_relations.get(doc_id)
             if rels is not None:
@@ -516,7 +498,6 @@ class KnowledgeGraph:
             if skip_triplet:
                 continue
 
-            # Anadir nodos y arista al grafo
             src_vid = self._ensure_node(src_name, self._entities[src_name].entity_type)
             tgt_vid = self._ensure_node(tgt_name, self._entities[tgt_name].entity_type)
 
@@ -622,7 +603,6 @@ class KnowledgeGraph:
             for doc_id, rels in self._doc_to_relations.items()
         }
 
-        # Serialize graph as edge list with attributes
         graph_edges = []
         for eid in range(self._graph.ecount()):
             edge = self._graph.es[eid]

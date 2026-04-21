@@ -125,29 +125,23 @@ class MTEBEvaluator:
         reset_operational_stats()
 
         try:
-            # 1. Inicializar componentes
             self._init_components()
 
-            # 2. Cargar y preparar datos
             dataset, queries, corpus = self._load_and_prepare()
 
-            # 3. Indexar documentos
             self._index_documents(dataset.name, corpus, run_id)
 
-            # 3b. Crear retrieval executor
             self._retrieval_executor = RetrievalExecutor(
                 retriever=self._retriever,
                 reranker=self._reranker,
                 config=self.config,
             )
 
-            # 4. Evaluar queries (pipeline async)
             ds_config = get_dataset_config(dataset.name)
             query_results = self._evaluate_queries(
                 queries, ds_config, dataset.name, run_id=run_id
             )
 
-            # 5. Construir EvaluationRun
             elapsed = time.time() - start_time
             evaluation_run = self._build_run(
                 run_id=run_id,
@@ -514,7 +508,6 @@ class MTEBEvaluator:
                     f"{n - len(evaluated_ids)} pendientes"
                 )
 
-        # Filtrar queries pendientes
         pending_queries = [q for q in queries if q.query_id not in evaluated_ids]
         n_pending = len(pending_queries)
 
@@ -588,9 +581,6 @@ class MTEBEvaluator:
                 )
                 for idx, item in enumerate(raw):
                     if isinstance(item, BaseException):
-                        # Preservar tipo y mensaje para que _assemble_results
-                        # los escriba en error_message (antes se perdian al
-                        # quedarse solo en el log).
                         gen_errors[idx] = item
                         logger.warning(
                             f"  Error async query {chunk_queries[idx].query_id}: "
@@ -607,14 +597,12 @@ class MTEBEvaluator:
             )
             all_results.extend(chunk_results)
 
-            # Update evaluated IDs and save checkpoint
             for qr in chunk_results:
                 evaluated_ids.add(qr.query_id)
 
             if run_id:
                 save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
 
-        # Log summary
         assert self._retrieval_executor is not None  # initialized in _init_components
         if self._retrieval_executor.strategy_mismatches > 0:
             logger.error(
@@ -711,10 +699,6 @@ class MTEBEvaluator:
                     metadata=qr_metadata,
                 ))
         return results
-
-    # -----------------------------------------------------------------
-    # BUILD RUN (delegado a result_builder.py)
-    # -----------------------------------------------------------------
 
     def _build_run(
         self,

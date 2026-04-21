@@ -79,7 +79,6 @@ def check_config(env_path: str) -> List[Tuple[bool, str]]:
         from sandbox_mteb.config import MTEBConfig
         config = MTEBConfig.from_env(env_path)
 
-        # Verificar que la estrategia es LIGHT_RAG
         from shared.retrieval.core import RetrievalStrategy
         strategy = config.retrieval.strategy
         if strategy != RetrievalStrategy.LIGHT_RAG:
@@ -190,9 +189,7 @@ def check_connectivity(env_path: str) -> List[Tuple[bool, str]]:
             aws_secret_access_key=config.storage.minio_secret_key,
             config=BotoConfig(signature_version="s3v4"),
         )
-        # Check bucket exists
         client.head_bucket(Bucket=config.storage.minio_bucket)
-        # Check dataset prefix exists
         prefix = f"{config.storage.s3_datasets_prefix}/{config.dataset_name}/"
         response = client.list_objects_v2(
             Bucket=config.storage.minio_bucket,
@@ -269,7 +266,6 @@ def check_lock_file() -> List[Tuple[bool, str]]:
             "Regenerar con: pip freeze > requirements.lock"
         ))
     else:
-        # Count pinned packages
         pinned = [l for l in content.splitlines()
                   if l.strip() and not l.startswith("#") and "==" in l]
         results.append((True, f"  [OK] requirements.lock: {len(pinned)} paquetes pinneados"))

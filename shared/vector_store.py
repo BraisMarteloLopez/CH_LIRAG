@@ -1,11 +1,5 @@
 """
-Modulo: Vector Store
-Descripcion: Wrapper ChromaDB para evaluacion RAG.
-
-Ubicacion: shared/vector_store.py
-
-FIX: delete_all_documents() ahora elimina la coleccion subyacente
-en Chroma y la recrea, en lugar de solo reasignar el wrapper Python.
+Wrapper ChromaDB para evaluacion RAG.
 
 Contrato externo (ChromaDB PersistentClient, >=0.5):
   - Persistencia en `VECTOR_DB_DIR` (default `.chroma_db/`).
@@ -278,7 +272,6 @@ class ChromaVectorStore:
         Ahora se usa el cliente nativo para delete + recreate.
         """
         try:
-            # Eliminar coleccion via cliente nativo
             self._client.delete_collection(self.collection_name)
         except Exception as e:
             logger.error(f"Error eliminando coleccion: {e}")

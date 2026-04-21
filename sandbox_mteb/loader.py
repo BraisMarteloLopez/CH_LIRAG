@@ -132,7 +132,6 @@ class MinIOLoader:
 
             logger.info(f"Dataset '{dataset_name}' cargado: {result.get_statistics()}")
 
-            # Guardar en cache
             if use_cache and self.cache_dir:
                 self._save_to_cache(result)
 

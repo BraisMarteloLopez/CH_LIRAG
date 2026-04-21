@@ -1,8 +1,5 @@
 """
-Modulo: Operational Error Tracker
-Descripcion: Contador agregado para degradaciones silenciosas del pipeline (R14).
-
-Ubicacion: shared/operational_tracker.py
+Contador agregado para degradaciones silenciosas del pipeline (R14).
 
 Siete bare-excepts del pipeline (retrieval KG, extraccion de tripletas,
 generation) tragan la excepcion, logean `.debug`/`.warning` y devuelven un

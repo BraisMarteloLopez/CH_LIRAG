@@ -46,7 +46,7 @@ Ver [`README.md`](README.md) para setup, ejecucion, tests y preflight.
 - **Factory pattern**: `get_retriever(config, embedding_model)` en `shared/retrieval/__init__.py` crea el retriever correcto
 - **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
-- **Tests**: `conftest.py` mockea modulos de infra (boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Mocks siempre a nivel de funcion, nunca modulos enteros
+- **Tests**: mocks siempre a nivel de funcion, nunca modulos enteros. Ver seccion "Test coverage"
 - **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
 - **Idioma**: codigo y comentarios en ingles/espanol mezclado (historico). Docstrings y variables en ingles
 
@@ -82,9 +82,6 @@ Diferencias entre esta implementacion y el [LightRAG original](https://github.co
 |---|---|---|---|
 | <a id="div-10"></a>10 | High-level keywords por chunk durante indexacion (piggyback) | **Presencia validada; calidad NO validada** ⚠️ | Canal arquitectonicamente presente: `retrieval_metadata.kg_chunk_keyword_matches > 0` en 35/35 queries. **Riesgo**: el paper hace llamada LLM dedicada por chunk; aqui las keywords se emiten en la misma llamada que entities/relations para ahorrar ~50% del coste. Coste teorico: el LLM puede emitir keywords genericas ("event", "person", "document") en vez de temas reales del chunk — HotpotQA es ciego a esta degradacion porque el canal vector directo satura el retrieval. **Cuando importa**: P2 (catalogo especializado 10-50 PDFs) es el caso donde el canal high-level es el unico que opera sobre conceptos que el embedding SI conoce; si piggyback lo degrada silenciosamente, se rompe la pata diferencial de LightRAG. **Bloqueante antes de P2, no de P0.** Accion pendiente: (1) observable de calidad de keywords (diversidad Jaccard intra-tema, ratio genericas/especificas via IDF intra-corpus); (2) si muestra degradacion, exponer toggle `KG_CHUNK_KEYWORDS_DEDICATED_CALL=true` |
 
-### Hallazgo previo resuelto
-— `gen_*=0` (generador no propagaba `[ref:N]` al usuario) diagnosticado como prompt gap: `GENERATION_PROMPTS["hotpotqa"]["system"]` no instruia preservar citas. Corregido añadiendo instruccion explicita al system prompt (`sandbox_mteb/config.py:289`). Verificar en proximo run que `citation_refs_gen_valid > 0` y `citation_refs_gen_out_of_range = 0`.
-
 <a id="divergencias-menores"></a>
 ### Divergencias menores (cosmeticas / no funcionales)
 
@@ -113,13 +110,6 @@ IDs (`dt-N`) son navegables desde codigo: `# ver deuda #5` resuelve a `<a id="dt
 | <a id="dt-14"></a>14 | Acceso a `_vector_store.collection_name` desde `LightRAGRetriever` | **BAJO** | 3 builders en `retriever.py` (entities/relationships/chunk_keywords VDB) leen el atributo privado para derivar nombres. Si se renombra sin buscar refs externas, rompen en runtime al indexar. Sin test que lo detecte | Exponer property `collection_name` en `SimpleVectorRetriever` al proximo cambio en esa clase, o al aparecer cuarto consumidor |
 | <a id="dt-17"></a>17 | Parametros fijos del canal de chunk keywords ([div #10](#div-10)) | **BAJO** | 3 parametros hardcoded en `triplet_extractor.py`/`retriever.py`: `MAX_CHUNK_KEYWORDS_PER_DOC=10`, `MIN/MAX_CHUNK_KEYWORD_LEN=2/80`, `_CHUNK_KEYWORDS_VDB_MAX_DISTANCE=0.8`. Solo `KG_CHUNK_KEYWORDS_ENABLED`/`_TOP_K` expuestos | Exponer al `.env` solo si un run real demuestra que algun caso cae fuera de defaults |
 | <a id="dt-18"></a>18 | Observable de citaciones [#7](#div-7) acoplado al prompt de synthesis | **BAJO** | Parser usa regex `\[ref:(\d+)\]` alineado con `KG_SYNTHESIS_SYSTEM_PROMPT`. Si alguien cambia formato (p.ej. `(ref N)` o `[ref:3,4,5]`), los 14 campos dejan de medir lo que dicen. Acoplamiento semantico, sin test automatico | Al tocar `KG_SYNTHESIS_SYSTEM_PROMPT`, revisar parser y actualizar regex `_VALID_RE`/`_CANDIDATE_RE` en sync |
-
-### Deudas cerradas / historicas (referencias permanentes)
-
-Items cerrados cuyo ID sigue apareciendo en codigo como anotacion historica. No requieren accion; mantenidos para que los comentarios tipo `# Deuda #15` resuelvan a una ancla real.
-
-- <a id="dt-15"></a>**#15 — Persistencia de outcome per-query**: cerrada. Antes, el estado de cada query (success/failed/skipped) vivia solo en logs; ahora se persiste en `query_results[].status` (`EvaluationStatus`) y se exporta a JSON/CSV. Comentarios `# Deuda #15 cerrada` marcan sites consolidados.
-- <a id="dt-16"></a>**#16 — Timing p50/p95/max por categoria en `kg_synthesis_stats`**: cerrada. Split total/queue/llm implementado via `_KGSynthesisTracker.snapshot`. Comentarios `# Deuda #16` anotan los tests que ejercitan la agregacion.
 
 ## Observabilidad de runs
 
@@ -186,15 +176,7 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 
 ## Test coverage
 
-| Metrica | Valor orientativo |
-|---|---|
-| Tests unitarios | **~465 pasan** con `python-igraph` + `snowballstemmer` instalados; **~392 pasan** sin igraph (tests que lo requieren se saltan). Cifras orientativas — drift con cada PR; valor exacto: `pytest --collect-only -q tests/ \| tail -1` y `pytest -m "not integration" tests/` |
-| Tests integracion | **~15** en 3 archivos (`tests/integration/`), requieren NIM + MinIO reales |
-| mypy | 0 errores nuevos en ficheros modificados; 3 errores preexistentes no relacionados (dotenv/numpy sin stubs, `retrieval_executor.py:124` union-attr) |
-
-**Portabilidad**: `conftest.py` mockea modulos de infra (dotenv, boto3, langchain, chromadb) si no estan instalados. `test_knowledge_graph.py` usa `pytest.importorskip("igraph")`. Dependencias opcionales para suite completa: `python-igraph`, `snowballstemmer`.
-
-**Referencia completa**: ver `TESTS.md` — mapa test→produccion, trampas de mock, gaps de cobertura, reglas de modificacion.
+`conftest.py` mockea modulos de infra (dotenv, boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Dependencias opcionales para suite completa: `python-igraph`, `snowballstemmer`. Referencia completa en `TESTS.md`.
 
 ## Que NO tocar sin contexto
 

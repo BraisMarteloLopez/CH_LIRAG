@@ -1,8 +1,5 @@
 """
-Modulo: Evaluation Metrics
-Descripcion: Metricas para evaluacion RAG.
-
-Ubicacion: shared/metrics.py
+Metricas para evaluacion RAG.
 
 Dos categorias:
   A) Con referencia: exact_match, f1_score, accuracy, semantic_similarity
@@ -63,11 +60,6 @@ from shared.constants import MAX_RESPONSE_CHARS_FOR_JUDGE as _MAX_RESPONSE_CHARS
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECCION 1: TIPOS
-# =============================================================================
-
-
 @dataclass
 class MetricResult:
     """Resultado de una evaluacion de metrica. Valor en [0.0, 1.0]."""
@@ -97,10 +89,6 @@ class MetricResult:
             "error": self.error
         }
 
-
-# =============================================================================
-# SECCION 2: NORMALIZACION DE TEXTO
-# =============================================================================
 
 _ARTICLES_EN = {'a', 'an', 'the'}
 _ARTICLES_ES = {'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas'}
@@ -176,11 +164,6 @@ def get_token_counts(text: str, normalize: bool = True) -> Counter:
     """Retorna Counter con frecuencia de tokens."""
     tokens = tokenize_text(text, normalize)
     return Counter(tokens)
-
-
-# =============================================================================
-# SECCION 3: METRICAS CON REFERENCIA (Reference-Based)
-# =============================================================================
 
 
 def exact_match(
@@ -368,10 +351,6 @@ def semantic_similarity(
         )
 
 
-# =============================================================================
-# SECCION 4: METRICAS SIN REFERENCIA (LLM-Judge)
-# =============================================================================
-
 # -----------------------------------------------------------------------------
 # Tracker de tasa de fallback del LLM judge (judge_fallback_stats)
 #
@@ -449,16 +428,7 @@ _judge_fallback_tracker = _JudgeFallbackTracker()
 def get_judge_fallback_stats() -> Dict[str, JudgeMetricStats]:
     """Retorna snapshot del tracker de fallback del judge.
 
-    Cada clave es el nombre de una metrica (MetricType.value). Valores:
-      - invocations: llamadas totales al judge
-      - parse_failures: respuestas no parseables como JSON
-      - default_returns: casos donde se devolvio 0.5 por defecto
-      - parse_failure_rate, default_return_rate: ratios contra invocations
-
-    Uso tipico: inspeccionar tras un run para detectar degradacion del judge.
-    `default_return_rate` es la senal clave — valores altos indican que el
-    judge esta fallando a producir scores interpretables y las metricas
-    (especialmente faithfulness) estan sesgadas hacia 0.5.
+    Dict metric_name (MetricType.value) -> `JudgeMetricStats`.
     """
     return _judge_fallback_tracker.snapshot()
 
@@ -718,7 +688,6 @@ def _extract_score_fallback_with_status(
     """
     text = response_text.lower()
 
-    # 1. Fracciones como 8/10
     fraction_pattern = r'(\d+)\s*/\s*(\d+)'
     match = re.search(fraction_pattern, response_text)
 
@@ -731,7 +700,6 @@ def _extract_score_fallback_with_status(
         except ValueError:
             pass
 
-    # 2. Decimal en rango 0-1
     decimal_pattern = r'(?:score[:\s]*)?\b(0(?:\.\d+)?|1(?:\.0+)?)\b'
     match = re.search(decimal_pattern, text)
 
@@ -743,7 +711,6 @@ def _extract_score_fallback_with_status(
         except ValueError:
             pass
 
-    # 3. Entero 1-10 con prefijo "score:"
     int_scale_pattern = r'(?:score[:\s]*)\b(\d{1,2})\b'
     match = re.search(int_scale_pattern, text)
 
@@ -813,10 +780,6 @@ async def answer_relevance_async(
     return await _invoke_judge_async(llm_judge, *prep)
 
 
-
-# =============================================================================
-# SECCION 5: CLASE ORQUESTADORA DE METRICAS
-# =============================================================================
 
 # Dispatch tables R6: despacho por MetricType sin if/elif en `calculate()`/
 # `calculate_async()`. Cada helper valida sus precondiciones y retorna el

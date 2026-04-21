@@ -1,15 +1,4 @@
-"""
-Modulo: Shared Types
-Descripcion: Estructuras de datos normalizadas para evaluacion RAG.
-
-Ubicacion: shared/types.py
-
-Cambios respecto a la version original:
-  - EvaluationRun (plano) reemplaza GlobalEvaluationReport (matrix multi-modelo)
-  - LoadedDataset usa Dict index para queries (O(1) lookup vs O(n))
-  - NormalizedDocument sin parent_content (eso vive en sandbox_anthropic)
-  - Eliminado DatasetEvaluationResult (redundante con EvaluationRun)
-"""
+"""Estructuras de datos normalizadas para evaluacion RAG."""
 
 from __future__ import annotations
 
@@ -35,10 +24,6 @@ from typing import (
 
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# ENUMERACIONES
-# =============================================================================
 
 class DatasetType(Enum):
     """Clasificacion de datasets segun disponibilidad de Ground Truth."""
@@ -87,10 +72,6 @@ def parse_answer_type(raw: Optional[str]) -> Optional[AnswerType]:
         return cast(AnswerType, raw)
     return None
 
-
-# =============================================================================
-# ESTRUCTURAS NORMALIZADAS - DATOS
-# =============================================================================
 
 @dataclass
 class NormalizedQuery:
@@ -244,10 +225,6 @@ class LoadedDataset:
         }
 
 
-# =============================================================================
-# RESULTADOS - NIVEL QUERY
-# =============================================================================
-
 @dataclass
 class QueryRetrievalDetail:
     """
@@ -367,9 +344,6 @@ class GenerationResult:
     model_name: str = "unknown"
 
 
-# Claves de retrieval_metadata que se serializan per-query en JSON/CSV.
-# Conteos para kg_entities/kg_relations (listas completas son pesadas) +
-# flags diagnosticos. Deuda #15 (cerrada).
 _RETRIEVAL_METADATA_PASSTHROUGH_KEYS = (
     "kg_fallback",
     "kg_chunk_keyword_matches",
@@ -496,18 +470,9 @@ class QueryEvaluationResult:
         return result
 
 
-# =============================================================================
-# RESULTADO - NIVEL RUN (reemplaza GlobalEvaluationReport)
-# =============================================================================
-
 @dataclass
 class EvaluationRun:
-    """
-    Resultado de UNA ejecucion: 1 dataset + 1 embedding + 1 estrategia.
-
-    Reemplaza GlobalEvaluationReport y DatasetEvaluationResult.
-    No hay results_matrix, no hay dimension multi-modelo.
-    """
+    """Resultado de UNA ejecucion: 1 dataset + 1 embedding + 1 estrategia."""
     # Identificacion del run
     run_id: str = ""
     dataset_name: str = ""
@@ -556,10 +521,6 @@ class EvaluationRun:
             self.run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         if not self.timestamp:
             self.timestamp = datetime.now().isoformat()
-
-    # NOTE: calculate_aggregates() eliminado (v3.2 cleanup).
-    # La agregacion se hace en MTEBEvaluator._build_run(), que es el unico
-    # punto de construccion de EvaluationRun. No habia callers de este metodo.
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializacion sin detalle de queries."""
@@ -614,10 +575,6 @@ class EvaluationRun:
         return d
 
 
-# =============================================================================
-# CONFIGURACION DE DATASETS
-# =============================================================================
-
 class DatasetSpec(TypedDict):
     """Forma de cada entrada de `DATASET_CONFIG` (R5).
 
@@ -668,10 +625,6 @@ def get_dataset_config(dataset_name: str) -> DatasetSpec:
         "description": "Dataset sin configuracion predefinida",
     }
 
-
-# =============================================================================
-# PROTOCOLOS
-# =============================================================================
 
 @runtime_checkable
 class LLMJudgeProtocol(Protocol):

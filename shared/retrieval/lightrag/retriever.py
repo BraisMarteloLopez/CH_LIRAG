@@ -1,7 +1,6 @@
 """
-Modulo: LightRAG Retriever
-Descripcion: Retriever basado en LightRAG (EMNLP 2025). Chunks obtenidos a
-             traves del KG con tres canales agregados al mismo doc_scores.
+Retriever basado en LightRAG (EMNLP 2025). Chunks obtenidos a traves del KG
+con tres canales agregados al mismo doc_scores.
 
 Flujo:
     Indexacion:
@@ -171,7 +170,6 @@ class LightRAGRetriever(BaseRetriever):
             f"LightRAGRetriever: indexando {len(documents)} documentos..."
         )
 
-        # Paso 1: Vector index (siempre)
         vector_ok = self._vector_retriever.index_documents(
             documents, collection_name
         )
@@ -179,7 +177,6 @@ class LightRAGRetriever(BaseRetriever):
             logger.error("LightRAGRetriever: fallo indexacion vectorial")
             return False
 
-        # Paso 2: Knowledge graph (si disponible)
         if self._kg and self._extractor:
             # Snapshot de stats del extractor antes del build para restaurarlos
             # ante fallo (evita stats corruptas si el build aborta a la mitad).
@@ -259,14 +256,11 @@ class LightRAGRetriever(BaseRetriever):
             documents, batch_docs_per_call=self._kg_batch_docs_per_call,
         )
 
-        # Construir grafo
         total_triplets = 0
         for doc_id, (entities, relations, chunk_keywords) in extraction_results.items():
-            # Anadir tripletas
             added = self._kg.add_triplets(doc_id, relations)
             total_triplets += added
 
-            # Actualizar metadata de entidades
             for entity in entities:
                 self._kg.add_entity_metadata(
                     entity.name, entity.entity_type, entity.description
@@ -385,7 +379,6 @@ class LightRAGRetriever(BaseRetriever):
 
         synthesized = 0
         for name, entity in candidates:
-            # Formatear descripciones como lista numerada
             desc_list = "\n".join(
                 f"  {i+1}. {d}" for i, d in enumerate(entity._descriptions[:10])
             )
@@ -908,7 +901,6 @@ class LightRAGRetriever(BaseRetriever):
         use_local = self._lightrag_mode in ("local", "hybrid")
         use_global = self._lightrag_mode in ("global", "hybrid")
 
-        # --- Paso 1: Resolver entidades y relaciones via VDBs ---
         resolved_entities: List[Tuple[str, float]] = []
         kg_entities: List[Dict[str, Any]] = []
         if use_local and low_level:
@@ -960,7 +952,6 @@ class LightRAGRetriever(BaseRetriever):
                 top_k=self.config.kg_chunk_keywords_top_k,
             )
 
-        # --- Paso 2: Scoring sobre source_doc_ids (order × similarity × weight) ---
         doc_scores: Dict[str, float] = {}
 
         if resolved_entities:
@@ -999,7 +990,6 @@ class LightRAGRetriever(BaseRetriever):
                 ck_score = order_score * similarity
                 doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + ck_score
 
-        # --- Paso 3: Fallback si el KG no produjo doc_ids ---
         if not doc_scores:
             logger.debug(
                 "KG retrieval: no doc_ids from KG, falling back to vector search"
@@ -1021,7 +1011,6 @@ class LightRAGRetriever(BaseRetriever):
             doc_scores.items(), key=lambda x: x[1], reverse=True,
         )[:top_k]
 
-        # --- Paso 4: Fetch contenido desde el vector store ---
         target_ids = [did for did, _ in ranked_doc_ids]
         contents_map = self._vector_retriever.get_documents_by_ids(target_ids)
 

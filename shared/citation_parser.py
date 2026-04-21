@@ -1,7 +1,6 @@
 """
-Modulo: Citation Reference Parser
-Descripcion: Parseo de citas `[ref:N]` emitidas por el LLM, observable para
-             divergencia #7 (contexto estructurado JSON-lines con reference_id).
+Parseo de citas `[ref:N]` emitidas por el LLM, observable para divergencia #7
+(contexto estructurado JSON-lines con reference_id).
 
 El parser produce 7 contadores por cada texto analizado, discriminando formato
 (valid vs malformed), rango (in_range vs out_of_range respecto a los chunks
@@ -61,14 +60,7 @@ def parse_citation_refs(
               `0` implica que cualquier referencia valida es out_of_range.
 
     Returns:
-        Dict con las 7 metricas documentadas:
-          - total: valid + malformed
-          - valid: matches del formato estricto `[ref:N]`
-          - malformed: candidatos reconocibles fuera de formato estricto
-          - in_range: valid con N en [1, n_valid_chunks]
-          - out_of_range: valid con N fuera de rango (senal roja de alucinacion)
-          - distinct: unique N en in_range
-          - coverage_ratio: distinct / in_range (diversidad de fuentes citadas)
+        Ver `CitationStats`.
     """
     if not text:
         return {

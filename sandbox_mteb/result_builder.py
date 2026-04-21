@@ -93,7 +93,6 @@ def build_run(
         if qr.status == EvaluationStatus.FAILED
     ]
 
-    # Agregar metricas de retrieval
     avg_hit5 = 0.0
     avg_mrr = 0.0
     recall_sums: Dict[int, float] = {}

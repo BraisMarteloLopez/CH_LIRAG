@@ -18,10 +18,6 @@ Cobertura:
   merge_entity_descriptions.
   get_entity / get_neighbors_ranked.
   get_all_entities / get_all_relations.
-
-Note: tests for query_entities, query_by_keywords, get_entities_for_docs,
-  get_relations_for_docs, _resolve_entity_names, build_keyword_indices,
-  and _tokenize were removed — those functions no longer exist in production.
 """
 
 import json
