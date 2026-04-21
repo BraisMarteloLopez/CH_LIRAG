@@ -46,7 +46,7 @@ Ver [`README.md`](README.md) para setup, ejecucion, tests y preflight.
 - **Factory pattern**: `get_retriever(config, embedding_model)` en `shared/retrieval/__init__.py` crea el retriever correcto
 - **2 estrategias**: `SIMPLE_VECTOR` y `LIGHT_RAG` — no hay mas
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
-- **Tests**: `conftest.py` mockea modulos de infra (boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Mocks siempre a nivel de funcion, nunca modulos enteros
+- **Tests**: mocks siempre a nivel de funcion, nunca modulos enteros. Ver seccion "Test coverage"
 - **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
 - **Idioma**: codigo y comentarios en ingles/espanol mezclado (historico). Docstrings y variables en ingles
 
@@ -176,15 +176,7 @@ Estos `except Exception as e:` logean el error y devuelven un fallback en vez de
 
 ## Test coverage
 
-| Metrica | Valor orientativo |
-|---|---|
-| Tests unitarios | **~465 pasan** con `python-igraph` + `snowballstemmer` instalados; **~392 pasan** sin igraph (tests que lo requieren se saltan). Cifras orientativas — drift con cada PR; valor exacto: `pytest --collect-only -q tests/ \| tail -1` y `pytest -m "not integration" tests/` |
-| Tests integracion | **~15** en 3 archivos (`tests/integration/`), requieren NIM + MinIO reales |
-| mypy | 0 errores nuevos en ficheros modificados; 3 errores preexistentes no relacionados (dotenv/numpy sin stubs, `retrieval_executor.py:124` union-attr) |
-
-**Portabilidad**: `conftest.py` mockea modulos de infra (dotenv, boto3, langchain, chromadb) si no estan instalados. `test_knowledge_graph.py` usa `pytest.importorskip("igraph")`. Dependencias opcionales para suite completa: `python-igraph`, `snowballstemmer`.
-
-**Referencia completa**: ver `TESTS.md` — mapa test→produccion, trampas de mock, gaps de cobertura, reglas de modificacion.
+`conftest.py` mockea modulos de infra (dotenv, boto3, langchain, chromadb) si no estan instalados. Tests de integracion requieren NIM + MinIO reales. Dependencias opcionales para suite completa: `python-igraph`, `snowballstemmer`. Referencia completa en `TESTS.md`.
 
 ## Que NO tocar sin contexto
 
