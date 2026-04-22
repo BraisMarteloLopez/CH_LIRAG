@@ -35,15 +35,12 @@ shared/                          # Libreria core (motor)
 sandbox_mteb/                    # Harness de evaluacion MTEB/BeIR (verifica el motor)
   config.py                      # MTEBConfig: .env -> dataclass validada
   evaluator.py                   # Pipeline orquestador
-  run.py                         # Entry point CLI (--dry-run, -v, --resume)
+  run.py                         # Entry point CLI (--dry-run, -v)
   loader.py                      # MinIO/Parquet -> LoadedDataset
   retrieval_executor.py          # Loop retrieval sync + reranking
   generation_executor.py         # Generacion async + metricas
   embedding_service.py           # Pre-embed queries batch (NIM REST)
-  checkpoint.py                  # Checkpoint/resume cada N queries
   result_builder.py              # Construccion EvaluationRun final
-  preflight.py                   # Validacion pre-run (deps, NIM, MinIO)
-  subset_selection.py            # DEV_MODE: gold docs + distractores
   env.example                    # Plantilla .env (referencia completa de variables)
 
 tests/                           # pytest — ver CLAUDE.md "Test coverage"
@@ -66,9 +63,6 @@ python -m sandbox_mteb.run                  # Run con .env por defecto
 python -m sandbox_mteb.run --dry-run        # Solo validar config
 python -m sandbox_mteb.run --env /path/.env # .env alternativo
 python -m sandbox_mteb.run -v               # Verbose (DEBUG)
-python -m sandbox_mteb.run --resume RUN_ID  # Reanudar desde checkpoint
-
-python -m sandbox_mteb.preflight            # Preflight check (deps, NIM, MinIO)
 ```
 
 ## Configuracion (.env)

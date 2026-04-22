@@ -38,7 +38,7 @@ Estructura completa del repo en [`README.md`](README.md). Archivos que concentra
 
 ## Comandos
 
-Ver [`README.md`](README.md) para setup, ejecucion, tests y preflight.
+Ver [`README.md`](README.md) para setup, ejecucion y tests.
 
 ## Convenciones
 
@@ -94,15 +94,12 @@ Diferencias entre esta implementacion y el [LightRAG original](https://github.co
 <a id="deuda-tecnica"></a>
 ## Deuda tecnica vigente
 
-IDs (`dt-N`) son navegables desde codigo: `# ver deuda #5` resuelve a `<a id="dt-5">`. Numeros ausentes (#4, #6, #7, #11, #13, #14, #15, #16) correspondieron a items cerrados en iteraciones anteriores; los IDs no se reasignan para mantener estabilidad de referencias historicas.
+IDs (`dt-N`) son navegables desde codigo: `# ver deuda #5` resuelve a `<a id="dt-5">`. Numeros ausentes (#1, #2, #4, #6, #7, #8, #11, #13, #14, #15, #16) correspondieron a items cerrados en iteraciones anteriores; los IDs no se reasignan para mantener estabilidad de referencias historicas.
 
 | # ID | Item | Severidad | Ubicacion | Mitigacion temporal |
 |---|---|---|---|---|
-| <a id="dt-1"></a>1 | ChromaDB: colecciones huerfanas si el proceso se interrumpe | **BAJO** | `evaluator.py:_cleanup()` borra la coleccion al terminar; si el proceso muere antes, queda `eval_*` en disco. Con `PersistentClient` se acumulan | Auditar `VECTOR_DB_DIR` entre campanas y purgar `eval_*` huerfanas; automatizar en `preflight.py` si el tamano supera presupuesto |
-| <a id="dt-2"></a>2 | Preflight no valida datos reales | **MEDIO** | `preflight.py` solo verifica bucket MinIO; no descarga ni parsea Parquet, no valida schema contra `DATASET_CONFIG`. Riesgo real: **schema drift del contrato upstream** (administrador produce catalogo con columnas/tipos distintos) — fallo horas despues en `_populate_from_dataframes()`, quemando compute | `--dry-run` primero; cerrar con contract testing al integrar con administrador (P3) |
 | <a id="dt-3"></a>3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
 | <a id="dt-5"></a>5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, fallback 4000 chars (presupuesto TOTAL de contexto, no truncado del doc; ~4-8 chunks). Riesgo: dejar senal en la mesa si el modelo soporta mucho mas (p.ej. 192K). Loguea INFO (no WARNING) → puede pasar desapercibido | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicito en `.env`. Auditar `config_snapshot._runtime.max_context_chars` antes de aceptar un run |
-| <a id="dt-8"></a>8 | Infraestructura pesada para el scope | **BAJO** | Para 1 dataset y 2 estrategias, checkpoint/preflight/JSONL/export dual/DEV_MODE es mucho. Componentes ejercitados sin incidentes en validacion previa | Revisar post-P0: si algun componente queda sin uso tras 3 runs reales, candidato a eliminacion |
 | <a id="dt-9"></a>9 | Lock-in a NVIDIA NIM | **BAJO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
 | <a id="dt-10"></a>10 | Sin indexacion incremental del KG | **MEDIO** | `LightRAGRetriever.index_documents()` siempre rebuild completo o carga de cache. No hay `append_documents()` para integrar docs nuevos sin reconstruir. El paper soporta `insert()` incremental. Para PDFs en tandas (escenario administrador), obliga a re-indexar todo | Cache de disco mitiga re-extraccion LLM pero no rebuild del grafo ni VDBs. P3 lo requiere |
 | <a id="dt-12"></a>12 | Tests acoplados a mensajes de error de `AsyncLLMService` | **BAJO** | Tests en `test_llm.py` usan regex laxa sobre `RuntimeError` porque no hay excepciones custom. Si cambia el texto, los tests fallan por regex, no por comportamiento | Refactor de excepciones en el proximo PR funcional a `shared/llm.py`. Sincronizar regex al tocar mensajes |
@@ -259,7 +256,7 @@ Tres condiciones cumplidas simultaneamente:
 
 - **Embedibilidad**: configuracion via dict inyectado (no solo `.env` global), corpus en memoria, separar "cargar/indexar" de "evaluar" para reusar indices entre runs, sin asunciones sobre el filesystem excepto `EVALUATION_RESULTS_DIR` explicito.
 - **Export de KG a MinIO/Parquet**: serializador `KnowledgeGraph` → Parquet (nodos + aristas + pesos + metadatos de co-ocurrencia) + VDBs. Schema a acordar con el administrador. Hoy el KG es efimero (igraph + ChromaDB en memoria, descartado en `_cleanup()`). Sin export, multi-tenant y versionado son imposibles.
-- **Contract testing con el administrador**: validar el schema Parquet upstream contra `DATASET_CONFIG` desde preflight (cierra deuda #2).
+- **Contract testing con el administrador**: validar el schema Parquet upstream contra `DATASET_CONFIG` antes de cargar el dataset (schema drift del contrato upstream produce fallos horas despues en `_populate_from_dataframes()`, quemando compute).
 
 ### Limitaciones conocidas (no accionables)
 

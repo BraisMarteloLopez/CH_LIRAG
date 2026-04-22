@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import gc
 import logging
+import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from shared.types import (
     EvaluationRun,
@@ -43,15 +44,10 @@ from shared.structured_logging import structured_log
 
 from .config import MTEBConfig
 from .loader import MinIOLoader
-from .checkpoint import (
-    CHECKPOINT_CHUNK_SIZE,
-    save_checkpoint,
-    load_checkpoint,
-    delete_checkpoint,
-)
 from .result_builder import build_run
-from .subset_selection import select_subset_dev, select_subset_standard
 from .retrieval_executor import RetrievalExecutor, format_context
+
+_CHUNK_SIZE = 50  # queries por chunk (progreso + memoria)
 from .generation_executor import (
     GenerationExecutor,
     GenMetricsResult,
@@ -97,20 +93,10 @@ class MTEBEvaluator:
         self._metrics_calculator: Optional[MetricsCalculator] = None
         self._max_context_chars: int = 4000  # fallback por defecto
 
-    def run(self, resume_run_id: Optional[str] = None) -> EvaluationRun:
-        """
-        Ejecuta una evaluacion completa.
-
-        Args:
-            resume_run_id: Si se proporciona, reanuda un run previo desde
-                su checkpoint. Re-indexa (idempotente) pero salta queries
-                ya evaluadas.
-
-        Returns:
-            EvaluationRun con todos los resultados.
-        """
+    def run(self) -> EvaluationRun:
+        """Ejecuta una evaluacion completa y devuelve el EvaluationRun."""
         start_time = time.time()
-        run_id = resume_run_id or f"mteb_{self.config.dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}"
+        run_id = f"mteb_{self.config.dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}"
 
         self._log_run_start(run_id)
 
@@ -204,14 +190,61 @@ class MTEBEvaluator:
                 logger.info(
                     "  DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS"
                 )
-            queries, corpus = select_subset_dev(dataset, self.config)
+            queries, corpus = self._select_subset_dev(dataset)
         else:
-            queries, corpus = select_subset_standard(dataset, self.config)
+            queries, corpus = self._select_subset_standard(dataset)
 
         logger.info(
             f"  Usando {len(queries)} queries, {len(corpus)} docs"
         )
         return dataset, queries, corpus
+
+    def _select_subset_dev(
+        self, dataset: LoadedDataset,
+    ) -> Tuple[List[NormalizedQuery], Dict[str, Any]]:
+        """DEV_MODE: gold docs garantizados + distractores aleatorios."""
+        seed = self.config.corpus_shuffle_seed or 42
+        rng = random.Random(seed)
+        all_queries = list(dataset.queries)
+        rng.shuffle(all_queries)
+        queries = all_queries[: self.config.dev_queries]
+
+        gold_ids = set()
+        for q in queries:
+            gold_ids.update(q.relevant_doc_ids)
+        available_gold = gold_ids & set(dataset.corpus.keys())
+        if len(available_gold) > self.config.dev_corpus_size:
+            raise ValueError(
+                f"DEV_MODE: gold docs ({len(available_gold)}) > "
+                f"DEV_CORPUS_SIZE ({self.config.dev_corpus_size})."
+            )
+
+        corpus = {k: dataset.corpus[k] for k in available_gold}
+        non_gold = [k for k in dataset.corpus if k not in gold_ids]
+        rng.shuffle(non_gold)
+        for doc_id in non_gold[: self.config.dev_corpus_size - len(corpus)]:
+            corpus[doc_id] = dataset.corpus[doc_id]
+        return queries, corpus
+
+    def _select_subset_standard(
+        self, dataset: LoadedDataset,
+    ) -> Tuple[List[NormalizedQuery], Dict[str, Any]]:
+        """Modo estandar: max_queries y max_corpus con shuffle (0 = todo)."""
+        queries = (
+            dataset.queries[: self.config.max_queries]
+            if self.config.max_queries > 0 else dataset.queries
+        )
+        corpus_ids = list(dataset.corpus.keys())
+        seed = self.config.corpus_shuffle_seed
+        if seed is not None:
+            random.Random(seed).shuffle(corpus_ids)
+        else:
+            logger.warning(
+                "  CORPUS_SHUFFLE_SEED no configurado (riesgo de sesgo de orden)."
+            )
+        if self.config.max_corpus > 0:
+            corpus_ids = corpus_ids[: self.config.max_corpus]
+        return queries, {k: dataset.corpus[k] for k in corpus_ids}
 
     def _log_run_complete(
         self, run_id: str, elapsed: float, evaluation_run: EvaluationRun,
@@ -483,42 +516,13 @@ class MTEBEvaluator:
         dataset_name: str,
         run_id: str = "",
     ) -> List[QueryEvaluationResult]:
-        """
-        Pipeline de evaluacion con checkpoint/resume.
-
-        Fases:
-          0. Pre-embed: batch embed queries via REST NIM
-          1. Retrieval + Generation + Metrics en chunks de _CHECKPOINT_CHUNK_SIZE
-             Con checkpoint despues de cada chunk.
-
-        Si existe un checkpoint previo para run_id, las queries ya evaluadas
-        se saltan y sus resultados se reutilizan.
-        """
+        """Pipeline de evaluacion: pre-embed + retrieval/generation/metrics por chunks."""
         n = len(queries)
 
-        # --- Resume: cargar checkpoint previo ---
-        checkpoint_results: List[QueryEvaluationResult] = []
-        evaluated_ids: Set[str] = set()
-        if run_id:
-            loaded = load_checkpoint(str(self.config.storage.evaluation_results_dir), run_id)
-            if loaded:
-                evaluated_ids, checkpoint_results = loaded
-                logger.info(
-                    f"  Resumiendo: {len(evaluated_ids)}/{n} queries ya evaluadas, "
-                    f"{n - len(evaluated_ids)} pendientes"
-                )
-
-        pending_queries = [q for q in queries if q.query_id not in evaluated_ids]
-        n_pending = len(pending_queries)
-
-        if n_pending == 0:
-            logger.info("  Todas las queries ya evaluadas (checkpoint completo)")
-            return checkpoint_results
-
-        # --- Fase 0: Pre-embed queries pendientes ---
-        pending_texts = [q.query_text for q in pending_queries]
-        query_vectors = batch_embed_queries(pending_texts, self.config)
-        use_preembed = len(query_vectors) == n_pending
+        # --- Fase 0: Pre-embed queries ---
+        query_texts = [q.query_text for q in queries]
+        query_vectors = batch_embed_queries(query_texts, self.config)
+        use_preembed = len(query_vectors) == n
         if not use_preembed:
             logger.warning(
                 "  Pre-embed fallido o incompleto. "
@@ -529,32 +533,23 @@ class MTEBEvaluator:
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
             from shared.retrieval.lightrag.retriever import LightRAGRetriever
             if isinstance(self._retriever, LightRAGRetriever):
-                logger.info(
-                    f"  Pre-extrayendo keywords de {n_pending} queries (batch LLM)..."
-                )
+                logger.info(f"  Pre-extrayendo keywords de {n} queries (batch LLM)...")
                 t_kw = time.time()
-                self._retriever.pre_extract_query_keywords(pending_texts)
-                logger.info(
-                    f"  Keywords pre-extraidas en {time.time() - t_kw:.1f}s"
-                )
+                self._retriever.pre_extract_query_keywords(query_texts)
+                logger.info(f"  Keywords pre-extraidas en {time.time() - t_kw:.1f}s")
 
         # --- Chunked processing: Retrieval + Generation + Metrics ---
-        chunk_size = CHECKPOINT_CHUNK_SIZE
-        all_results = list(checkpoint_results)  # start with resumed results
+        all_results: List[QueryEvaluationResult] = []
 
-        n_resumed = len(evaluated_ids)
-
-        for chunk_start in range(0, n_pending, chunk_size):
-            chunk_end = min(chunk_start + chunk_size, n_pending)
-            chunk_queries = pending_queries[chunk_start:chunk_end]
+        for chunk_start in range(0, n, _CHUNK_SIZE):
+            chunk_end = min(chunk_start + _CHUNK_SIZE, n)
+            chunk_queries = queries[chunk_start:chunk_end]
             chunk_vectors = query_vectors[chunk_start:chunk_end] if use_preembed else []
             n_chunk = len(chunk_queries)
 
             logger.info(
-                f"  Chunk {chunk_start // chunk_size + 1}: "
-                f"queries {n_resumed + chunk_start + 1}-"
-                f"{n_resumed + chunk_end}/{n} "
-                f"({n_chunk} queries)"
+                f"  Chunk {chunk_start // _CHUNK_SIZE + 1}: "
+                f"queries {chunk_start + 1}-{chunk_end}/{n} ({n_chunk} queries)"
             )
 
             # Retrieval (sync)
@@ -589,7 +584,6 @@ class MTEBEvaluator:
                     else:
                         gen_metrics_results[idx] = item
 
-            # Assemble chunk results
             chunk_results = self._assemble_results(
                 chunk_queries, retrievals, gen_metrics_results,
                 rerank_statuses, ds_config, dataset_name,
@@ -597,13 +591,7 @@ class MTEBEvaluator:
             )
             all_results.extend(chunk_results)
 
-            for qr in chunk_results:
-                evaluated_ids.add(qr.query_id)
-
-            if run_id:
-                save_checkpoint(str(self.config.storage.evaluation_results_dir), run_id, evaluated_ids, all_results)
-
-        assert self._retrieval_executor is not None  # initialized in _init_components
+        assert self._retrieval_executor is not None
         if self._retrieval_executor.strategy_mismatches > 0:
             logger.error(
                 f"  STRATEGY MISMATCH en {self._retrieval_executor.strategy_mismatches}/{n} queries: "
@@ -620,10 +608,6 @@ class MTEBEvaluator:
         failed = sum(1 for r in all_results if r.status == EvaluationStatus.FAILED)
         if failed:
             logger.warning(f"  Queries: {completed} completadas, {failed} fallidas")
-
-        # Clean up checkpoint on successful completion
-        if run_id:
-            delete_checkpoint(str(self.config.storage.evaluation_results_dir), run_id)
 
         return all_results
 

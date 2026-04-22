@@ -3,7 +3,7 @@ Tests unitarios para sandbox_mteb/run.py (Audit Fase 3 — A3.1).
 
 Cobertura:
   R1. parse_args defaults
-  R2. parse_args con --dry-run, -v, --resume
+  R2. parse_args con --dry-run, -v
   R3. main() con .env inexistente retorna 1
   R4. main() con config invalida retorna 1
   R5. main() dry-run retorna 0
@@ -28,7 +28,6 @@ class TestParseArgs:
             args = parse_args()
         assert not args.dry_run
         assert not args.verbose
-        assert args.resume is None
         assert args.env.endswith(".env")
 
     def test_dry_run(self):
@@ -40,11 +39,6 @@ class TestParseArgs:
         with patch("sys.argv", ["run.py", "-v"]):
             args = parse_args()
         assert args.verbose is True
-
-    def test_resume(self):
-        with patch("sys.argv", ["run.py", "--resume", "run_12345"]):
-            args = parse_args()
-        assert args.resume == "run_12345"
 
     def test_custom_env(self):
         with patch("sys.argv", ["run.py", "--env", "/tmp/custom.env"]):
