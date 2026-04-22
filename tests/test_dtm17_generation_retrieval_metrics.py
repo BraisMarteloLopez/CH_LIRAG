@@ -5,14 +5,7 @@ Cubren:
   - QueryRetrievalDetail: generation_recall, generation_hit
   - EvaluationRun: avg_generation_recall, avg_generation_hit, reranker_rescue_count
   - QueryEvaluationResult.to_dict(): serializacion condicional
-  - RunExporter: columnas en summary y detail CSV
 """
-
-import csv
-import tempfile
-from pathlib import Path
-
-import pytest
 
 from shared.types import (
     DatasetType,
@@ -23,7 +16,6 @@ from shared.types import (
     QueryEvaluationResult,
     QueryRetrievalDetail,
 )
-from shared.report import RunExporter
 
 
 # =========================================================================
@@ -212,104 +204,3 @@ class TestEvaluationRunAggregates:
         assert d["avg_generation_hit"] == 0.9877
         assert d["reranker_rescue_count"] == 3
 
-
-# =========================================================================
-# RunExporter: columnas CSV
-# =========================================================================
-
-
-class TestRunExporterCSV:
-    """Columnas de generation retrieval en summary y detail CSV."""
-
-    def _make_run(self, with_reranker=True):
-        """Construye un EvaluationRun minimo con 2 queries."""
-        qrs = []
-        for i, (gen_ids, exp_ids) in enumerate([
-            (["x", "a"], ["x", "y"]),  # partial rescue
-            (["x", "y"], ["x", "y"]),  # full rescue
-        ]):
-            ret_ids = ["a", "b", "c"] if with_reranker else gen_ids
-            qrd = QueryRetrievalDetail(
-                retrieved_doc_ids=ret_ids,
-                retrieved_contents=["c"] * len(ret_ids),
-                retrieval_scores=[0.9, 0.8, 0.7][:len(ret_ids)],
-                expected_doc_ids=exp_ids,
-                generation_doc_ids=gen_ids if with_reranker else [],
-                generation_contents=["c"] * len(gen_ids) if with_reranker else [],
-            )
-            qrs.append(QueryEvaluationResult(
-                query_id=f"q_{i}",
-                query_text=f"query {i}",
-                dataset_name="test",
-                dataset_type=DatasetType.HYBRID,
-                retrieval=qrd,
-                generation=GenerationResult("ans", 10.0),
-                expected_response="exp",
-                primary_metric_type=MetricType.F1_SCORE,
-                primary_metric_value=0.5,
-                status=EvaluationStatus.COMPLETED,
-                metadata={"reranked": with_reranker},
-            ))
-        return EvaluationRun(
-            run_id="test_run",
-            dataset_name="test",
-            embedding_model="test",
-            retrieval_strategy="SIMPLE_VECTOR",
-            num_queries_evaluated=2,
-            avg_generation_recall=0.75 if with_reranker else None,
-            avg_generation_hit=1.0 if with_reranker else None,
-            reranker_rescue_count=2 if with_reranker else 0,
-            query_results=qrs,
-        )
-
-    def test_summary_csv_with_reranker(self):
-        """Summary CSV incluye gen_recall, gen_hit, reranker_rescue_count."""
-        run = self._make_run(with_reranker=True)
-        with tempfile.TemporaryDirectory() as tmp:
-            exporter = RunExporter(output_dir=Path(tmp))
-            path = exporter.to_summary_csv(run)
-            with open(path) as f:
-                reader = csv.DictReader(f)
-                row = next(reader)
-            assert row["gen_recall"] == "0.75"
-            assert row["gen_hit"] == "1.0"
-            assert row["reranker_rescue_count"] == "2"
-
-    def test_summary_csv_without_reranker(self):
-        """Summary CSV emite campos vacios sin reranker."""
-        run = self._make_run(with_reranker=False)
-        with tempfile.TemporaryDirectory() as tmp:
-            exporter = RunExporter(output_dir=Path(tmp))
-            path = exporter.to_summary_csv(run)
-            with open(path) as f:
-                reader = csv.DictReader(f)
-                row = next(reader)
-            assert row["gen_recall"] == ""
-            assert row["gen_hit"] == ""
-            assert row["reranker_rescue_count"] == ""
-
-    def test_detail_csv_with_reranker(self):
-        """Detail CSV incluye columnas gen_recall, gen_hit con reranker."""
-        run = self._make_run(with_reranker=True)
-        with tempfile.TemporaryDirectory() as tmp:
-            exporter = RunExporter(output_dir=Path(tmp))
-            path = exporter.to_detail_csv(run)
-            with open(path) as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-            assert "gen_recall" in rows[0]
-            assert "gen_hit" in rows[0]
-            assert rows[0]["gen_recall"] == "0.5"   # 1/2 gold
-            assert rows[1]["gen_recall"] == "1.0"    # 2/2 gold
-
-    def test_detail_csv_without_reranker(self):
-        """Detail CSV omite columnas gen_recall, gen_hit sin reranker."""
-        run = self._make_run(with_reranker=False)
-        with tempfile.TemporaryDirectory() as tmp:
-            exporter = RunExporter(output_dir=Path(tmp))
-            path = exporter.to_detail_csv(run)
-            with open(path) as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-            assert "gen_recall" not in rows[0]
-            assert "gen_hit" not in rows[0]

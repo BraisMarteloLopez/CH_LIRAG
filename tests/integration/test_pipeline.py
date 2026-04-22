@@ -117,10 +117,8 @@ class TestPipelineDevMode:
         )
         paths = exporter.export(run)
 
-        # Se generan los 3 tipos de fichero
+        # Se genera el JSON unico
         assert "json" in paths, "Falta fichero JSON"
-        assert "summary_csv" in paths, "Falta CSV summary"
-        assert "detail_csv" in paths, "Falta CSV detail"
 
         # Ficheros existen y no estan vacios
         for kind, path in paths.items():

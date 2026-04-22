@@ -1,21 +1,15 @@
 """
-Tests unitarios para shared/report.py (Audit Fase 3 — A3.3).
+Tests unitarios para shared/report.py.
 
 Cobertura:
   X1. to_json() genera JSON valido con estructura correcta
-  X2. to_summary_csv() genera CSV con headers y una fila
-  X3. to_detail_csv() genera CSV con una fila por query
-  X4. to_detail_csv() sin query_results genera archivo vacio
-  X5. export() genera los 3 archivos
-  X6. to_summary_csv() incluye recall_at_k y ndcg_at_k columns
-  X7. to_detail_csv() detecta reranker y LIGHT_RAG columns
+  X2. export() genera archivo JSON y devuelve dict con path
+  X3. Subset de retrieval_metadata (LightRAG + divergencias #7/#9/#4+5)
+      serializado correctamente en JSON
 """
 
-import csv
 import json
 from pathlib import Path
-
-import pytest
 
 from shared.types import (
     DatasetType,
@@ -43,22 +37,13 @@ def _make_retrieval(doc_ids=None, expected=None) -> QueryRetrievalDetail:
 def _make_qr(
     query_id="q1",
     with_gen=True,
-    reranked=False,
     graph_meta=False,
     kg_fallback=None,
     synthesis_error=None,
 ) -> QueryEvaluationResult:
     gen = GenerationResult("answer text", 42.0) if with_gen else None
-    metadata = {}
-    if reranked:
-        metadata["reranked"] = True
-
     retrieval = _make_retrieval()
     if graph_meta:
-        # Claves actuales emitidas por LightRAGRetriever y por
-        # GenerationExecutor.synthesis. El retriever ya no emite las claves
-        # legacy (graph_candidates, etc.); el guard del exporter usa las
-        # vigentes para activar las columnas KG en el CSV.
         retrieval.retrieval_metadata = {
             "lightrag_mode": "hybrid",
             "kg_entities": [{"name": "physics"}, {"name": "quantum"}],
@@ -81,7 +66,6 @@ def _make_qr(
         primary_metric_type=MetricType.F1_SCORE,
         primary_metric_value=0.85,
         secondary_metrics={"exact_match": 1.0},
-        metadata=metadata,
         retrieval=retrieval,
         generation=gen,
     )
@@ -151,9 +135,7 @@ class TestToJson:
         path = exporter.to_json(run)
 
         data = json.loads(path.read_text())
-        qr_json = data["query_results"][0]
-        assert "retrieval_metadata" in qr_json
-        rm = qr_json["retrieval_metadata"]
+        rm = data["query_results"][0]["retrieval_metadata"]
         assert rm["lightrag_mode"] == "hybrid"
         assert rm["kg_entities_count"] == 2
         assert rm["kg_relations_count"] == 1
@@ -170,8 +152,7 @@ class TestToJson:
         path = exporter.to_json(run)
 
         data = json.loads(path.read_text())
-        qr_json = data["query_results"][0]
-        assert "retrieval_metadata" not in qr_json
+        assert "retrieval_metadata" not in data["query_results"][0]
 
     def test_retrieval_metadata_with_kg_fallback(self, tmp_path):
         """kg_fallback (p.ej. 'no_doc_ids') se preserva per-query en JSON."""
@@ -204,7 +185,6 @@ class TestToJson:
         """Divergencia #7: los 14 campos citation_refs_{synth,gen}_* llegan al JSON."""
         exporter = RunExporter(output_dir=tmp_path)
         qr = _make_qr("q1", graph_meta=True)
-        # Los 7 synth + 7 gen.
         synth_values = {
             "total": 5, "valid": 4, "malformed": 1, "in_range": 3,
             "out_of_range": 1, "distinct": 2, "coverage_ratio": 0.667,
@@ -238,239 +218,22 @@ class TestToJson:
 
         data = json.loads(path.read_text())
         rm = data["query_results"][0]["retrieval_metadata"]
-        # Ninguno de los 14 campos debe aparecer en el JSON si no estaban
-        # en el retrieval_metadata original.
         for prefix in ("synth", "gen"):
             for k in ("total", "valid", "malformed", "in_range",
                      "out_of_range", "distinct", "coverage_ratio"):
                 assert f"citation_refs_{prefix}_{k}" not in rm
 
 
-class TestToSummaryCsv:
-    """Tests para to_summary_csv()."""
-
-    def test_generates_csv_with_one_row(self, tmp_path):
-        exporter = RunExporter(output_dir=tmp_path)
-        run = _make_run()
-        path = exporter.to_summary_csv(run)
-
-        assert path.exists()
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        assert len(rows) == 1
-        assert rows[0]["run_id"] == "test_run_001"
-        assert rows[0]["mrr"] == "0.85"
-
-    def test_includes_recall_ndcg_columns(self, tmp_path):
-        exporter = RunExporter(output_dir=tmp_path)
-        run = _make_run()
-        path = exporter.to_summary_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            row = next(reader)
-        assert "recall_at_5" in row
-        assert "recall_at_10" in row
-        assert "ndcg_at_5" in row
-        assert "ndcg_at_10" in row
-
-    def test_config_snapshot_fields(self, tmp_path):
-        exporter = RunExporter(output_dir=tmp_path)
-        run = _make_run()
-        path = exporter.to_summary_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            row = next(reader)
-        assert row["retrieval_k"] == "20"
-        assert row["corpus_indexed"] == "1000"
-
-
-class TestToDetailCsv:
-    """Tests para to_detail_csv()."""
-
-    def test_one_row_per_query(self, tmp_path):
-        exporter = RunExporter(output_dir=tmp_path)
-        run = _make_run()
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        assert len(rows) == 2
-        assert rows[0]["query_id"] == "q1"
-        assert rows[1]["query_id"] == "q2"
-
-    def test_empty_results_creates_empty_file(self, tmp_path):
-        exporter = RunExporter(output_dir=tmp_path)
-        run = _make_run(query_results=[])
-        path = exporter.to_detail_csv(run)
-
-        assert path.exists()
-        assert path.stat().st_size == 0
-
-    def test_secondary_metrics_columns(self, tmp_path):
-        exporter = RunExporter(output_dir=tmp_path)
-        run = _make_run()
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            row = next(reader)
-        assert "sec_exact_match" in row
-        assert row["sec_exact_match"] == "1.0"
-
-    def test_lightrag_columns_when_graph_meta(self, tmp_path):
-        """Con retrieval_metadata LightRAG presente, detail.csv expone las
-        columnas KG actuales."""
-        exporter = RunExporter(output_dir=tmp_path)
-        qrs = [_make_qr("q1", graph_meta=True), _make_qr("q2", graph_meta=True)]
-        run = _make_run(query_results=qrs)
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        # Claves actuales del retriever/synthesis
-        assert "lightrag_mode" in rows[0]
-        assert "kg_entities_count" in rows[0]
-        assert "kg_relations_count" in rows[0]
-        assert "kg_chunk_keyword_matches" in rows[0]
-        assert "kg_synthesis_used" in rows[0]
-        assert "kg_synthesis_error" in rows[0]
-        assert "kg_fallback" in rows[0]
-        assert rows[0]["lightrag_mode"] == "hybrid"
-        assert rows[0]["kg_entities_count"] == "2"
-        assert rows[0]["kg_relations_count"] == "1"
-        assert rows[0]["kg_chunk_keyword_matches"] == "3"
-        assert rows[0]["kg_synthesis_used"] == "true"
-        assert "graph_candidates" not in rows[0]
-
-    def test_lightrag_columns_absent_for_simple_vector_run(self, tmp_path):
-        """Regresion guard: sin retrieval_metadata LightRAG, ninguna columna KG
-        aparece en el header (SIMPLE_VECTOR run)."""
-        exporter = RunExporter(output_dir=tmp_path)
-        qrs = [_make_qr("q1", graph_meta=False), _make_qr("q2", graph_meta=False)]
-        run = _make_run(query_results=qrs)
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames or []
-        assert "lightrag_mode" not in fieldnames
-        assert "kg_fallback" not in fieldnames
-        assert "kg_entities_count" not in fieldnames
-
-    def test_lightrag_fallback_and_error_serialized(self, tmp_path):
-        """kg_fallback y kg_synthesis_error se escriben en el CSV cuando existen."""
-        exporter = RunExporter(output_dir=tmp_path)
-        qrs = [
-            _make_qr(
-                "q_timeout", graph_meta=True,
-                kg_fallback=None, synthesis_error="timeout",
-            ),
-            _make_qr(
-                "q_fallback", graph_meta=True,
-                kg_fallback="no_doc_ids", synthesis_error=None,
-            ),
-        ]
-        run = _make_run(query_results=qrs)
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        assert rows[0]["kg_synthesis_error"] == "timeout"
-        assert rows[0]["kg_synthesis_used"] == "false"
-        assert rows[1]["kg_fallback"] == "no_doc_ids"
-        assert rows[1]["kg_synthesis_used"] == "true"
-
-    def test_new_observables_serialized(self, tmp_path):
-        """Observables nuevos de divergencias #9 y #4+5 llegan al CSV."""
-        exporter = RunExporter(output_dir=tmp_path)
-        qr = _make_qr("q1", graph_meta=True)
-        qr.retrieval.retrieval_metadata["kg_entities_with_neighbors"] = 3
-        qr.retrieval.retrieval_metadata["kg_mean_neighbors_per_entity"] = 1.5
-        qr.retrieval.retrieval_metadata["kg_budget_cap_triggered"] = False
-        run = _make_run(query_results=[qr])
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        assert rows[0]["kg_entities_with_neighbors"] == "3"
-        assert rows[0]["kg_mean_neighbors_per_entity"] == "1.5"
-        assert rows[0]["kg_budget_cap_triggered"] == "false"
-
-    def test_citation_refs_fields_in_csv(self, tmp_path):
-        """Divergencia #7: los 14 campos citation_refs_{synth,gen}_* llegan al CSV."""
-        exporter = RunExporter(output_dir=tmp_path)
-        qr = _make_qr("q1", graph_meta=True)
-        synth_values = {
-            "total": 5, "valid": 4, "malformed": 1, "in_range": 3,
-            "out_of_range": 1, "distinct": 2, "coverage_ratio": 0.667,
-        }
-        gen_values = {
-            "total": 2, "valid": 2, "malformed": 0, "in_range": 2,
-            "out_of_range": 0, "distinct": 2, "coverage_ratio": 1.0,
-        }
-        for k, v in synth_values.items():
-            qr.retrieval.retrieval_metadata[f"citation_refs_synth_{k}"] = v
-        for k, v in gen_values.items():
-            qr.retrieval.retrieval_metadata[f"citation_refs_gen_{k}"] = v
-
-        run = _make_run(query_results=[qr])
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        row = rows[0]
-        # Los 14 campos estan presentes con sus valores stringificados.
-        assert row["citation_refs_synth_total"] == "5"
-        assert row["citation_refs_synth_valid"] == "4"
-        assert row["citation_refs_synth_malformed"] == "1"
-        assert row["citation_refs_synth_out_of_range"] == "1"
-        assert row["citation_refs_synth_coverage_ratio"] == "0.667"
-        assert row["citation_refs_gen_total"] == "2"
-        assert row["citation_refs_gen_out_of_range"] == "0"
-        assert row["citation_refs_gen_coverage_ratio"] == "1.0"
-
-    def test_citation_refs_absent_columns_when_not_emitted(self, tmp_path):
-        """Queries sin los campos citation_refs_* obtienen string vacio
-        en esas 14 columnas (no ``0``, para discriminar 'no aplica' de
-        'cero validos')."""
-        exporter = RunExporter(output_dir=tmp_path)
-        qr = _make_qr("q1", graph_meta=True)  # KG meta pero sin citation_refs_*
-        run = _make_run(query_results=[qr])
-        path = exporter.to_detail_csv(run)
-
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        row = rows[0]
-        # Las columnas existen en el header (por que hay LightRAG data) pero
-        # las celdas de los 14 campos nuevos estan vacias.
-        for prefix in ("synth", "gen"):
-            for k in ("total", "valid", "malformed", "in_range",
-                     "out_of_range", "distinct", "coverage_ratio"):
-                assert row[f"citation_refs_{prefix}_{k}"] == ""
-
-
 class TestExport:
     """Tests para export()."""
 
-    def test_generates_three_files(self, tmp_path):
+    def test_generates_json_file(self, tmp_path):
         exporter = RunExporter(output_dir=tmp_path)
         run = _make_run()
         paths = exporter.export(run)
 
-        assert "json" in paths
-        assert "summary_csv" in paths
-        assert "detail_csv" in paths
-        for p in paths.values():
-            assert p.exists()
+        assert set(paths.keys()) == {"json"}
+        assert paths["json"].exists()
 
     def test_creates_output_dir(self, tmp_path):
         out = tmp_path / "nested" / "results"
