@@ -83,13 +83,12 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_simple_vector_retriever.py | shared/retrieval/core.py | 10 | retrieve, retrieve_by_vector, index_documents, clear_index, get_documents_by_ids |
 | test_dt8_09_10_11_reranker_sort.py | shared/retrieval/reranker.py | 3 | rerank sorting |
 | test_reranker.py | shared/retrieval/reranker.py | 8 | empty passthrough, ordering, top_n, vector_scores, error fallback, metadata |
-| test_report.py | shared/report.py | 13 | to_json, to_summary_csv, to_detail_csv, export, LIGHT_RAG columns |
+| test_report.py | shared/report.py | 10 | to_json, export, LIGHT_RAG serialization |
 | test_group_a_b_review.py | shared/retrieval/core.py, reranker.py, vector_store.py | 8 | get_documents_by_ids, batching, vector_scores |
 | test_vector_store.py | shared/vector_store.py | 13 | add_documents batching, search, get_by_ids chunking, delete+recreate, error paths |
 | test_config_validation.py | shared/config_base.py | 11 | InfraConfig.validate(), RerankerConfig.validate() error paths |
 | test_retrieval_metrics_formulas.py | shared/types.py | 12 | NDCG, MRR, Hit@K, Recall@K, generation_hit/recall con valores exactos |
-| test_dt7_08_csv_reranked.py | shared/report.py | 1 | reranked column CSV |
-| test_dtm17_generation_retrieval_metrics.py | shared/types.py, shared/report.py | 14 | generation_recall/hit, CSV columns |
+| test_dtm17_generation_retrieval_metrics.py | shared/types.py | 10 | generation_recall/hit, to_dict serialization |
 
 ### sandbox_mteb/ (pipeline)
 
@@ -142,7 +141,7 @@ Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test
 |---|---|---|
 | E17 | Consolidar tests de `retrieval_executor.py` | Fusionar: `test_dt5_pre_rerank_traceability.py`, `test_dt7_05_06_rerank_status.py`, `test_dt7_07_no_reranker.py`, `test_format_context.py`, `test_structured_context.py`, parte de `test_dtm38_strategy_guardrail.py` → `test_retrieval_executor.py` |
 | E18 | Consolidar tests de `shared/metrics.py` | Fusionar: `test_metrics_reference_based.py`, `test_semantic_similarity.py`, `test_dt6_context_truncation.py`, `test_dt9_extract_score_fallback.py`, `test_judge_fallback_tracker.py` → `test_metrics.py` |
-| E19 | Consolidar tests de `shared/report.py` | Fusionar: `test_report.py`, `test_dt7_08_csv_reranked.py`, parte de `test_dtm17_generation_retrieval_metrics.py` → `test_report.py` |
+| E19 | ~~Consolidar tests de `shared/report.py`~~ | Cerrado al eliminar la salida CSV: `test_report.py` quedo en un unico archivo acotado a JSON |
 | E20 | Consolidar tests de `evaluator.py` / `result_builder.py` | Fusionar: `test_evaluator.py`, `test_dtm4_build_run_aggregation.py`, `test_dtm5_12_13_secondary_metric_errors.py` → separar en `test_evaluator.py` + `test_result_builder.py` |
 
 ### Bloque F — Reducir mocking excesivo (requiere construir fixtures reales)

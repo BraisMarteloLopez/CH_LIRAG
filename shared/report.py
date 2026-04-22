@@ -1,31 +1,29 @@
 """
 Exportador plano para resultados de evaluacion.
 
-Un run = un JSON + un CSV resumen + un CSV detalle.
+Un run = un JSON con todo (run metadata + per-query details). El JSON es la
+unica fuente de verdad; derivaciones tabulares (summary, detail) se obtienen
+con jq / pandas sobre el JSON.
 """
 
-import csv
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-from shared.types import EvaluationRun, extract_retrieval_metadata_subset
+from shared.types import EvaluationRun
 
 logger = logging.getLogger(__name__)
 
 
 class RunExporter:
     """
-    Exporta un EvaluationRun a JSON y CSV.
+    Exporta un EvaluationRun a JSON.
 
     Uso:
         exporter = RunExporter(output_dir=Path("./results"))
         exporter.export(run)
-        # Genera:
-        #   results/run_20250211_143022.json
-        #   results/run_20250211_143022_summary.csv
-        #   results/run_20250211_143022_detail.csv
+        # Genera: results/<run_id>.json
     """
 
     def __init__(self, output_dir: Path):
@@ -34,20 +32,15 @@ class RunExporter:
 
     def export(self, run: EvaluationRun) -> dict:
         """
-        Exporta el run a todos los formatos.
+        Exporta el run a JSON.
 
         Returns:
-            Dict con paths de archivos generados:
-            {"json": Path, "summary_csv": Path, "detail_csv": Path}
+            Dict con path del archivo generado: {"json": Path}
         """
-        paths = {
-            "json": self.to_json(run),
-            "summary_csv": self.to_summary_csv(run),
-            "detail_csv": self.to_detail_csv(run),
-        }
+        paths = {"json": self.to_json(run)}
         logger.info(
             f"Run {run.run_id} exportado a {self.output_dir}: "
-            f"{', '.join(p.name for p in paths.values())}"
+            f"{paths['json'].name}"
         )
         return paths
 
@@ -61,248 +54,6 @@ class RunExporter:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.debug(f"JSON exportado: {path}")
-        return path
-
-    def to_summary_csv(
-        self, run: EvaluationRun, filename: Optional[str] = None
-    ) -> Path:
-        """Exporta metricas agregadas a CSV (una fila)."""
-        fname = filename or f"{run.run_id}_summary.csv"
-        path = self.output_dir / fname
-
-        row = {
-            "run_id": run.run_id,
-            "dataset": run.dataset_name,
-            "embedding_model": run.embedding_model,
-            "strategy": run.retrieval_strategy,
-            "queries_evaluated": run.num_queries_evaluated,
-            "queries_failed": run.num_queries_failed,
-            "total_documents": run.total_documents,
-            "hit_rate_at_5": round(run.avg_hit_rate_at_5, 4),
-            "mrr": round(run.avg_mrr, 4),
-        }
-
-        # Recall@K y NDCG@K
-        for k, v in sorted(run.avg_recall_at_k.items()):
-            row[f"recall_at_{k}"] = round(v, 4)
-        for k, v in sorted(run.avg_ndcg_at_k.items()):
-            row[f"ndcg_at_{k}"] = round(v, 4)
-
-        row["avg_generation_score"] = (
-            round(run.avg_generation_score, 4)
-            if run.avg_generation_score is not None
-            else ""
-        )
-        row["avg_retrieved_count"] = round(run.avg_retrieved_count, 1)
-        row["avg_expected_count"] = round(run.avg_expected_count, 1)
-
-        # Post-rerank retrieval metrics (solo con reranker)
-        row["gen_recall"] = (
-            round(run.avg_generation_recall, 4)
-            if run.avg_generation_recall is not None
-            else ""
-        )
-        row["gen_hit"] = (
-            round(run.avg_generation_hit, 4)
-            if run.avg_generation_hit is not None
-            else ""
-        )
-        row["reranker_rescue_count"] = (
-            run.reranker_rescue_count if run.avg_generation_recall is not None else ""
-        )
-
-        # Config snapshot fields — full config serialized, runtime in _runtime
-        snapshot = run.config_snapshot or {}
-        runtime = snapshot.get("_runtime", {})
-        retrieval = snapshot.get("retrieval", {})
-        reranker = snapshot.get("reranker", {})
-        row["retrieval_k"] = retrieval.get("retrieval_k", "")
-        row["reranker_top_n"] = reranker.get("top_n", "")
-        row["corpus_shuffle_seed"] = snapshot.get("corpus_shuffle_seed", "")
-        row["corpus_indexed"] = runtime.get("corpus_indexed", "")
-        row["corpus_total_available"] = runtime.get("corpus_total_available", "")
-        row["gen_zero_count"] = runtime.get("gen_zero_count", "")
-        row["gen_nonzero_count"] = runtime.get("gen_nonzero_count", "")
-
-        row["execution_time_s"] = round(run.execution_time_seconds, 2)
-        row["timestamp"] = run.timestamp
-
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=row.keys())
-            writer.writeheader()
-            writer.writerow(row)
-
-        logger.debug(f"Summary CSV exportado: {path}")
-        return path
-
-    def to_detail_csv(
-        self, run: EvaluationRun, filename: Optional[str] = None
-    ) -> Path:
-        """Exporta detalle por query a CSV (una fila por query)."""
-        fname = filename or f"{run.run_id}_detail.csv"
-        path = self.output_dir / fname
-
-        if not run.query_results:
-            logger.warning("Sin query_results para exportar detalle")
-            path.touch()
-            return path
-
-        # Determinar K values
-        first = run.query_results[0]
-        k_values = sorted(first.retrieval.hit_at_k.keys())
-
-        # Collect all secondary metric keys across all queries
-        all_secondary_keys: set[str] = set()
-        for qr in run.query_results:
-            all_secondary_keys.update(qr.secondary_metrics.keys())
-        sorted_secondary_keys = sorted(all_secondary_keys)
-
-        # Detect if reranker was active (any query has generation_doc_ids)
-        has_reranker = any(
-            qr.retrieval.generation_doc_ids for qr in run.query_results
-        )
-
-        fieldnames = [
-            "query_id",
-            "query_text",
-            "status",
-            "mrr",
-        ]
-        for k in k_values:
-            fieldnames.append(f"hit_at_{k}")
-        for k in k_values:
-            fieldnames.append(f"recall_at_{k}")
-        for k in k_values:
-            fieldnames.append(f"ndcg_at_{k}")
-        fieldnames.extend([
-            "retrieval_time_ms",
-            "n_retrieved",
-            "n_generation_docs",
-            "reranked",
-        ])
-        if has_reranker:
-            fieldnames.extend(["gen_recall", "gen_hit"])
-        fieldnames.extend([
-            "question_type",
-            "n_expected",
-            "primary_metric_type",
-            "primary_metric_value",
-        ])
-        # Secondary metric columns
-        for sk in sorted_secondary_keys:
-            fieldnames.append(f"sec_{sk}")
-        # LIGHT_RAG per-query diagnostics: usamos el subset compartido con
-        # QueryEvaluationResult.to_dict() como unica fuente de verdad. Si
-        # alguna query tiene claves LightRAG (entidades, relaciones,
-        # fallback, synthesis...), activamos las columnas.
-        lightrag_subsets = [
-            extract_retrieval_metadata_subset(qr.retrieval.retrieval_metadata)
-            for qr in run.query_results
-        ]
-        has_lightrag = any(lightrag_subsets)
-        lightrag_columns: list[str] = []
-        if has_lightrag:
-            lightrag_columns = [
-                "lightrag_mode",
-                "kg_fallback",
-                "kg_entities_count",
-                "kg_relations_count",
-                "kg_chunk_keyword_matches",
-                "kg_entities_with_neighbors",
-                "kg_mean_neighbors_per_entity",
-                "kg_budget_cap_triggered",
-                "kg_synthesis_used",
-                "kg_synthesis_error",
-                # Divergencia #7 — citaciones [ref:N] en narrativa synthesized.
-                "citation_refs_synth_total",
-                "citation_refs_synth_valid",
-                "citation_refs_synth_malformed",
-                "citation_refs_synth_in_range",
-                "citation_refs_synth_out_of_range",
-                "citation_refs_synth_distinct",
-                "citation_refs_synth_coverage_ratio",
-                # Divergencia #7 — citaciones [ref:N] en respuesta final.
-                "citation_refs_gen_total",
-                "citation_refs_gen_valid",
-                "citation_refs_gen_malformed",
-                "citation_refs_gen_in_range",
-                "citation_refs_gen_out_of_range",
-                "citation_refs_gen_distinct",
-                "citation_refs_gen_coverage_ratio",
-            ]
-            fieldnames.extend(lightrag_columns)
-        fieldnames.extend([
-            "expected_response",
-            "generated_response",
-        ])
-
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-
-            for qr, lightrag_subset in zip(run.query_results, lightrag_subsets):
-                row = {
-                    "query_id": qr.query_id,
-                    "query_text": qr.query_text[:200],
-                    "status": qr.status.value,
-                    "mrr": round(qr.retrieval.mrr, 4),
-                }
-                for k in k_values:
-                    row[f"hit_at_{k}"] = round(
-                        qr.retrieval.hit_at_k.get(k, 0.0), 4
-                    )
-                    row[f"recall_at_{k}"] = round(
-                        qr.retrieval.recall_at_k.get(k, 0.0), 4
-                    )
-                    row[f"ndcg_at_{k}"] = round(
-                        qr.retrieval.ndcg_at_k.get(k, 0.0), 4
-                    )
-                row["retrieval_time_ms"] = round(
-                    qr.retrieval.retrieval_time_ms, 1
-                )
-                row["n_retrieved"] = len(qr.retrieval.retrieved_doc_ids)
-                row["n_generation_docs"] = (
-                    len(qr.retrieval.generation_doc_ids)
-                    if qr.retrieval.generation_doc_ids
-                    else len(qr.retrieval.retrieved_doc_ids)
-                )
-                # Exponer estado de rerank per-query para diagnostico
-                reranked_val = qr.metadata.get("reranked") if qr.metadata else None
-                row["reranked"] = "" if reranked_val is None else reranked_val
-                if has_reranker:
-                    row["gen_recall"] = round(qr.retrieval.generation_recall, 4)
-                    row["gen_hit"] = round(qr.retrieval.generation_hit, 4)
-                row["question_type"] = (
-                    qr.metadata.get("question_type", "") if qr.metadata else ""
-                )
-                row["n_expected"] = len(qr.retrieval.expected_doc_ids)
-                row["primary_metric_type"] = qr.primary_metric_type.value
-                row["primary_metric_value"] = round(
-                    qr.primary_metric_value, 4
-                )
-                # Secondary metrics
-                for sk in sorted_secondary_keys:
-                    value = qr.secondary_metrics.get(sk)
-                    row[f"sec_{sk}"] = round(value, 4) if value is not None else ""
-                if has_lightrag:
-                    # lightrag_subset es el mismo bloque que va al JSON via
-                    # QueryEvaluationResult.to_dict(). Claves ausentes
-                    # (p.ej. queries SIMPLE_VECTOR dentro de un run mixto
-                    # o queries KG sin synthesis activa) se emiten vacias.
-                    for col in lightrag_columns:
-                        cell: Any = lightrag_subset.get(col, "")
-                        if isinstance(cell, bool):
-                            cell = "true" if cell else "false"
-                        row[col] = cell
-                row["expected_response"] = (
-                    (qr.expected_response or "")[:200]
-                )
-                row["generated_response"] = (
-                    (qr.generation.generated_response if qr.generation else "")[:200]
-                )
-                writer.writerow(row)
-
-        logger.debug(f"Detail CSV exportado: {path} ({len(run.query_results)} queries)")
         return path
 
 

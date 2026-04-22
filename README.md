@@ -21,7 +21,7 @@ shared/                          # Libreria core (motor)
   llm.py                         # AsyncLLMService (NIM client, async/sync bridge)
   config_base.py                 # InfraConfig, RerankerConfig, helpers _env_*
   vector_store.py                # ChromaVectorStore (wrapper ChromaDB)
-  report.py                      # RunExporter: JSON + CSV summary + CSV detail
+  report.py                      # RunExporter: JSON
   structured_logging.py          # Logging JSONL estructurado
   retrieval/
     __init__.py                  # Factory get_retriever() — punto de entrada
