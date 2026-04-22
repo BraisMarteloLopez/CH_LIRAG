@@ -18,6 +18,8 @@ El harness en `sandbox_mteb/` (datasets MTEB/BeIR) es **instrumento de verificac
 
 **Export de KG (P3)**: cuando LIGHT_RAG sea produccion, los KGs deberan persistirse para versionado, reuso entre runs y multi-tenant. Hoy efimero (igraph + ChromaDB en memoria).
 
+**Auditoria iterativa**: ver [`audit.md`](audit.md). Es el estado cross-session de la auditoria de codigo/comentarios/estructura. Antes de abrir hallazgos nuevos, leer el protocolo y la fase activa en ese archivo.
+
 ## Archivos clave
 
 Estructura completa del repo en [`README.md`](README.md). Archivos que concentran la logica del motor y donde aterrizan la mayoria de cambios:
