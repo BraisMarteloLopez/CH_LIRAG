@@ -129,6 +129,37 @@ class TestRerankVectorScores:
         assert result.vector_scores is None
 
 
+class TestRerankSortEdges:
+    """Ordering edge cases (scores identicos / sin relevance_score)."""
+
+    def test_identical_scores(self):
+        """Docs con scores identicos no producen error."""
+        reranker = _make_reranker()
+        reranker._reranker.compress_documents.return_value = [
+            _make_reranked_doc("a", "c_a", 0.7),
+            _make_reranked_doc("b", "c_b", 0.7),
+            _make_reranked_doc("c", "c_c", 0.7),
+        ]
+        result = reranker.rerank("query", _make_result(3), top_n=3)
+        assert len(result.doc_ids) == 3
+        assert all(s == 0.7 for s in result.scores)
+
+    def test_missing_relevance_score(self):
+        """Doc sin relevance_score en metadata -> default 0.0, queda al final."""
+        no_score = MagicMock()
+        no_score.page_content = "c_no_score"
+        no_score.metadata = {"doc_id": "no_score"}  # sin relevance_score
+        reranker = _make_reranker()
+        reranker._reranker.compress_documents.return_value = [
+            no_score,
+            _make_reranked_doc("high", "c_high", 0.9),
+            _make_reranked_doc("mid", "c_mid", 0.5),
+        ]
+        result = reranker.rerank("query", _make_result(3), top_n=3)
+        assert result.doc_ids[-1] == "no_score"
+        assert result.scores[-1] == 0.0
+
+
 class TestRerankError:
     """K5/K6: error fallback y metadata."""
 
