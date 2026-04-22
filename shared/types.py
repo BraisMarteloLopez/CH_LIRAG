@@ -11,12 +11,10 @@ from typing import (
     Any,
     ClassVar,
     Dict,
-    Iterator,
     List,
     Literal,
     Optional,
     Protocol,
-    Tuple,
     TypedDict,
     cast,
     runtime_checkable,
@@ -84,25 +82,6 @@ class NormalizedQuery:
     supporting_facts: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def has_text_answer(self) -> bool:
-        return self.expected_answer is not None and self.answer_type in [
-            "text", "counter_argument"
-        ]
-
-    def has_label_answer(self) -> bool:
-        return self.answer_type == "label"
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "query_id": self.query_id,
-            "query_text": self.query_text,
-            "relevant_doc_ids": self.relevant_doc_ids,
-            "expected_answer": self.expected_answer,
-            "answer_type": self.answer_type,
-            "supporting_facts": self.supporting_facts,
-            "metadata": self.metadata,
-        }
-
 
 @dataclass
 class NormalizedDocument:
@@ -117,14 +96,6 @@ class NormalizedDocument:
     content: str
     title: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "doc_id": self.doc_id,
-            "content": self.content,
-            "title": self.title,
-            "metadata": self.metadata,
-        }
 
     def get_full_text(self) -> str:
         """Retorna titulo + contenido concatenados para indexacion.
@@ -176,33 +147,6 @@ class LoadedDataset:
     def get_query_by_id(self, query_id: str) -> Optional[NormalizedQuery]:
         """Busca una query por su ID. O(1)."""
         return self._query_index.get(query_id)
-
-    def get_document_by_id(self, doc_id: str) -> Optional[NormalizedDocument]:
-        return self.corpus.get(doc_id)
-
-    def get_relevant_documents(
-        self, query_id: str
-    ) -> List[NormalizedDocument]:
-        query = self._query_index.get(query_id)
-        if not query:
-            return []
-        return [
-            self.corpus[doc_id]
-            for doc_id in query.relevant_doc_ids
-            if doc_id in self.corpus
-        ]
-
-    def iterate_evaluation_pairs(
-        self,
-    ) -> Iterator[Tuple[NormalizedQuery, List[NormalizedDocument]]]:
-        """Genera pares (query, documentos_relevantes) para evaluacion."""
-        for query in self.queries:
-            relevant_docs = [
-                self.corpus[doc_id]
-                for doc_id in query.relevant_doc_ids
-                if doc_id in self.corpus
-            ]
-            yield query, relevant_docs
 
     def get_statistics(self) -> Dict[str, Any]:
         queries_with_answer = sum(
@@ -420,9 +364,6 @@ class QueryEvaluationResult:
     status: EvaluationStatus = EvaluationStatus.COMPLETED
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def get_retrieval_success(self) -> bool:
-        return self.retrieval.hit_at_k.get(5, 0.0) > 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
