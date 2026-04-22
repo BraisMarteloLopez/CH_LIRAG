@@ -75,7 +75,51 @@ Status:
 
 ---
 
-## Decisiones revisadas
+## Referencia externa: HKUDS/LightRAG vs esta implementacion
+
+Baseline para detectar sobre-ingenieria. Upstream: https://github.com/HKUDS/LightRAG (EMNLP 2025, [arxiv](https://arxiv.org/abs/2410.05779)). **No esta pineado a SHA** (ver `CLAUDE.md::Upstream pin` — deuda R13); al contrastar, clonar upstream y buscar por nombre de funcion, no por linea.
+
+**Uso en las fases**: F1 (dead code), F2 (comentarios que refieren a comportamiento upstream que ya no aplica), F5 (estructura de modulos), F6 (config — flags que upstream no expone).
+
+### Mapeo de modulos a contrastar
+
+| Nuestro | Upstream (referencia) | Lineas propias | Ratio |
+|---|---|---|---|
+| `shared/retrieval/lightrag/retriever.py` | `lightrag/operate.py` (funciones de retrieval + query) | 1.224 | — |
+| `shared/retrieval/lightrag/knowledge_graph.py` | `lightrag/kg/*` (igraph/networkx storage) | 904 | — |
+| `shared/retrieval/lightrag/triplet_extractor.py` | `lightrag/operate.py` (extract_entities + keywords) + prompts | 836 | — |
+| **Total motor** | | **2.984** | a calcular vs upstream |
+
+Completar "Ratio" con `wc -l` sobre upstream cuando se active F5. **Regla heuristica**: ratio ≤ 2× se justifica con adaptaciones operativas documentadas; ratio > 2× es señal roja de sobre-ingenieria y merece hallazgo individual por cada bloque engordado.
+
+### Categorias extra que existen aqui y no en upstream
+
+Referencias del codebase que ya declaran el extra. Una fase que encuentre codigo aqui descrito debe confirmar que **la adaptacion sigue siendo necesaria** contra el upstream actual:
+
+1. **Adaptaciones operativas justificadas** (CLAUDE.md::Estrategia LIGHT_RAG, seccion "Funcionalidades extra documentadas"):
+   - Cache de KG a disco (re-indexacion incremental impedida, ver dt-10)
+   - Fallbacks ante errores LLM/igraph (el paper no los describe; los nuestros no deberian disparar en P0 verde)
+   - Instrumentacion de timing queue/LLM split, `operational_stats`, `kg_synthesis_stats`, `judge_fallback_stats`
+2. **Divergencias declaradas** (`CLAUDE.md#divergencias`, items #3, #4+5, #7, #9, #10, #11, #12):
+   - Reevaluar si la divergencia sigue aportando valor o si upstream ya incorporo la funcionalidad (especialmente tras pinear SHA — R13)
+3. **Capa synthesis LLM del contexto** (sandbox_mteb/generation_executor.py::`_synthesize_kg_context_async`):
+   - Value-add del proyecto, no existe upstream. Validar que: (a) el prompt sigue alineado con el parser de citas (dt-18), (b) el codigo defensivo alrededor de la llamada no es redundante con el propio LLM service
+
+### Heuristica para clasificar un hallazgo como "sobre-ingenieria"
+
+Un bloque de codigo es candidato a hallazgo de sobre-ingenieria si **las tres** condiciones se cumplen:
+
+1. Existe aqui pero NO en upstream (modulo, funcion o metodo equivalente).
+2. No esta listado en "Adaptaciones operativas justificadas" ni en la tabla de divergencias de CLAUDE.md.
+3. No tiene evidencia empirica en `config_snapshot._runtime.*_stats` que demuestre que el bloque se dispara en runs reales (o la evidencia muestra que se dispara ≈0% de las veces).
+
+Casos especiales que **no** son sobre-ingenieria aunque cumplan (1):
+- Infraestructura del harness de evaluacion (`sandbox_mteb/`), que upstream no provee por diseño.
+- Codigo ligado a lock-in NIM (dt-9) — se retira cuando se abstraiga el provider, no antes.
+
+---
+
+
 
 Si un hallazgo `rejected` pasa a `accepted` (o viceversa), registrar aqui:
 
