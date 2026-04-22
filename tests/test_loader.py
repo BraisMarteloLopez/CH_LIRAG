@@ -1,24 +1,20 @@
 """
-Tests unitarios para MinIOLoader (P8, Fase 4).
+Tests unitarios para MinIOLoader.
 
 Cobertura:
   LO1. check_connection exitosa
   LO2. check_connection falla
-  LO3. _populate_from_dataframes crea queries y corpus correctamente
-  LO4. _populate_from_dataframes maneja qrels
-  LO5. _populate_from_dataframes con qrels None
-  LO6. load_dataset con error retorna LoadedDataset con status error
+  LO3-LO12. _populate_from_dataframes: queries, corpus, qrels, edge cases
+            (None/empty, answer_type inferido, question_type metadata,
+             comparison auto-conversion)
+  LO13. load_dataset con error retorna LoadedDataset con status error
 """
 
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-import pytest
-
 from shared.types import (
     LoadedDataset,
-    NormalizedQuery,
-    NormalizedDocument,
     DatasetType,
     MetricType,
 )
@@ -52,21 +48,33 @@ def _make_storage_config():
     )
 
 
-def _make_mock_dataframe(data):
-    """Crea un mock de DataFrame con iterrows()."""
-    mock_df = MagicMock()
-    mock_df.__len__ = MagicMock(return_value=len(data))
+class _MockDataFrame:
+    """DataFrame minimo compatible con iterrows()."""
 
-    class FakeRow:
-        def __init__(self, d):
-            self._d = d
-        def get(self, key, default=""):
-            return self._d.get(key, default)
+    def __init__(self, rows):
+        self._rows = rows
 
-    mock_df.iterrows.return_value = [
-        (i, FakeRow(row)) for i, row in enumerate(data)
-    ]
-    return mock_df
+    def __len__(self):
+        return len(self._rows)
+
+    def iterrows(self):
+        for i, row in enumerate(self._rows):
+            yield i, _MockRow(row)
+
+
+class _MockRow(dict):
+    """Row que soporta .get() como dict."""
+
+    def get(self, key, default=""):
+        return super().get(key, default)
+
+
+def _make_empty_result():
+    return LoadedDataset(
+        name="test",
+        dataset_type=DatasetType.HYBRID,
+        primary_metric=MetricType.F1_SCORE,
+    )
 
 
 # =============================================================================
@@ -107,94 +115,180 @@ def test_check_connection_failure(mock_boto3):
 
 
 # =============================================================================
-# LO3: _populate_from_dataframes queries + corpus
+# LO3-LO12: _populate_from_dataframes (queries, corpus, qrels, edge cases)
 # =============================================================================
 
-def test_populate_from_dataframes_basic():
-    """Puebla queries y corpus desde DataFrames."""
+def test_populate_basic():
+    """Popula queries, corpus y qrels correctamente."""
     from sandbox_mteb.loader import MinIOLoader
 
-    queries_df = _make_mock_dataframe([
-        {"query_id": "q1", "text": "What is AI?", "answer": "Artificial Intelligence", "answer_type": "text"},
-        {"query_id": "q2", "text": "Who is Bob?", "answer": "A person", "answer_type": "text"},
+    queries_df = _MockDataFrame([
+        {"query_id": "q1", "text": "What is AI?", "answer": "Artificial Intelligence",
+         "answer_type": "text", "question_type": "bridge", "level": "easy"},
+        {"query_id": "q2", "text": "Is Python good?", "answer": "yes",
+         "answer_type": "label", "question_type": "comparison", "level": "medium"},
     ])
-    corpus_df = _make_mock_dataframe([
-        {"doc_id": "d1", "title": "AI", "text": "AI is a field of CS"},
-        {"doc_id": "d2", "title": "People", "text": "Bob is a person"},
+    corpus_df = _MockDataFrame([
+        {"doc_id": "d1", "title": "AI Intro", "text": "AI is the simulation of intelligence."},
+        {"doc_id": "d2", "title": "Python", "text": "Python is a programming language."},
+    ])
+    qrels_df = _MockDataFrame([
+        {"query_id": "q1", "doc_id": "d1"},
+        {"query_id": "q2", "doc_id": "d2"},
     ])
 
-    result = LoadedDataset(
-        name="test",
-        dataset_type=DatasetType.HYBRID,
-        primary_metric=MetricType.F1_SCORE,
-    )
-    MinIOLoader._populate_from_dataframes(result, queries_df, corpus_df, None)
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
 
-    assert result.total_queries == 2
-    assert result.total_corpus == 2
     assert len(result.queries) == 2
-    assert len(result.corpus) == 2
     assert result.queries[0].query_id == "q1"
     assert result.queries[0].query_text == "What is AI?"
-    assert "d1" in result.corpus
-    assert result.corpus["d1"].content == "AI is a field of CS"
+    assert result.queries[0].expected_answer == "Artificial Intelligence"
+    assert result.queries[0].answer_type == "text"
+    assert result.queries[1].answer_type == "label"
+
+    assert len(result.corpus) == 2
+    assert result.corpus["d1"].title == "AI Intro"
+    assert "simulation" in result.corpus["d1"].content
+
+    assert result.queries[0].relevant_doc_ids == ["d1"]
+    assert result.queries[1].relevant_doc_ids == ["d2"]
+    assert result.total_queries == 2
+    assert result.total_corpus == 2
 
 
-# =============================================================================
-# LO4: _populate_from_dataframes con qrels
-# =============================================================================
-
-def test_populate_from_dataframes_with_qrels():
-    """Qrels asignan relevant_doc_ids a queries."""
+def test_populate_multiple_qrels_per_query():
+    """Una query con multiples docs relevantes."""
     from sandbox_mteb.loader import MinIOLoader
 
-    queries_df = _make_mock_dataframe([
-        {"query_id": "q1", "text": "Q1?"},
+    queries_df = _MockDataFrame([{"query_id": "q1", "text": "Multi-hop question"}])
+    corpus_df = _MockDataFrame([
+        {"doc_id": "d1", "title": "Doc A", "text": "Content A"},
+        {"doc_id": "d2", "title": "Doc B", "text": "Content B"},
     ])
-    corpus_df = _make_mock_dataframe([
-        {"doc_id": "d1", "title": "", "text": "doc1"},
-        {"doc_id": "d2", "title": "", "text": "doc2"},
-    ])
-    qrels_df = _make_mock_dataframe([
+    qrels_df = _MockDataFrame([
         {"query_id": "q1", "doc_id": "d1"},
         {"query_id": "q1", "doc_id": "d2"},
     ])
 
-    result = LoadedDataset(
-        name="test",
-        dataset_type=DatasetType.HYBRID,
-        primary_metric=MetricType.F1_SCORE,
-    )
+    result = _make_empty_result()
     MinIOLoader._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
+    assert set(result.queries[0].relevant_doc_ids) == {"d1", "d2"}
 
-    assert result.queries[0].relevant_doc_ids == ["d1", "d2"]
 
-
-# =============================================================================
-# LO5: _populate_from_dataframes sin qrels
-# =============================================================================
-
-def test_populate_from_dataframes_no_qrels():
-    """Sin qrels -> relevant_doc_ids vacios."""
+def test_populate_none_dataframes_no_crash():
+    """DataFrames None no causan error."""
     from sandbox_mteb.loader import MinIOLoader
 
-    queries_df = _make_mock_dataframe([
-        {"query_id": "q1", "text": "Q1?"},
-    ])
-    corpus_df = _make_mock_dataframe([])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, None, None, None)
+    assert len(result.queries) == 0
+    assert len(result.corpus) == 0
 
-    result = LoadedDataset(
-        name="test",
-        dataset_type=DatasetType.HYBRID,
-        primary_metric=MetricType.F1_SCORE,
+
+def test_populate_empty_dataframes():
+    """DataFrames vacios producen listas vacias."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(
+        result, _MockDataFrame([]), _MockDataFrame([]), _MockDataFrame([])
     )
-    MinIOLoader._populate_from_dataframes(result, queries_df, corpus_df, None)
+    assert len(result.queries) == 0
+    assert len(result.corpus) == 0
 
+
+def test_populate_answer_type_inferred_when_missing():
+    """Si answer_type ausente pero answer presente, se infiere 'text'."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([
+        {"query_id": "q1", "text": "Question?", "answer": "Some answer"},
+    ])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, _MockDataFrame([]), None)
+    assert result.queries[0].answer_type == "text"
+
+
+def test_populate_no_answer_no_answer_type():
+    """Sin answer ni answer_type, expected_answer es None."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([{"query_id": "q1", "text": "Question?"}])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, _MockDataFrame([]), None)
+    assert result.queries[0].expected_answer is None
+    assert result.queries[0].answer_type is None
+
+
+def test_populate_question_type_metadata():
+    """question_type se guarda en metadata."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([
+        {"query_id": "q1", "text": "Q?", "question_type": "bridge", "level": "hard"},
+    ])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, _MockDataFrame([]), None)
+    assert result.queries[0].metadata["question_type"] == "bridge"
+    assert result.queries[0].metadata["level"] == "hard"
+
+
+def test_populate_question_type_fallback_to_type_field():
+    """Si question_type no existe, usa campo 'type'."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([
+        {"query_id": "q1", "text": "Q?", "type": "comparison"},
+    ])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, _MockDataFrame([]), None)
+    assert result.queries[0].metadata["question_type"] == "comparison"
+
+
+def test_populate_query_without_qrels_empty_relevant_ids():
+    """Query sin qrels correspondiente tiene relevant_doc_ids vacio."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([{"query_id": "q1", "text": "Orphan query"}])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(
+        result, queries_df, _MockDataFrame([]), _MockDataFrame([])
+    )
     assert result.queries[0].relevant_doc_ids == []
 
 
+def test_populate_comparison_query_forces_label():
+    """question_type=comparison fuerza answer_type=label; ya-label es idempotente."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([
+        {"query_id": "q1", "text": "Is A taller?", "answer": "yes",
+         "answer_type": "text", "question_type": "comparison"},
+        {"query_id": "q2", "text": "Is B taller?", "answer": "no",
+         "answer_type": "label", "question_type": "comparison"},
+    ])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, _MockDataFrame([]), None)
+    assert result.queries[0].answer_type == "label"
+    assert result.queries[1].answer_type == "label"
+
+
+def test_populate_non_comparison_preserves_answer_type():
+    """question_type!=comparison no toca answer_type."""
+    from sandbox_mteb.loader import MinIOLoader
+
+    queries_df = _MockDataFrame([
+        {"query_id": "q1", "text": "What is X?", "answer": "some answer",
+         "answer_type": "text", "question_type": "bridge"},
+    ])
+    result = _make_empty_result()
+    MinIOLoader._populate_from_dataframes(result, queries_df, _MockDataFrame([]), None)
+    assert result.queries[0].answer_type == "text"
+
+
 # =============================================================================
-# LO6: load_dataset con error
+# LO13: load_dataset con error
 # =============================================================================
 
 @patch("sandbox_mteb.loader.boto3")

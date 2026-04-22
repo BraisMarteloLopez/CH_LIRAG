@@ -149,3 +149,123 @@ def test_accuracy_valid_labels():
     r2 = accuracy("maybe", "maybe", valid_labels=["yes", "no"])
     assert r2.value == 1.0
     assert r2.details["is_valid_label"] is False
+
+
+# =================================================================
+# faithfulness: contexto integro al judge + empty passthrough
+# =================================================================
+
+import asyncio
+import pytest
+
+import shared.metrics as metrics_mod
+from shared.metrics import faithfulness, _extract_score_fallback
+
+
+class _MockJudge:
+    """Mock sync+async que captura el prompt recibido."""
+
+    def __init__(self):
+        self.captured_prompt = None
+        self.call_count = 0
+
+    def invoke(self, user_prompt, system_prompt=None):
+        self.captured_prompt = user_prompt
+        self.call_count += 1
+        return '{"score": 0.8, "justification": "test"}'
+
+    async def invoke_async(self, user_prompt, system_prompt=None):
+        self.captured_prompt = user_prompt
+        self.call_count += 1
+        return '{"score": 0.8, "justification": "test"}'
+
+
+@pytest.mark.parametrize("method,is_async", [
+    ("faithfulness", False),
+    ("faithfulness_async", True),
+])
+def test_context_passed_without_truncation(method, is_async):
+    """Contexto de 8000 chars llega integro al judge (no se trunca a 4000)."""
+    judge = _MockJudge()
+    context = "A" * 8000
+    fn = getattr(metrics_mod, method)
+    args = ("some answer", context, judge)
+    if is_async:
+        asyncio.run(fn(*args))
+    else:
+        fn(*args)
+    assert judge.captured_prompt is not None
+    assert context in judge.captured_prompt
+
+
+def test_empty_context_returns_zero_without_invoking_judge():
+    """Contexto vacio retorna 0.0 sin invocar judge."""
+    judge = _MockJudge()
+    r1 = faithfulness("answer", "", judge)
+    assert r1.value == 0.0
+    assert judge.call_count == 0
+
+
+# =================================================================
+# _extract_score_fallback: regex robusta
+# =================================================================
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("score: 0", 0.0),
+    ("score: 1", 1.0),
+    ("the score is 0.85", 0.85),
+    ("score: 1.0", 1.0),
+    ("0.0", 0.0),
+    ("I would rate this 0.7 overall", 0.7),
+    ("Based on my analysis, the faithfulness score is 0.75", 0.75),
+    ("The response is well-grounded. Score: 0.9", 0.9),
+])
+def test_extract_score_decimal(text, expected):
+    """Decimales 0-1 se extraen correctamente."""
+    assert abs(_extract_score_fallback(text) - expected) < 0.001
+
+
+@pytest.mark.parametrize("text", [
+    "10.5 points out of 10",
+    "there are 100 reasons",
+    "about 20 tokens were used",
+])
+def test_extract_score_false_positives_rejected(text):
+    """Numeros >1 no producen score 1.0 espurio."""
+    assert _extract_score_fallback(text) != 1.0
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("score: 8", 0.8),
+    ("score: 3", 0.3),
+    ("score: 10", 1.0),
+])
+def test_extract_score_prefix_normalizes_1_to_10(text, expected):
+    """Enteros 1-10 con prefijo 'score:' se normalizan a 0-1."""
+    assert abs(_extract_score_fallback(text) - expected) < 0.001
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("I would rate this 8/10", 0.8),
+    ("1/2", 0.5),
+    ("10/10", 1.0),
+    ("0/0", 0.0),
+])
+def test_extract_score_fractions(text, expected):
+    """Fracciones N/M se normalizan. 0/0 retorna 0.0 (fraccion descartada)."""
+    assert abs(_extract_score_fallback(text) - expected) < 0.001
+
+
+def test_extract_score_no_prefix_integer_ignored():
+    """Entero sin prefijo 'score:' no se normaliza — evita falsos positivos."""
+    assert _extract_score_fallback("I give it 8") == 0.5
+
+
+@pytest.mark.parametrize("text", [
+    "I cannot provide a score",
+    "",
+])
+def test_extract_score_default_when_no_extractable(text):
+    """Sin numero extraible, retorna default 0.5."""
+    assert _extract_score_fallback(text) == 0.5

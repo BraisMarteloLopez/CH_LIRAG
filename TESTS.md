@@ -58,7 +58,7 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 
 | Test | Import | Razon |
 |---|---|---|
-| `test_dt9_extract_score_fallback.py:9` | `shared.metrics._extract_score_fallback` | Funcion pura (text → float). El test es la suite dedicada de la funcion (21 casos de regex). No hay API publica equivalente; la funcion es consumida internamente por `_parse_judge_result`. Renombrarla a publica seria correcto pero no urgente |
+| `test_metrics_reference_based.py` | `shared.metrics._extract_score_fallback` | Funcion pura (text → float). Suite dedicada (21 casos de regex, seccion inferior del archivo). No hay API publica equivalente; la funcion es consumida internamente por `_parse_judge_result`. Renombrarla a publica seria correcto pero no urgente |
 | `test_judge_fallback_tracker.py:74,126,152` | `shared.metrics._judge_fallback_tracker` | Singleton module-level del tracker de fallback del judge. Los tests inyectan estado (`record_invocation`, `record_default_return`) para simular el flujo del judge sin invocar el LLM real. Las stats se verifican via API publica (`get_judge_fallback_stats()`). No hay alternativa practica sin rehacer la arquitectura del tracker |
 | `test_kg_synthesis.py` | `sandbox_mteb.generation_executor._kg_synthesis_tracker` | Patron identico al anterior: singleton de instrumentacion de la capa de synthesis KG. Tests inyectan estado y verifican stats. Misma justificacion |
 
@@ -70,10 +70,8 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 
 | Test | Produccion | Tests | Que cubre |
 |------|-----------|-------|-----------|
-| test_metrics_reference_based.py | shared/metrics.py | 15 | normalize_text, f1_score, exact_match, accuracy |
+| test_metrics_reference_based.py | shared/metrics.py | 23 | normalize_text, f1_score, exact_match, accuracy, faithfulness context pass-through, _extract_score_fallback regex |
 | test_semantic_similarity.py | shared/metrics.py | 9 | semantic_similarity coseno, vector cero, empty input, numpy guard |
-| test_dt6_context_truncation.py | shared/metrics.py | 3 | context pass-through sync/async, empty context |
-| test_dt9_extract_score_fallback.py | shared/metrics.py | 21 | _extract_score_fallback regex |
 | test_judge_fallback_tracker.py | shared/metrics.py, sandbox_mteb/evaluator.py | 19 | _JudgeFallbackTracker, get_judge_fallback_stats, max_judge_default_return_rate, _validate_judge_fallback_threshold |
 | test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
 | test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | ~43 | CRUD, persistence, stats, eviction, co-occurrence, neighbors |
@@ -81,8 +79,7 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_gleaning.py | shared/retrieval/lightrag/triplet_extractor.py | 6 | glean_from_doc_async |
 | test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | ~30 | _retrieve_via_kg, reference-count scoring, fingerprint, VDBs, modes, fallbacks |
 | test_simple_vector_retriever.py | shared/retrieval/core.py | 10 | retrieve, retrieve_by_vector, index_documents, clear_index, get_documents_by_ids |
-| test_dt8_09_10_11_reranker_sort.py | shared/retrieval/reranker.py | 3 | rerank sorting |
-| test_reranker.py | shared/retrieval/reranker.py | 8 | empty passthrough, ordering, top_n, vector_scores, error fallback, metadata |
+| test_reranker.py | shared/retrieval/reranker.py | 9 | empty passthrough, ordering, top_n, vector_scores, identical scores, missing relevance_score, error fallback, metadata |
 | test_report.py | shared/report.py | 10 | to_json, export, LIGHT_RAG serialization |
 | test_group_a_b_review.py | shared/retrieval/core.py, reranker.py, vector_store.py | 8 | get_documents_by_ids, batching, vector_scores |
 | test_vector_store.py | shared/vector_store.py | 13 | add_documents batching, search, get_by_ids chunking, delete+recreate, error paths |
@@ -107,8 +104,7 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
 | test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 13 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
 | test_run_cli.py | sandbox_mteb/run.py | 9 | parse_args, setup_logging, main (dry-run, full, errors) |
-| test_loader.py | sandbox_mteb/loader.py | 6 | check_connection, _populate_from_dataframes |
-| test_dtm4_loader_populate.py | sandbox_mteb/loader.py | 9 | _populate_from_dataframes detallado |
+| test_loader.py | sandbox_mteb/loader.py | 14 | check_connection, _populate_from_dataframes (queries/corpus/qrels, None/empty, answer_type inference, comparison auto-conversion, question_type metadata), load_dataset error |
 
 ### E2E
 
@@ -140,7 +136,7 @@ Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test
 | Item | Accion | Archivos afectados |
 |---|---|---|
 | E17 | Consolidar tests de `retrieval_executor.py` | Fusionar: `test_dt5_pre_rerank_traceability.py`, `test_dt7_05_06_rerank_status.py`, `test_dt7_07_no_reranker.py`, `test_format_context.py`, `test_structured_context.py`, parte de `test_dtm38_strategy_guardrail.py` → `test_retrieval_executor.py` |
-| E18 | Consolidar tests de `shared/metrics.py` | Fusionar: `test_metrics_reference_based.py`, `test_semantic_similarity.py`, `test_dt6_context_truncation.py`, `test_dt9_extract_score_fallback.py`, `test_judge_fallback_tracker.py` → `test_metrics.py` |
+| E18 | Consolidar tests de `shared/metrics.py` | Parcialmente cerrado: `test_dt6_context_truncation.py` y `test_dt9_extract_score_fallback.py` absorbidos en `test_metrics_reference_based.py`. Pendiente fusionar con `test_semantic_similarity.py` y `test_judge_fallback_tracker.py` → `test_metrics.py` |
 | E19 | ~~Consolidar tests de `shared/report.py`~~ | Cerrado al eliminar la salida CSV: `test_report.py` quedo en un unico archivo acotado a JSON |
 | E20 | Consolidar tests de `evaluator.py` / `result_builder.py` | Fusionar: `test_evaluator.py`, `test_dtm4_build_run_aggregation.py`, `test_dtm5_12_13_secondary_metric_errors.py` → separar en `test_evaluator.py` + `test_result_builder.py` |
 
