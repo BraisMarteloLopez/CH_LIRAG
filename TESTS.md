@@ -107,12 +107,9 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_dtm5_12_13_secondary_metric_errors.py | sandbox_mteb/generation_executor.py | 3 | secondary metric errors |
 | test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
 | test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 13 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
-| test_run_cli.py | sandbox_mteb/run.py | 11 | parse_args, setup_logging, main (dry-run, full, errors) |
-| test_preflight.py | sandbox_mteb/preflight.py | 8 | _check wrapper, dependencies, lock_file, config, main |
-| test_checkpoint.py | sandbox_mteb/checkpoint.py | 11 | save/load/delete checkpoint |
+| test_run_cli.py | sandbox_mteb/run.py | 9 | parse_args, setup_logging, main (dry-run, full, errors) |
 | test_loader.py | sandbox_mteb/loader.py | 6 | check_connection, _populate_from_dataframes |
 | test_dtm4_loader_populate.py | sandbox_mteb/loader.py | 9 | _populate_from_dataframes detallado |
-| test_dtm4_subset_selection.py | sandbox_mteb/subset_selection.py | 9 | select_subset_dev |
 
 ### E2E
 
@@ -174,7 +171,6 @@ Renombrar/fusionar los 19 `test_dt*`/`test_dtm*` a archivos por modulo bajo test
 
 1. **Atributo nuevo en clase con `object.__new__()`**: sincronizar los helpers `_make_X()` listados en "Patron object.__new__()". Localizar todos los usos con `grep -rn "object.__new__(ClassName)" tests/`
 2. **Nuevo campo en RetrievalConfig**: propagado automaticamente via `RetrievalConfig()` default. Sin accion en tests salvo que el field necesite valor no-default
-3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_dtm4_subset_selection.py, test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos recientes (`judge_fallback_threshold`, `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s`) tienen defaults, no requieren tocar helpers
-4. **Nuevo campo en QueryRetrievalDetail o QueryEvaluationResult**: actualizar `_make_qr()` en test_checkpoint.py si el field es required
+3. **Nuevo campo en MTEBConfig**: actualizar helpers `_make_config()` en test_embedding_service.py, test_pipeline_e2e.py si el field es required. Ejemplos recientes (`judge_fallback_threshold`, `kg_synthesis_enabled`/`kg_synthesis_max_chars`/`kg_synthesis_timeout_s`) tienen defaults, no requieren tocar helpers
 5. **Import de botocore.exceptions**: nunca directo en tests. Usar `_FakeClientError` + `@patch`
 6. **Cada assertion debe usar `assert`**: nunca dejar expresiones booleanas sueltas (`x is None` sin assert)

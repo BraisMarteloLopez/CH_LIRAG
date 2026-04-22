@@ -56,14 +56,6 @@ KG_DEFAULT_MAX_ENTITIES: int = 100_000
 CHROMA_IN_BATCH_SIZE: int = 100
 
 # =============================================================================
-# CHECKPOINT (sandbox_mteb/checkpoint.py)
-# =============================================================================
-
-# Queries procesadas entre cada checkpoint. Bajar si los queries son
-# costosos y se quiere granularidad fina de resume.
-CHECKPOINT_CHUNK_SIZE: int = 50
-
-# =============================================================================
 # GENERATION (sandbox_mteb/generation_executor.py)
 # =============================================================================
 
