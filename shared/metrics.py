@@ -351,23 +351,8 @@ def semantic_similarity(
         )
 
 
-# -----------------------------------------------------------------------------
-# Tracker de tasa de fallback del LLM judge (judge_fallback_stats)
-#
-# Contabiliza, por tipo de metrica, la proporcion de invocaciones donde el
-# judge no pudo producir un score estructurado y tuvimos que recurrir a
-# parsing regex o, peor, al default 0.5.
-#
-# Tres eventos rastreados:
-#   - invocations: llamadas totales al judge (denominador).
-#   - parse_failures: respuesta no parseable como JSON, se delega a regex.
-#   - default_returns: regex tambien fallo, devolvimos 0.5 por defecto.
-#     Este es el evento critico — sesga metricas silenciosamente hacia el
-#     centro y puede comprimir deltas entre estrategias (especialmente en
-#     faithfulness, que evalua alucinacion en el experimento 3).
-#
-# Thread-safe: el judge se invoca concurrentemente via asyncio / threads.
-# -----------------------------------------------------------------------------
+# Tracker thread-safe de tasa de fallback del LLM judge.
+# Ver CLAUDE.md §Observabilidad / guardrail JUDGE_FALLBACK_THRESHOLD.
 
 
 class _JudgeFallbackTracker:

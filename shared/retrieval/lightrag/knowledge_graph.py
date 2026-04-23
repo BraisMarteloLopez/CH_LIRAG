@@ -79,22 +79,22 @@ except ImportError:
 
 @dataclass
 class KGEntity:
-    """Entidad extraida por LLM."""
-    name: str                       # nombre normalizado
-    entity_type: str                # PERSON, ORG, CONCEPT, etc.
-    description: str = ""           # descripcion consolidada
+    """Entidad extraida por LLM. `name` normalizado via KnowledgeGraph._normalize_name."""
+    name: str
+    entity_type: str
+    description: str = ""
     source_doc_ids: Set[str] = field(default_factory=set)
-    _descriptions: List[str] = field(default_factory=list)  # all descriptions, pre-merge
+    _descriptions: List[str] = field(default_factory=list)
 
 
 @dataclass
 class KGRelation:
-    """Relacion (tripleta) entre dos entidades."""
-    source: str                     # nombre entidad origen (normalizado)
-    target: str                     # nombre entidad destino (normalizado)
-    relation: str                   # tipo de relacion
-    description: str = ""           # descripcion del LLM
-    source_doc_id: str = ""         # doc de donde se extrajo
+    """Tripleta source->relation->target. source/target normalizados."""
+    source: str
+    target: str
+    relation: str
+    description: str = ""
+    source_doc_id: str = ""
 
 
 class KnowledgeGraph:
@@ -114,28 +114,16 @@ class KnowledgeGraph:
                 "igraph no instalado. Instalar: pip install python-igraph"
             )
         self._graph: ig.Graph = ig.Graph()
-        # name -> vertex index mapping
         self._name_to_vid: Dict[str, int] = {}
         self._max_entities = max_entities or self._DEFAULT_MAX_ENTITIES
-        # Indices invertidos
         self._entity_to_docs: Dict[str, Set[str]] = defaultdict(set)
         self._doc_to_entities: Dict[str, Set[str]] = defaultdict(set)
-        # Entidades con metadata
         self._entities: Dict[str, KGEntity] = {}
-        # Relaciones por doc
         self._doc_to_relations: Dict[str, List[KGRelation]] = defaultdict(list)
-        # Divergencia #10: chunk high-level keywords por doc_id. Populadas
-        # durante indexacion por `_build_knowledge_graph` y consumidas por
-        # `_build_chunk_keywords_vdb` para construir la tercera VDB
-        # (analoga a entities_vdb y relationships_vdb). Texto libre, sin
-        # normalizacion porque el Chunk Keywords VDB hace resolucion
-        # semantica via embeddings.
+        # divergencia #10
         self._doc_to_keywords: Dict[str, List[str]] = {}
-        # Contador de entidades nuevas rechazadas por cap
         self._entities_dropped = 0
-        # Contador de tripletas completas descartadas por entity cap
         self._triplets_dropped_by_cap = 0
-        # Contador de entidades evictas por importancia
         self._entities_evicted = 0
 
     @property
@@ -163,21 +151,12 @@ class KnowledgeGraph:
         """
         return self._entities.get(self._normalize_name(name))
 
-    # =================================================================
-    # CHUNK KEYWORDS (Divergencia #10)
-    # =================================================================
+    # divergencia #10
 
     def add_doc_keywords(self, doc_id: str, keywords: List[str]) -> None:
-        """Persiste chunk high-level keywords para un doc.
+        """Persiste chunk high-level keywords (validacion en TripletExtractor).
 
-        Divergencia #10: keywords tematicas por chunk extraidas durante
-        indexacion (piggyback en triplet extraction prompt). Usadas
-        en retrieval high-level path via Chunk Keywords VDB.
-
-        La validacion (longitud, dedup) se hace upstream en
-        `TripletExtractor._build_entities_relations`. Aqui solo persistimos.
-        Si un doc_id recibe keywords varias veces (gleaning, re-indexacion)
-        se sobreescribe — refleja la ultima extraccion autoritaria.
+        Multiples llamadas al mismo doc_id sobreescriben (gleaning, re-indexacion).
         """
         if not doc_id or not keywords:
             return
@@ -223,9 +202,7 @@ class KnowledgeGraph:
                 })
         return relations
 
-    # Articulos iniciales en ingles (se eliminan al normalizar).
     _LEADING_ARTICLES = ("the ", "a ", "an ")
-    # Patron para eliminar puntuacion excepto guiones y apostrofes internos.
     _RE_NON_ALNUM = re.compile(r"[^\w\s\-']")
 
     def _normalize_name(self, name: str) -> str:
@@ -240,10 +217,6 @@ class KnowledgeGraph:
         result = self._RE_NON_ALNUM.sub("", result)
         result = " ".join(result.split())
         return result.strip()
-
-    # -----------------------------------------------------------------
-    # Graph primitive helpers (igraph)
-    # -----------------------------------------------------------------
 
     def _ensure_node(self, name: str, entity_type: str = "UNKNOWN") -> int:
         """Ensure a vertex exists for the given name, return its vertex id."""
@@ -333,9 +306,7 @@ class KnowledgeGraph:
 
         return result
 
-    # -----------------------------------------------------------------
-    # Eviction por importancia (divergencia #3: entity cap 100K)
-    # -----------------------------------------------------------------
+    # divergencia #3 (entity cap 100K)
 
     def _find_eviction_candidate(
         self, exclude: Optional[set] = None,
@@ -365,11 +336,9 @@ class KnowledgeGraph:
                 continue
             n_docs = len(entity.source_doc_ids)
             if n_docs > 1:
-                continue  # multi-doc entities son demasiado valiosas
+                continue  # multi-doc no se evicta
             vid = self._name_to_vid.get(name)
             degree = self._graph.degree(vid) if vid is not None else 0
-            # Factor de descripcion: entidades con descripcion informativa
-            # son mas valiosas (1.0 si vacia, 1 + log(len) si tiene contenido)
             desc_len = len(entity.description)
             desc_factor = 1.0 if desc_len == 0 else (1.0 + (desc_len / 100.0))
             score = n_docs * (degree + 1) * desc_factor
@@ -392,7 +361,6 @@ class KnowledgeGraph:
             if edge_ids:
                 self._graph.delete_edges(edge_ids)
 
-        # Limpiar indices
         doc_ids = self._entity_to_docs.pop(name, set())
         for doc_id in doc_ids:
             discard_set = self._doc_to_entities.get(doc_id)
@@ -408,11 +376,8 @@ class KnowledgeGraph:
                     and self._normalize_name(r.target) != name
                 ]
 
-        # Remover de _entities (libera el slot para el cap)
         self._entities.pop(name, None)
         self._entities_evicted += 1
-
-    # -----------------------------------------------------------------
 
     def add_triplets(self, doc_id: str, triplets: List[KGRelation]) -> int:
         """Anade tripletas al grafo desde un documento.
@@ -442,20 +407,17 @@ class KnowledgeGraph:
                 )
                 continue
 
-            # Registrar/actualizar entidades (con cap + eviction).
             skip_triplet = False
             triplet_names = {src_name, tgt_name}
             for name in (src_name, tgt_name):
                 if name not in self._entities:
                     if len(self._entities) >= self._max_entities:
-                        # Intentar evictar entidad de baja importancia.
                         candidate = self._find_eviction_candidate(
                             exclude=triplet_names,
                         )
                         if candidate is not None:
                             self._evict_entity(candidate)
                         else:
-                            # Sin candidato evictable — drop como antes
                             self._entities_dropped += 1
                             self._triplets_dropped_by_cap += 1
                             dropped_this_call += 1
@@ -477,7 +439,7 @@ class KnowledgeGraph:
             src_vid = self._ensure_node(src_name, self._entities[src_name].entity_type)
             tgt_vid = self._ensure_node(tgt_name, self._entities[tgt_name].entity_type)
 
-            # Si ya existe arista, acumular relaciones (dedup por relation+doc).
+            # Aristas acumulan relaciones con dedup por (relation, doc_id).
             new_rel = {
                 "relation": triplet.relation,
                 "description": triplet.description,
@@ -486,7 +448,6 @@ class KnowledgeGraph:
             eid = self._get_edge_id(src_name, tgt_name)
             if eid is not None:
                 existing = self._graph.es[eid]["relations"]
-                # Dedup: skip si misma relacion del mismo doc ya existe
                 is_dup = any(
                     r.get("relation") == triplet.relation
                     and r.get("doc_id") == doc_id
@@ -530,27 +491,17 @@ class KnowledgeGraph:
     def add_entity_metadata(
         self, name: str, entity_type: str, description: str
     ) -> None:
-        """Actualiza metadata de una entidad (tipo, descripcion del LLM).
-
-        Acumula descripciones de multiples docs en `_descriptions`. La
-        descripcion consolidada se genera en `merge_entity_descriptions()`.
-        """
+        """Acumula descripciones en `_descriptions`; consolidacion en `merge_entity_descriptions`."""
         norm = self._normalize_name(name)
         if norm in self._entities:
             if entity_type and entity_type != "UNKNOWN":
                 self._entities[norm].entity_type = entity_type
             if description:
-                # Acumular en vez de sobrescribir.
                 self._entities[norm]._descriptions.append(description)
                 self._entities[norm].description = description  # last-write para compat
-            # Actualizar atributo del nodo
             vid = self._name_to_vid.get(norm)
             if vid is not None:
                 self._graph.vs[vid]["entity_type"] = self._entities[norm].entity_type
-
-    # =================================================================
-    # SERIALIZACION (cache de KG entre runs via to_dict / from_dict)
-    # =================================================================
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializa el estado completo del KG a un dict JSON-compatible."""
@@ -599,9 +550,7 @@ class KnowledgeGraph:
             })
 
         return {
-            # v3: incluye `doc_to_keywords` (canal de chunk keywords,
-            # divergencia #10). Caches v<3 son incompatibles porque carecen
-            # de la tercera VDB; cargarlos ocultaria parte de la arquitectura.
+            # v3 incluye doc_to_keywords (divergencia #10). Caches v<3 se rechazan.
             "version": 3,
             "max_entities": self._max_entities,
             "entities_dropped": self._entities_dropped,
@@ -625,21 +574,12 @@ class KnowledgeGraph:
             },
         }
 
-    # Version minima del cache que incluye los tres canales paper-aligned
-    # (entities, relations, chunk keywords; este ultimo = divergencia #10).
-    # Caches v<3 carecen de `doc_to_keywords` y por tanto representan una
-    # variante arquitecturalmente incompleta del KG — se rechazan.
+    # Min version que incluye doc_to_keywords (divergencia #10).
     _MIN_CACHE_VERSION = 3
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeGraph":
-        """Reconstruye un KnowledgeGraph desde un dict serializado.
-
-        Divergencia #10: rechaza caches con `version < _MIN_CACHE_VERSION`
-        porque carecen del canal de chunk keywords (representarian una
-        arquitectura incompleta). Invalidar cache y re-extraer es la unica
-        forma de recuperar el canal.
-        """
+        """Reconstruye desde un dict serializado. Rechaza caches v<3."""
         version = data.get("version", 1)
         if version < cls._MIN_CACHE_VERSION:
             raise ValueError(
@@ -653,7 +593,6 @@ class KnowledgeGraph:
         kg._triplets_dropped_by_cap = data.get("triplets_dropped_by_cap", 0)
         kg._entities_evicted = data.get("entities_evicted", 0)
 
-        # Reconstruir entidades
         for name, e_data in data.get("entities", {}).items():
             kg._entities[name] = KGEntity(
                 name=e_data["name"],
@@ -663,7 +602,6 @@ class KnowledgeGraph:
                 _descriptions=e_data.get("_descriptions", []),
             )
 
-        # Reconstruir indices
         for name, doc_ids in data.get("entity_to_docs", {}).items():
             kg._entity_to_docs[name] = set(doc_ids)
         for doc_id, entity_names in data.get("doc_to_entities", {}).items():
@@ -681,12 +619,11 @@ class KnowledgeGraph:
                 for r in rels_data
             ]
 
-        # Reconstruir chunk keywords por doc (divergencia #10, cache v3+).
+        # divergencia #10
         for doc_id, kws in data.get("doc_to_keywords", {}).items():
             if isinstance(kws, list) and kws:
                 kg._doc_to_keywords[doc_id] = [str(k) for k in kws if isinstance(k, str)]
 
-        # Reconstruir grafo igraph (v3+: nodes + edges explicitos).
         graph_data = data.get("graph")
         if graph_data:
             for node in graph_data.get("nodes", []):
@@ -701,12 +638,7 @@ class KnowledgeGraph:
 
         return kg
 
-
-    # -----------------------------------------------------------------
-    # Co-occurrence bridging
-    # -----------------------------------------------------------------
-
-    # Maximo de pares co-occurrence por documento para evitar O(N^2)
+    # Cap evita O(N^2) por doc.
     _MAX_COOCCURRENCE_PAIRS_PER_DOC = 10
 
     def build_co_occurrence_edges(self) -> int:
@@ -736,7 +668,7 @@ class KnowledgeGraph:
                     if pairs_this_doc >= self._MAX_COOCCURRENCE_PAIRS_PER_DOC:
                         break
                     src, tgt = names[i], names[j]
-                    # Solo crear si no existe arista (no sobreescribir relaciones LLM)
+                    # No sobreescribir relaciones LLM explicitas.
                     if self._get_edge_id(src, tgt) is not None:
                         continue
 
@@ -764,34 +696,21 @@ class KnowledgeGraph:
 
         return edges_added
 
-    # Max chars para descripcion mergeada. Embedding models truncan a
-    # ~512 tokens (~2000 chars). Con "name: description" el budget efectivo
-    # ronda los 500 chars para la parte de descripcion.
+    # Embedding models truncan ~512 tokens (~2000 chars); 500 para "description" es holgado.
     _MAX_MERGED_DESCRIPTION_CHARS = 500
     _MAX_DESCRIPTIONS_TO_MERGE = 5
 
     def merge_entity_descriptions(self) -> int:
-        """Consolida descripciones multi-doc por entidad.
+        """Dedupe + concat de descripciones multi-doc.
 
-        Para cada entidad con >1 descripcion, deduplica, selecciona las
-        mas informativas (por longitud), y concatena con " | " hasta
-        _MAX_MERGED_DESCRIPTION_CHARS.
-
-        Referencia: _merge_nodes_then_upsert() en HKUDS/LightRAG.
-        El original usa LLM para sintetizar; aqui se usa concatenacion con
-        dedup como baseline barato. La synthesis LLM esta disponible en
-        `LightRAGRetriever._synthesize_descriptions` (opt-in via
-        `KG_DESCRIPTION_SYNTHESIS=true`).
-
-        Returns:
-            Numero de entidades con descripciones mergeadas.
+        Baseline barato frente al `_merge_nodes_then_upsert` de HKUDS/LightRAG
+        que usa LLM; opt-in a LLM via `KG_DESCRIPTION_SYNTHESIS=true`.
         """
         merged_count = 0
         for entity in self._entities.values():
             descs = entity._descriptions
             if len(descs) <= 1:
                 continue
-            # Dedup por contenido (case-insensitive, stripped)
             seen: set = set()
             unique: list = []
             for d in descs:
@@ -803,15 +722,13 @@ class KnowledgeGraph:
                 if unique:
                     entity.description = unique[0]
                 continue
-            # Seleccionar las mas informativas (por longitud) y truncar.
             unique.sort(key=len, reverse=True)
             selected = unique[:self._MAX_DESCRIPTIONS_TO_MERGE]
             merged = " | ".join(selected)
             if len(merged) > self._MAX_MERGED_DESCRIPTION_CHARS:
                 truncated = merged[:self._MAX_MERGED_DESCRIPTION_CHARS]
                 parts = truncated.rsplit(" | ", 1)
-                # Si rsplit encontro delimitador, cortar en el ultimo limpio;
-                # si no, truncar directamente para no devolver el string completo.
+                # Cortar en el ultimo delimitador limpio para no partir una descripcion.
                 merged = parts[0] if len(parts) > 1 else truncated
             entity.description = merged
             merged_count += 1

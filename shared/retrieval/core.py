@@ -9,11 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Literal, Optional, Tuple, cast, get_args
 
-# Tipos cerrados (R2): documentan y acotan el dominio de valores validos.
 LightRAGMode = Literal["naive", "local", "global", "hybrid"]
-# Razones posibles por las que un retrieval LIGHT_RAG cae al fallback
-# vector directo. Anotadas en `RetrievalResult.metadata["kg_fallback"]`;
-# None cuando no hubo fallback.
+# Anotado en `RetrievalResult.metadata["kg_fallback"]`; None si no hubo fallback.
 KGFallbackReason = Literal["no_keywords", "no_doc_ids", "docs_not_in_store"]
 
 
@@ -46,41 +43,28 @@ class RetrievalConfig:
     strategy: RetrievalStrategy = RetrievalStrategy.SIMPLE_VECTOR
     retrieval_k: int = 20
 
-    # HNSW (ChromaDB): num_threads=1 reduce no-determinismo del grafo
-    # (elimina variabilidad de threading). No garantiza reproducibilidad
-    # total: ChromaDB no expone hnsw:random_seed (deuda #3 en CLAUDE.md).
     hnsw_num_threads: int = 1
 
-    # Knowledge graph (LIGHT_RAG)
-    kg_max_hops: int = 1  # 1-hop como el paper original
+    kg_max_hops: int = 1
     kg_max_text_chars: int = 3000
     kg_max_entities: int = 0
     kg_cache_dir: str = ""
-    kg_keyword_max_tokens: int = 1024  # max_tokens para keyword extraction LLM call
-    kg_extraction_max_tokens: int = 4096  # max_tokens para extraction LLM call
-    kg_batch_docs_per_call: int = 5  # docs por LLM call en batch extraction
-    kg_gleaning_rounds: int = 0  # rounds de re-extraccion (0 = desactivado)
-    lightrag_mode: LightRAGMode = "hybrid"  # Modos del paper (ver LightRAGMode).
-    kg_max_neighbors_per_entity: int = 5  # 1-hop neighbors por entidad resuelta
+    kg_keyword_max_tokens: int = 1024
+    kg_extraction_max_tokens: int = 4096
+    kg_batch_docs_per_call: int = 5
+    kg_gleaning_rounds: int = 0
+    lightrag_mode: LightRAGMode = "hybrid"
+    kg_max_neighbors_per_entity: int = 5
 
-    # Chunks enviados al LLM para generacion (post KG-scoring).
-    # Paper: CHUNK_TOP_K=20 (con GPT-4o-mini). El KG ya rankea los chunks
-    # por scoring agregado `1/(1+rank) × similarity [× edge_weight]`; este
-    # parametro selecciona los top-N para generacion, analogo a
-    # reranker.top_n en SimpleVector.
-    # 0 = usar retrieval_k (todos los docs van a generacion).
+    # 0 = todos los docs del retrieval_k van a generacion.
     lightrag_generation_top_n: int = 0
 
-    # LLM synthesis para merge de descripciones de entidades multi-doc.
     kg_description_synthesis: bool = False
-    kg_synthesis_char_threshold: int = 200  # chars minimos para trigger LLM synthesis
+    kg_synthesis_char_threshold: int = 200
 
-    # Divergencia #10: chunk high-level keywords VDB (tercer canal del path
-    # high-level). Cuando esta activado, `global`/`hybrid` resuelven query
-    # high_level keywords contra la Chunk Keywords VDB ademas de contra
-    # el Relationship VDB, y los chunks matched contribuyen al doc_scores.
+    # divergencia #10
     kg_chunk_keywords_enabled: bool = True
-    kg_chunk_keywords_top_k: int = 20  # top-K devueltos por keyword al consultar la VDB
+    kg_chunk_keywords_top_k: int = 20
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":

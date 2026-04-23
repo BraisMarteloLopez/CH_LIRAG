@@ -70,10 +70,6 @@ def _format_query_exc(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {str(exc) or repr(exc)}"
 
 
-# -----------------------------------------------------------------
-# EVALUADOR
-# -----------------------------------------------------------------
-
 class MTEBEvaluator:
     """
     Evaluador single-run para datasets MTEB/BeIR.
@@ -100,14 +96,9 @@ class MTEBEvaluator:
 
         self._log_run_start(run_id)
 
-        # Resetear tracker del judge (judge_fallback_stats) al inicio de cada
-        # run para que las tasas reflejen solo este run y no estado acumulado
-        # de runs previos en el mismo proceso.
+        # Aislar stats per-run (runs previos en el mismo proceso no contaminan).
         reset_judge_fallback_stats()
-        # Reset equivalente para el tracker de synthesis (kg_synthesis_stats).
         reset_kg_synthesis_stats()
-        # Reset del tracker de eventos operacionales (operational_stats):
-        # contadores de degradaciones silenciosas en 7 puntos del pipeline.
         reset_operational_stats()
 
         try:
@@ -139,9 +130,8 @@ class MTEBEvaluator:
 
             self._log_run_complete(run_id, elapsed, evaluation_run)
 
-            # 6. Validar tasa de fallback del judge (judge_fallback_stats).
-            # Se hace DESPUES de construir el run para que las stats queden
-            # persistidas en `config_snapshot._runtime` incluso si fallamos.
+            # Validar DESPUES de build_run para que las stats queden en
+            # config_snapshot._runtime aunque lance RuntimeError.
             self._validate_judge_fallback_threshold(run_id)
 
             return evaluation_run
@@ -152,10 +142,6 @@ class MTEBEvaluator:
             raise
         finally:
             self._cleanup()
-
-    # -----------------------------------------------------------------
-    # RUN PHASES
-    # -----------------------------------------------------------------
 
     def _log_run_start(self, run_id: str) -> None:
         """Log header y evento estructurado de inicio."""
@@ -256,7 +242,6 @@ class MTEBEvaluator:
             f"MRR={evaluation_run.avg_mrr:.4f}"
         )
 
-        # Reporte visible de judge_fallback_stats (tasa de fallback del judge).
         judge_stats = get_judge_fallback_stats()
         if judge_stats:
             for metric_name, s in judge_stats.items():
@@ -269,7 +254,6 @@ class MTEBEvaluator:
                     s["default_return_rate"] * 100,
                 )
 
-        # Reporte visible de kg_synthesis_stats (capa de synthesis del KG).
         synthesis_stats = get_kg_synthesis_stats()
         if synthesis_stats["invocations"] > 0:
             logger.info(
@@ -339,15 +323,10 @@ class MTEBEvaluator:
             )
             raise RuntimeError(msg)
 
-    # -----------------------------------------------------------------
-    # INICIALIZACION
-    # -----------------------------------------------------------------
-
     def _init_components(self) -> None:
         """Inicializa embedding, LLM, reranker, metrics."""
         from shared.retrieval.core import RetrievalStrategy
 
-        # Embedding
         self._embedding_model = load_embedding_model(
             base_url=self.config.infra.embedding_base_url,
             model_name=self.config.infra.embedding_model_name,
@@ -355,7 +334,7 @@ class MTEBEvaluator:
         )
         logger.info(f"  Embedding cargado: {self.config.infra.embedding_model_name}")
 
-        # LLM: requerido si generacion activa O si LIGHT_RAG (triplet extraction)
+        # LIGHT_RAG requiere LLM para triplet extraction aunque generation_enabled=False.
         needs_llm = (
             self.config.generation_enabled
             or self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG
@@ -369,7 +348,6 @@ class MTEBEvaluator:
                 max_retries=self.config.infra.nim_max_retries,
             )
 
-        # Metrics calculator
         if self._llm_service and self.config.generation_enabled:
             self._metrics_calculator = MetricsCalculator(
                 llm_judge=self._llm_service,
@@ -380,10 +358,8 @@ class MTEBEvaluator:
                 embedding_model=self._embedding_model,
             )
 
-        # Reranker (opcional). LightRAG no usa reranker: el cross-encoder
-        # single-hop penaliza chunks multi-hop del KG. Guard aqui para que
-        # no se instancie (conexion HTTP al NIM desperdiciada) cuando la
-        # estrategia lo ignora.
+        # LightRAG ignora reranker (cross-encoder single-hop penaliza multi-hop KG).
+        # Guard evita instanciar la conexion NIM innecesariamente.
         if self.config.reranker.enabled:
             if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
                 logger.warning(
@@ -402,18 +378,15 @@ class MTEBEvaluator:
                 except Exception as e:
                     logger.error(f"  Error inicializando reranker: {e}")
 
-        # Limite de contexto para generacion
         if self.config.generation_enabled and self._llm_service:
             self._max_context_chars = resolve_max_context_chars(self.config)
 
-            # Synthesis del contexto KG: solo tiene sentido para LIGHT_RAG
-            # (SIMPLE_VECTOR no produce kg_entities/kg_relations).
+            # synthesis solo aplica a LIGHT_RAG (SIMPLE_VECTOR no produce KG data).
             kg_synthesis_enabled = (
                 self.config.kg_synthesis_enabled
                 and self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG
             )
 
-            # Generation executor
             self._generation_executor = GenerationExecutor(
                 llm_service=self._llm_service,
                 metrics_calculator=self._metrics_calculator,
@@ -422,10 +395,6 @@ class MTEBEvaluator:
                 kg_synthesis_max_chars=self.config.kg_synthesis_max_chars,
                 kg_synthesis_timeout_s=self.config.kg_synthesis_timeout_s,
             )
-
-    # -----------------------------------------------------------------
-    # DATA LOADING
-    # -----------------------------------------------------------------
 
     def _load_dataset(self) -> LoadedDataset:
         """Carga dataset desde MinIO."""
@@ -446,17 +415,12 @@ class MTEBEvaluator:
 
         return dataset
 
-    # -----------------------------------------------------------------
-    # INDEXACION
-    # -----------------------------------------------------------------
-
     def _index_documents(
         self, dataset_name: str, corpus: Dict[str, Any],
         run_id: str = "",
     ) -> None:
         """Crea retriever e indexa el corpus."""
-        # Usar run_id (unico y determinista) en lugar de uuid corto (8 hex
-        # = 32 bits) para eliminar riesgo de colision en ejecuciones paralelas.
+        # run_id (determinista) evita colisiones entre runs paralelos que uuid[:8] no garantiza.
         collection_name = f"eval_{run_id}" if run_id else f"eval_{dataset_name}_{uuid.uuid4().hex[:8]}"
 
         assert self._embedding_model is not None, "_init_components must set _embedding_model"
@@ -487,7 +451,7 @@ class MTEBEvaluator:
                 )
             else:
                 concurrent = self.config.infra.nim_max_concurrent
-                avg_latency_s = 2.0  # Estimacion conservadora por llamada LLM
+                avg_latency_s = 2.0
                 est_minutes = (n_docs / max(concurrent, 1)) * avg_latency_s / 60
                 logger.warning(
                     f"  LIGHT_RAG: indexacion hara ~{n_docs} llamadas LLM "
@@ -505,10 +469,6 @@ class MTEBEvaluator:
 
         logger.info("  Indexacion completada")
 
-    # -----------------------------------------------------------------
-    # EVALUACION DE QUERIES (PIPELINE ASYNC)
-    # -----------------------------------------------------------------
-
     def _evaluate_queries(
         self,
         queries: List[NormalizedQuery],
@@ -516,10 +476,9 @@ class MTEBEvaluator:
         dataset_name: str,
         run_id: str = "",
     ) -> List[QueryEvaluationResult]:
-        """Pipeline de evaluacion: pre-embed + retrieval/generation/metrics por chunks."""
+        """Pipeline: pre-embed + retrieval/generation/metrics por chunks."""
         n = len(queries)
 
-        # --- Fase 0: Pre-embed queries ---
         query_texts = [q.query_text for q in queries]
         query_vectors = batch_embed_queries(query_texts, self.config)
         use_preembed = len(query_vectors) == n
@@ -529,7 +488,6 @@ class MTEBEvaluator:
                 "Usando retrieval con embedding por query (lento)."
             )
 
-        # --- Fase 0b: Pre-extract query keywords (LIGHT_RAG) ---
         if self.config.retrieval.strategy == RetrievalStrategy.LIGHT_RAG:
             from shared.retrieval.lightrag.retriever import LightRAGRetriever
             if isinstance(self._retriever, LightRAGRetriever):
@@ -538,7 +496,6 @@ class MTEBEvaluator:
                 self._retriever.pre_extract_query_keywords(query_texts)
                 logger.info(f"  Keywords pre-extraidas en {time.time() - t_kw:.1f}s")
 
-        # --- Chunked processing: Retrieval + Generation + Metrics ---
         all_results: List[QueryEvaluationResult] = []
 
         for chunk_start in range(0, n, _CHUNK_SIZE):
@@ -552,7 +509,6 @@ class MTEBEvaluator:
                 f"queries {chunk_start + 1}-{chunk_end}/{n} ({n_chunk} queries)"
             )
 
-            # Retrieval (sync)
             retrievals: List[QueryRetrievalDetail] = []
             rerank_statuses: List[Optional[bool]] = []
             for i, query in enumerate(chunk_queries):
@@ -565,7 +521,6 @@ class MTEBEvaluator:
                 retrievals.append(detail)
                 rerank_statuses.append(reranked_ok)
 
-            # Generation + Metrics (async)
             gen_metrics_results: List[Optional[GenMetricsResult]] = [None] * n_chunk
             gen_errors: List[Optional[BaseException]] = [None] * n_chunk
             if self.config.generation_enabled and self._generation_executor:
@@ -621,11 +576,9 @@ class MTEBEvaluator:
         dataset_name: str,
         gen_errors: Optional[List[Optional[BaseException]]] = None,
     ) -> List[QueryEvaluationResult]:
-        """Ensambla QueryEvaluationResult desde retrieval + generation results.
+        """Ensambla QueryEvaluationResult.
 
-        gen_errors: lista paralela a gen_metrics_results con la excepcion
-        capturada (si la hubo) para cada query. Se usa para poblar
-        error_message en los FAILED.
+        gen_errors paralelo a gen_metrics_results para poblar error_message de FAILED.
         """
         if gen_errors is None:
             gen_errors = [None] * len(queries)
@@ -633,7 +586,6 @@ class MTEBEvaluator:
         for query, retrieval, gm, reranked_status, exc in zip(
             queries, retrievals, gen_metrics_results, rerank_statuses, gen_errors,
         ):
-            # Passthrough generico de metadata de la query.
             qr_metadata: Dict[str, Any] = {
                 k: v for k, v in query.metadata.items() if v
             }
@@ -656,7 +608,6 @@ class MTEBEvaluator:
                     metadata=qr_metadata,
                 ))
             elif self.config.generation_enabled:
-                # Si hubo excepcion, preservar tipo+mensaje (diagnostico post-run).
                 error_message = (
                     _format_query_exc(exc) if exc is not None
                     else "Error en generacion/metricas async"
@@ -703,10 +654,6 @@ class MTEBEvaluator:
             rerank_failures=self._retrieval_executor.rerank_failures if self._retrieval_executor else 0,
             strategy_mismatches=self._retrieval_executor.strategy_mismatches if self._retrieval_executor else 0,
         )
-
-    # -----------------------------------------------------------------
-    # CLEANUP
-    # -----------------------------------------------------------------
 
     def _cleanup(self) -> None:
         if self._retriever:

@@ -97,24 +97,6 @@ from .retrieval_executor import (
 logger = logging.getLogger(__name__)
 
 
-# -----------------------------------------------------------------------------
-# Tracker de KG synthesis.
-#
-# La synthesis es un paso opcional que reescribe el contexto multi-seccion
-# como narrativa coherente. Si falla, hacemos fallback al contexto
-# estructurado y el run continua. El tracker permite auditar si el feature
-# esta funcionando correctamente o degradando silenciosamente.
-#
-# Eventos:
-#   - invocations: queries donde se intento la synthesis (KG data + flag on).
-#   - successes: synthesis devolvio narrativa no vacia dentro del budget.
-#   - errors: el LLM lanzo excepcion.
-#   - empty_returns: el LLM devolvio string vacio o solo whitespace.
-#   - truncations: la respuesta excedio max_chars y fue truncada.
-#   - timeouts: la llamada excedio kg_synthesis_timeout_s.
-# -----------------------------------------------------------------------------
-
-
 def _percentile(values: List[float], p: float) -> float:
     """Percentil simple (nearest-rank). Retorna 0.0 si la lista esta vacia.
 
@@ -249,17 +231,12 @@ class GenMetricsResult:
         self.secondary_metrics = secondary_metrics or {}
 
 
-# Dispatch table R6: resolucion de la metrica primaria por DatasetType.
-# Cada resolver retorna (MetricType, kwargs) listo para `calculate_async()`.
-# Mantener en sync con `DatasetType` (shared/types.py) y las metricas
-# declaradas en `DATASET_CONFIG`.
+# Resolvers de metrica primaria por DatasetType (sync con DATASET_CONFIG).
 
 def _resolve_primary_hybrid(
     *, answer_type: Optional[str], expected_answer: Optional[str],
     query_text: str, context: str, calc: MetricsCalculator,
 ) -> Tuple[MetricType, Dict[str, Any]]:
-    # HYBRID: ACCURACY para clasificacion yes/no, F1_SCORE para extractiva.
-    # Para 1 token F1 ~ EM; para 2+ tokens F1 captura aciertos parciales.
     if answer_type == "label":
         return MetricType.ACCURACY, {"expected": expected_answer}
     return MetricType.F1_SCORE, {"expected": expected_answer}
@@ -269,8 +246,6 @@ def _resolve_primary_adapted(
     *, answer_type: Optional[str], expected_answer: Optional[str],
     query_text: str, context: str, calc: MetricsCalculator,
 ) -> Tuple[MetricType, Dict[str, Any]]:
-    # ADAPTED: SEMANTIC_SIMILARITY si hay expected + embedding_model;
-    # ANSWER_RELEVANCE via LLM-judge en caso contrario.
     if expected_answer and calc.embedding_model:
         return MetricType.SEMANTIC_SIMILARITY, {"expected": expected_answer}
     return MetricType.ANSWER_RELEVANCE, {"query": query_text}
@@ -280,7 +255,6 @@ def _resolve_primary_retrieval_only(
     *, answer_type: Optional[str], expected_answer: Optional[str],
     query_text: str, context: str, calc: MetricsCalculator,
 ) -> Tuple[MetricType, Dict[str, Any]]:
-    # RETRIEVAL_ONLY: FAITHFULNESS del generado contra el contexto.
     return MetricType.FAITHFULNESS, {"context": context}
 
 
@@ -344,8 +318,6 @@ class GenerationExecutor:
         dataset_name: str,
     ) -> GenMetricsResult:
         """Procesa una query: generacion async + metricas async."""
-        # Contexto estructurado si hay datos KG disponibles.
-        # El modo LightRAG determina presupuestos por seccion.
         kg_entities = retrieval_detail.retrieval_metadata.get("kg_entities")
         kg_relations = retrieval_detail.retrieval_metadata.get("kg_relations")
         has_kg_data = bool(kg_entities or kg_relations)
@@ -361,10 +333,8 @@ class GenerationExecutor:
                 self._max_context_chars,
                 mode=lightrag_mode,
             )
-            # Registrar si el cap al 50% del budget total escalo las
-            # secciones KG. Con modelos de contexto >= 112000 chars el cap
-            # no dispara; con ventanas mas pequenas discrimina "chunks
-            # starved por KG" vs "budgets intactos".
+            # Observable: discrimina "chunks starved por KG" (cap 50% disparado,
+            # ventana < 112000 chars) vs "budgets intactos".
             retrieval_detail.retrieval_metadata["kg_budget_cap_triggered"] = (
                 is_kg_budget_cap_triggered(self._max_context_chars, lightrag_mode)
             )
@@ -374,32 +344,19 @@ class GenerationExecutor:
                 self._max_context_chars,
             )
 
-        # Synthesis del contexto KG: reescribe las secciones como narrativa
-        # coherente via LLM. Solo si hay datos KG y la flag esta activa. Si
-        # la synthesis falla, degradamos al contexto estructurado original.
-        # `generation_context` es lo que ve el LLM generador.
-        # `structured_context` es siempre el original; faithfulness se evalua
-        # contra este para penalizar cualquier alucinacion introducida por
-        # la propia capa de synthesis.
+        # faithfulness se evalua SIEMPRE contra structured_context (no narrativa)
+        # para penalizar alucinacion introducida por la propia synthesis.
         if has_kg_data and self._kg_synthesis_enabled:
             generation_context, synth_error = await self._synthesize_kg_context_async(
                 query.query_text, structured_context
             )
-            # Deuda #15: persistir outcome per-query para auditoria en JSON/CSV.
-            # synth_error is None => la narrativa fue la entregada al LLM.
             retrieval_detail.retrieval_metadata["kg_synthesis_used"] = (
                 synth_error is None
             )
             if synth_error is not None:
                 retrieval_detail.retrieval_metadata["kg_synthesis_error"] = synth_error
 
-            # Divergencia #7: observable de citaciones `[ref:N]` en la narrativa
-            # synthesized. El prompt KG_SYNTHESIS_SYSTEM_PROMPT instruye al LLM
-            # a emitir el formato; el parser cuenta cuantas respeto, cuantas
-            # estan fuera de rango (apuntan a chunks truncados o inventadas),
-            # cuantas son duplicados, etc. Si synth fallo, generation_context
-            # es structured_context verbatim => el parser produce 0 validly
-            # (no hay `[ref:N]` en el JSON crudo, solo `reference_id`).
+            # divergencia #7
             synth_stats = parse_citation_refs(generation_context, n_chunks_emitted)
             for metric_name, value in synth_stats.items():
                 retrieval_detail.retrieval_metadata[
@@ -408,18 +365,11 @@ class GenerationExecutor:
         else:
             generation_context = structured_context
 
-        # 1. Generacion async (usa el contexto sintetizado si lo hay)
         generation = await self._execute_generation_async(
             query.query_text, generation_context, dataset_name
         )
 
-        # Divergencia #7: observable de citaciones en la respuesta final del
-        # generador, emitido bajo el mismo gate que synth_* (has_kg_data +
-        # synthesis enabled). Comparado con synth_*, discrimina el trasvase
-        # narrativa -> respuesta:
-        #   gen_valid > synth_valid  => generador invento citas (alarma)
-        #   gen_out_of_range > 0 y synth_out_of_range == 0 => alucinacion
-        #                                                     solo en gen
+        # divergencia #7 (gen_*) bajo el mismo gate que synth_*.
         if has_kg_data and self._kg_synthesis_enabled:
             gen_stats = parse_citation_refs(
                 generation.generated_response, n_chunks_emitted,
@@ -429,8 +379,6 @@ class GenerationExecutor:
                     f"citation_refs_gen_{metric_name}"
                 ] = value
 
-        # 2. Metricas async (faithfulness se evalua contra structured_context
-        # original, no contra la narrativa del synthesis)
         primary_result, secondary_results = await self._calculate_metrics_async(
             generated=generation.generated_response,
             expected_answer=query.expected_answer,

@@ -26,11 +26,7 @@ from shared.constants import KG_MIN_ENTITY_NAME_LEN as MIN_ENTITY_NAME_LEN
 
 VALID_ENTITY_TYPES = {"PERSON", "ORG", "PLACE", "CONCEPT", "EVENT", "OTHER"}
 
-# Divergencia #10: high-level keywords por chunk durante indexacion
-# (paper HKUDS/LightRAG). Se extraen en la misma llamada LLM que las
-# tripletas (piggyback en TRIPLET_EXTRACTION_PROMPT) y se usan en el
-# path high-level de retrieval como canal adicional via Chunk Keywords VDB.
-# Caps defensivos frente a respuestas patologicas del LLM.
+# divergencia #10: caps defensivos contra respuestas patologicas del LLM.
 MAX_CHUNK_KEYWORDS_PER_DOC = 10
 MIN_CHUNK_KEYWORD_LEN = 2
 MAX_CHUNK_KEYWORD_LEN = 80
@@ -119,10 +115,8 @@ class TripletExtractor:
     Estadisticas de extraccion accesibles via get_stats().
     """
 
-    # Multiplicador para calcular batch de coroutines a partir del semaforo
-    # HTTP del LLM. Con semaforo=32 y mult=4, batch=128 coroutines vivas
-    # simultaneamente. Reduce presion de memoria sin afectar throughput
-    # (el semaforo HTTP es el cuello de botella real).
+    # Coroutines vivas = max(64, http_sem * 4). Controla memoria sin tocar throughput
+    # (el semaforo HTTP del LLM es el cuello de botella real).
     _CONCURRENCY_MULTIPLIER = 4
     _MIN_BATCH_SIZE = 64
 
@@ -137,7 +131,6 @@ class TripletExtractor:
         self._max_text_chars = max_text_chars
         self._keyword_max_tokens = keyword_max_tokens
         self._extraction_max_tokens = extraction_max_tokens
-        # Batch size adaptativo al semaforo HTTP del LLM.
         self._batch_size = max(
             self._MIN_BATCH_SIZE,
             llm_service._max_concurrent * self._CONCURRENCY_MULTIPLIER,
@@ -151,13 +144,10 @@ class TripletExtractor:
             "docs_json_recovered": 0,
             "total_entities": 0,
             "total_relations": 0,
-            # Divergencia #10: chunk high-level keywords por doc
+            # divergencia #10
             "docs_with_keywords": 0,
             "total_chunk_keywords": 0,
-            # Observables de filtros hardcoded (dt-17): si estos contadores
-            # son altos respecto a total_chunk_keywords, los defaults
-            # (MIN/MAX_CHUNK_KEYWORD_LEN, MAX_CHUNK_KEYWORDS_PER_DOC) estan
-            # recortando senal util. Exponer al .env si se observa.
+            # dt-17
             "chunk_keywords_rejected_len": 0,
             "chunk_keywords_dropped_by_cap": 0,
             "docs_chunk_keywords_capped": 0,
@@ -200,18 +190,15 @@ class TripletExtractor:
             (retrocompatible con prompts anteriores al cierre de #10).
         """
         try:
-            # Limpiar markdown code blocks si los hay
             text = raw.strip()
             if text.startswith("```"):
                 lines = text.split("\n")
                 lines = [l for l in lines if not l.strip().startswith("```")]
                 text = "\n".join(lines)
 
-            # Fast path: texto es JSON puro
             try:
                 data = json.loads(text)
             except json.JSONDecodeError:
-                # Fallback: buscar primer objeto JSON en texto mixto
                 data = self._find_json_object(text)
                 if data is None:
                     raise ValueError(
@@ -281,7 +268,7 @@ class TripletExtractor:
                     source_doc_id=doc_id,
                 ))
 
-        # Divergencia #10: chunk high-level keywords
+        # divergencia #10
         chunk_keywords: List[str] = []
         seen_lower: set = set()
         cap_hit = False
@@ -292,14 +279,12 @@ class TripletExtractor:
             if len(kw) < MIN_CHUNK_KEYWORD_LEN or len(kw) > MAX_CHUNK_KEYWORD_LEN:
                 self._stats["chunk_keywords_rejected_len"] += 1
                 continue
-            # Dedup case-insensitive preservando el primer casing visto
             key = kw.lower()
             if key in seen_lower:
                 continue
             seen_lower.add(key)
             if len(chunk_keywords) >= MAX_CHUNK_KEYWORDS_PER_DOC:
-                # Seguimos iterando para contar cuantas keywords validas
-                # perdemos por el cap (observable dt-17).
+                # Seguir iterando para contar perdidas por cap (dt-17).
                 self._stats["chunk_keywords_dropped_by_cap"] += 1
                 cap_hit = True
                 continue
@@ -398,14 +383,7 @@ class TripletExtractor:
             record_operational_event("gleaning_error")
             return [], []
 
-    # -------------------------------------------------------------------------
-    # MULTI-DOC BATCH EXTRACTION
-    # -------------------------------------------------------------------------
-
-    # Fallback default si batch_docs_per_call=0. Normalmente lo sobrescribe
-    # KG_BATCH_DOCS_PER_CALL desde config (default 5). Subir solo si el
-    # modelo no es thinking-mode: con nemotron-3-nano, batches >5 agotan
-    # tokens en <think> antes de emitir el JSON.
+    # Subir >5 solo sin thinking-mode: nemotron-3-nano agota tokens en <think>.
     _DEFAULT_BATCH_DOCS_PER_CALL = 5
 
     def _group_docs_for_batch(
@@ -428,7 +406,6 @@ class TripletExtractor:
             content = doc.get("content", "")
             doc_chars = min(len(content), self._max_text_chars)
 
-            # Si añadir este doc excede presupuesto o cantidad, flush
             if current and (
                 current_chars + doc_chars > budget
                 or len(current) >= batch_docs_per_call
@@ -484,7 +461,6 @@ class TripletExtractor:
                 if data is None:
                     return None
 
-            # Debe tener key "documents" con lista
             doc_list = data.get("documents")
             if not isinstance(doc_list, list):
                 return None
@@ -528,7 +504,6 @@ class TripletExtractor:
         if not non_empty:
             return results
 
-        # Si solo un doc, usar path single-doc directamente
         if len(non_empty) == 1:
             doc = non_empty[0]
             doc_id = doc.get("doc_id", "")
@@ -537,10 +512,8 @@ class TripletExtractor:
             results[doc_id] = (entities, relations, keywords)
             return results
 
-        # Multi-doc batch call
         prompt = self._build_batch_prompt(non_empty)
-        # Escalar max_tokens por doc dejando headroom para <think> tags de
-        # thinking-mode models (hasta 3x el limite single-doc).
+        # Headroom 3x para <think> tags de thinking-mode models.
         max_tokens = min(
             self._extraction_max_tokens * len(non_empty),
             self._extraction_max_tokens * 3,
@@ -570,12 +543,10 @@ class TripletExtractor:
                             self._stats["docs_empty_result"] += 1
                         results[doc_id] = (entities, relations, keywords)
                     else:
-                        # Doc not in batch response — count as empty result
                         self._stats["docs_empty_result"] += 1
                         results[doc_id] = ([], [], [])
                 return results
 
-            # Batch parsing failed — fallback to single-doc (WARNING, not debug).
             logger.warning(
                 f"Batch parse failed for {len(non_empty)} docs, "
                 f"falling back to single-doc extraction"
@@ -583,7 +554,6 @@ class TripletExtractor:
         except Exception as e:
             logger.warning(f"Batch LLM call failed: {e}, falling back to single-doc")
 
-        # Fallback: extract each doc individually
         for doc in non_empty:
             doc_id = doc.get("doc_id", "")
             content = doc.get("content", "")
@@ -615,13 +585,11 @@ class TripletExtractor:
         if batch_docs_per_call <= 0:
             batch_docs_per_call = self._DEFAULT_BATCH_DOCS_PER_CALL
 
-        # Reset stats al inicio para evitar acumulacion entre llamadas.
         self.reset_stats()
         t0 = time.perf_counter()
         results: Dict[str, Tuple[List[KGEntity], List[KGRelation], List[str]]] = {}
 
         if batch_docs_per_call == 1:
-            # Legacy mode: one LLM call per doc
             async def _extract_one(
                 doc: Dict[str, Any],
             ) -> Tuple[str, List[KGEntity], List[KGRelation], List[str]]:
@@ -642,10 +610,8 @@ class TripletExtractor:
                     doc_id, entities, relations, keywords = r
                     results[doc_id] = (entities, relations, keywords)
         else:
-            # Multi-doc batch mode: group docs and send N per LLM call
             groups = self._group_docs_for_batch(documents, batch_docs_per_call)
 
-            # Process groups with concurrency control via chunks
             batch_sz = self._batch_size
             for start in range(0, len(groups), batch_sz):
                 group_chunk = groups[start:start + batch_sz]
@@ -662,7 +628,6 @@ class TripletExtractor:
         total_relations = sum(len(v[1]) for v in results.values())
         total_keywords = sum(len(v[2]) for v in results.values())
         docs_with_keywords = sum(1 for v in results.values() if v[2])
-        # Reportar fallos en el log del batch.
         stats = self.get_stats()
         failed = stats["docs_failed"]
         empty_input = stats["docs_empty_input"]
@@ -695,10 +660,6 @@ class TripletExtractor:
         """Wrapper sincrono de extract_batch_async."""
         return run_sync(self.extract_batch_async(documents, batch_docs_per_call))
 
-    # -------------------------------------------------------------------------
-    # QUERY ANALYSIS
-    # -------------------------------------------------------------------------
-
     def _parse_keywords_json(
         self, raw: str,
     ) -> Tuple[List[str], List[str]]:
@@ -721,7 +682,7 @@ class TripletExtractor:
                     f"(respuesta comenzaba con: {text[:80]!r})"
                 )
 
-            _MAX_KEYWORDS_PER_LEVEL = 20  # cap defensivo frente a respuestas patologicas
+            _MAX_KEYWORDS_PER_LEVEL = 20
             low = [str(k) for k in data.get("low_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
             high = [str(k) for k in data.get("high_level", []) if k][:_MAX_KEYWORDS_PER_LEVEL]
             return low, high
@@ -770,12 +731,10 @@ class TripletExtractor:
             Lista de (low_level, high_level) en mismo orden que queries.
         """
         t0 = time.perf_counter()
-        # List comprehension para evitar mutable default sharing.
         results: List[Tuple[List[str], List[str]]] = [([], []) for _ in range(len(queries))]
 
-        # Dedup queries identicas para evitar LLM calls duplicadas.
-        unique_queries: Dict[str, int] = {}  # query_text -> first index
-        dedup_map: Dict[int, int] = {}  # idx -> first_idx (for duplicates)
+        unique_queries: Dict[str, int] = {}
+        dedup_map: Dict[int, int] = {}
         for i, q in enumerate(queries):
             if q in unique_queries:
                 dedup_map[i] = unique_queries[q]
@@ -785,7 +744,6 @@ class TripletExtractor:
         if deduped_count > 0:
             logger.debug(f"Keyword batch: {deduped_count} queries duplicadas eliminadas")
 
-        # Solo extraer keywords para queries unicas
         unique_indices = sorted(unique_queries.values())
 
         async def _extract_one(
@@ -809,7 +767,6 @@ class TripletExtractor:
                 idx, low, high = r
                 results[idx] = (low, high)
 
-        # Copiar resultados a queries duplicadas.
         for dup_idx, src_idx in dedup_map.items():
             results[dup_idx] = results[src_idx]
 

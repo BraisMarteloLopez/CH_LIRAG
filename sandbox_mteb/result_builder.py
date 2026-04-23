@@ -164,7 +164,7 @@ def build_run(
 
     # Config snapshot: serializacion completa para reproducibilidad post-hoc
     config_snapshot = _serialize_config(config)
-    # Campos derivados del run (no en config)
+    # Ver CLAUDE.md §Observabilidad de runs para interpretacion de cada stat.
     judge_fallback_stats = get_judge_fallback_stats()
     strategy_actual: StrategyActualLabel = (
         cast(StrategyActualLabel, config.retrieval.strategy.name)
@@ -180,18 +180,8 @@ def build_run(
         "gen_zero_count": gen_zero_count,
         "gen_nonzero_count": gen_nonzero_count,
         "strategy_actual": strategy_actual,
-        # judge_fallback_stats: tasa de fallback del LLM judge por metrica.
-        # default_return_rate elevado => metricas del judge sesgadas a 0.5.
         "judge_fallback_stats": judge_fallback_stats,
-        # kg_synthesis_stats: stats de la capa de synthesis del KG.
-        # invocations==0 => synthesis no se intento (no LIGHT_RAG, sin KG
-        # data, o flag desactivada).
         "kg_synthesis_stats": get_kg_synthesis_stats(),
-        # operational_stats: contador de degradaciones silenciosas en 7
-        # puntos del pipeline (neighbor lookup, chunk keywords VDB,
-        # description synthesis, gleaning, keywords parse, retrieval build,
-        # generation). Valores altos => degradacion del canal aunque el
-        # run termine sin error fatal.
         "operational_stats": get_operational_stats(),
     }
     config_snapshot["_runtime"] = runtime_snapshot

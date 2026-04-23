@@ -1,25 +1,4 @@
-"""
-Retriever basado en LightRAG (EMNLP 2025). Chunks obtenidos a traves del KG
-con tres canales agregados al mismo doc_scores.
-
-Flujo:
-    Indexacion:
-      1. Extraer tripletas + high_level_keywords de cada doc via LLM
-         (TripletExtractor; piggyback de keywords en la misma llamada)
-      2. Construir KnowledgeGraph con entidades y relaciones (igraph)
-      3. Indexar contenido original en ChromaDB (vector store principal)
-      4. Construir 3 VDBs: Entity, Relationship, Chunk Keywords
-
-    Retrieval (modos local/global/hybrid):
-      1. Query analysis via LLM -> low_level + high_level keywords
-      2. Resolver keywords contra Entity / Relationship / Chunk Keywords VDBs
-      3. Obtener source_doc_ids de los tres canales
-      4. Scoring agregado al mismo doc_scores:
-         `1/(1+rank) * similarity [* edge_weight]` por canal
-      5. Fetch contenido desde vector store via get_documents_by_ids
-      6. Fallback a vector search si el KG no produce doc_ids
-         (anotado en retrieval_metadata.kg_fallback)
-"""
+"""LightRAG retriever (EMNLP 2025). Detalles de flujo y divergencias en CLAUDE.md §LIGHT_RAG."""
 
 from __future__ import annotations
 
@@ -104,13 +83,11 @@ class LightRAGRetriever(BaseRetriever):
         self._lightrag_mode: LightRAGMode = config.lightrag_mode
         self._max_neighbors_per_entity = config.kg_max_neighbors_per_entity
 
-        # Vector retriever (siempre disponible)
         self._vector_retriever = SimpleVectorRetriever(
             config, embedding_model, collection_name,
             embedding_batch_size=embedding_batch_size,
         )
 
-        # Knowledge graph + triplet extractor (requieren LLM + igraph)
         self._kg: Optional[KnowledgeGraph] = None
         self._extractor: Optional[TripletExtractor] = None
         self._has_graph = False
@@ -134,18 +111,12 @@ class LightRAGRetriever(BaseRetriever):
                 f"Fallback a SimpleVector."
             )
 
-        # Entity VDB y Relationship VDB: ChromaDB collections que resuelven
-        # entidades/relaciones por embedding similarity.
-        self._entities_vdb: Any = None  # ChromaVectorStore, lazy init
-        self._relationships_vdb: Any = None  # ChromaVectorStore, lazy init
-        # Chunk Keywords VDB (divergencia #10): tercer canal del path
-        # high-level. Indexa, por doc, las high-level keywords extraidas
-        # durante indexacion. En retrieval resuelve query.high_level contra
-        # la VDB y aporta doc_ids al scoring agregado de _retrieve_via_kg.
-        self._chunk_keywords_vdb: Any = None  # ChromaVectorStore, lazy init
+        self._entities_vdb: Any = None
+        self._relationships_vdb: Any = None
+        # divergencia #10
+        self._chunk_keywords_vdb: Any = None
         self._embedding_model = embedding_model
 
-        # Cache de keywords de queries con LRU eviction y lock thread-safe.
         self._QUERY_CACHE_MAX_SIZE = 10_000
         self._query_keywords_cache: OrderedDict[str, Tuple[List[str], List[str]]] = OrderedDict()
         self._cache_lock = threading.Lock()
@@ -190,8 +161,7 @@ class LightRAGRetriever(BaseRetriever):
             return False
 
         if self._kg and self._extractor:
-            # Snapshot de stats del extractor antes del build para restaurarlos
-            # ante fallo (evita stats corruptas si el build aborta a la mitad).
+            # Restaurar stats si el build aborta a la mitad.
             stats_snapshot = self._extractor.get_stats()
             try:
                 cache_path = self._resolve_cache_path(documents)
@@ -202,7 +172,6 @@ class LightRAGRetriever(BaseRetriever):
                         f"({self._kg.num_entities} entidades, "
                         f"{self._kg.num_docs_with_keywords} docs con keywords)"
                     )
-                    # Rebuild de las 3 VDBs desde el KG cacheado.
                     self._build_entities_vdb()
                     self._build_relationships_vdb()
                     self._build_chunk_keywords_vdb()
@@ -232,8 +201,7 @@ class LightRAGRetriever(BaseRetriever):
             f"Graph: {self._has_graph}. KG stats: {kg_stats}"
         )
 
-        # Alerta si el cap de entidades descarto un porcentaje significativo:
-        # documentos indexados tarde verian su KG incompleto.
+        # Alerta: docs indexados tarde ven un KG incompleto si el cap descarto.
         if kg_stats:
             dropped = kg_stats.get("entities_dropped", 0)
             kept = kg_stats.get("num_entities", 0)
@@ -260,10 +228,7 @@ class LightRAGRetriever(BaseRetriever):
 
         t0 = time.perf_counter()
 
-        # Extraccion batch (async, controlada por semaphore del LLM).
-        # Divergencia #10: cada doc ademas de (entities, relations) devuelve
-        # `chunk_keywords` (high-level themes) que luego se indexan en
-        # Chunk Keywords VDB para el path high-level de retrieval.
+        # divergencia #10: cada doc devuelve (entities, relations, chunk_keywords).
         extraction_results = self._extractor.extract_batch(
             documents, batch_docs_per_call=self._kg_batch_docs_per_call,
         )
@@ -278,12 +243,10 @@ class LightRAGRetriever(BaseRetriever):
                     entity.name, entity.entity_type, entity.description
                 )
 
-            # Divergencia #10: persistir chunk keywords en el KG (si hay)
             if chunk_keywords:
                 self._kg.add_doc_keywords(doc_id, chunk_keywords)
 
-        # Gleaning: re-extraccion opcional para capturar entidades perdidas
-        # (no re-extrae high_level_keywords; ver KG_GLEANING_ROUNDS en .env).
+        # Gleaning no re-extrae high_level_keywords (ver KG_GLEANING_ROUNDS).
         if self._kg_gleaning_rounds > 0 and self._extractor:
             for gleaning_round in range(self._kg_gleaning_rounds):
                 t_glean = time.perf_counter()
@@ -315,18 +278,16 @@ class LightRAGRetriever(BaseRetriever):
 
         self._kg.log_entity_cap_summary()
 
-        # Co-occurrence bridging: anade edges entre entidades co-ocurrentes
-        # para reducir fragmentacion del grafo.
         co_edges = self._kg.build_co_occurrence_edges()
         if co_edges:
             logger.info(f"LightRAGRetriever: {co_edges} co-occurrence edges creadas")
 
-        # Merge de descripciones multi-doc antes de construir VDBs.
+        # Merge de descripciones antes de construir las VDBs para que Entity VDB
+        # indexe la descripcion consolidada en vez de la primera vista.
         merged = self._kg.merge_entity_descriptions()
         if merged:
             logger.info(f"LightRAGRetriever: {merged} entidades con descripciones consolidadas")
 
-        # LLM synthesis opcional para entidades con descripciones largas.
         if self.config.kg_description_synthesis and self._llm_service:
             synthesized = self._synthesize_descriptions()
             if synthesized:
@@ -334,8 +295,6 @@ class LightRAGRetriever(BaseRetriever):
                     f"LightRAGRetriever: {synthesized} entidades sintetizadas via LLM"
                 )
 
-        # Construir las 3 VDBs (ChromaDB con embeddings de entidades,
-        # relaciones y chunk keywords — esta ultima es la divergencia #10).
         self._build_entities_vdb()
         self._build_relationships_vdb()
         self._build_chunk_keywords_vdb()
@@ -346,7 +305,6 @@ class LightRAGRetriever(BaseRetriever):
             f"{total_triplets} tripletas de {len(documents)} docs."
         )
 
-    # Prompt para LLM synthesis de descripciones de entidades multi-doc.
     _SYNTHESIS_SYSTEM = (
         "You are a knowledge graph curator. Your task is to synthesize "
         "multiple descriptions of the same entity into a single, concise, "
@@ -440,7 +398,6 @@ class LightRAGRetriever(BaseRetriever):
 
         entity_collection_name = self._aux_vdb_collection_name("entities")
 
-        # Limpiar VDB anterior si existe
         if self._entities_vdb is not None:
             try:
                 self._entities_vdb.delete_all_documents()
@@ -451,12 +408,11 @@ class LightRAGRetriever(BaseRetriever):
             config={
                 "CHROMA_COLLECTION_NAME": entity_collection_name,
                 "EMBEDDING_BATCH_SIZE": 50,
-                "HNSW_SPACE": "cosine",  # cosine distance for semantic matching
+                "HNSW_SPACE": "cosine",
             },
             embedding_model=self._embedding_model,
         )
 
-        # Indexar entidades como "name: description"
         lc_docs = []
         for entity_name, entity in entities.items():
             desc = entity.description or ""
@@ -477,10 +433,7 @@ class LightRAGRetriever(BaseRetriever):
             f"({len(lc_docs)} entidades indexadas)"
         )
 
-    # Max cosine distance para considerar un match valido.
-    # Rango: [0, 2]. 0 = identical, 1 = orthogonal, 2 = opposite.
-    # 0.8 es permisivo: admite matches semanticamente relacionados aunque
-    # difieran lexicamente.
+    # 0.8 permisivo en [0,2]: admite matches relacionados aunque difieran lexicamente.
     _ENTITY_VDB_MAX_DISTANCE = 0.8
 
     def _resolve_entities_via_vdb(
@@ -554,12 +507,11 @@ class LightRAGRetriever(BaseRetriever):
             config={
                 "CHROMA_COLLECTION_NAME": rel_collection_name,
                 "EMBEDDING_BATCH_SIZE": 50,
-                "HNSW_SPACE": "cosine",  # cosine distance for semantic matching
+                "HNSW_SPACE": "cosine",
             },
             embedding_model=self._embedding_model,
         )
 
-        # Indexar relaciones como "source -> relation -> target: description"
         lc_docs = []
         for rel in relations:
             desc = rel.get("description", "")
@@ -588,12 +540,9 @@ class LightRAGRetriever(BaseRetriever):
             f"({len(lc_docs)} relaciones indexadas)"
         )
 
-    # Max cosine distance para matches de relacion (misma escala que entity VDB).
     _RELATIONSHIP_VDB_MAX_DISTANCE = 0.8
 
-    # Divergencia #10: max cosine distance para matches en Chunk Keywords VDB.
-    # Simetrico con Entity/Relationship VDB; relajar solo si se observa
-    # demasiado corte en queries con high_level keywords legitimos.
+    # divergencia #10
     _CHUNK_KEYWORDS_VDB_MAX_DISTANCE = 0.8
 
     def _build_chunk_keywords_vdb(self) -> None:
@@ -655,9 +604,6 @@ class LightRAGRetriever(BaseRetriever):
 
         lc_docs = []
         for doc_id, keywords in all_keywords.items():
-            # Texto del embedding: keywords separadas por coma. Mantener el
-            # casing original (las embeddings manejan casing). Sin prefijo
-            # ni sufijo artificial — el paper no los usa.
             text = ", ".join(keywords)
             lc_docs.append(Document(
                 page_content=text,
@@ -730,7 +676,7 @@ class LightRAGRetriever(BaseRetriever):
                         first_seen[doc_id] = seq
                         seq += 1
 
-        # Orden de aparicion (mantiene la semantica de rank de la query)
+        # Orden de aparicion = rank de la query (primera keyword domina).
         ordered = sorted(
             best_distance.items(),
             key=lambda kv: first_seen.get(kv[0], 1 << 30),
@@ -754,7 +700,6 @@ class LightRAGRetriever(BaseRetriever):
             content = doc.get("content", "")
             h.update(content.encode())
         h.update(f"n={len(documents)}".encode())
-        # Config que afecta el KG resultante.
         if max_text_chars:
             h.update(f"mtc={max_text_chars}".encode())
         if kg_max_entities:
@@ -846,10 +791,6 @@ class LightRAGRetriever(BaseRetriever):
         result.metadata["lightrag_mode"] = mode
         return result
 
-    # -----------------------------------------------------------------
-    # KG-based retrieval (paper-aligned)
-    # -----------------------------------------------------------------
-
     _MAX_CONTEXT_ENTITIES = 30
     _MAX_CONTEXT_RELATIONS = 30
 
@@ -858,40 +799,11 @@ class LightRAGRetriever(BaseRetriever):
         query: str,
         top_k: int,
     ) -> RetrievalResult:
-        """Retrieval paper-aligned: chunks obtenidos a traves del KG.
+        """Retrieval via KG (3 canales agregan al mismo doc_scores).
 
-        Flujo:
-          1. Extraer query keywords (low-level + high-level)
-          2. Resolver keywords contra Entity VDB, Relationship VDB y
-             Chunk Keywords VDB (divergencia #10)
-          3. Obtener source_doc_ids de entidades/relaciones + doc_ids
-             directos del canal de chunk keywords
-          4. Scoring: cada doc_id acumula score de los tres canales
-          5. Fetch contenido de chunks desde el vector store
-          6. Fallback a vector search si el KG no produce resultados
-
-        Scoring formula (simetrica entre canales):
-          entidades:       sum(1/(1+rank) * similarity)
-          relaciones:      sum(1/(1+rank) * similarity * edge_weight)
-          chunk keywords:  sum(1/(1+rank) * similarity)   [divergencia #10]
-
-        Donde similarity = max(0, 1 - cosine_distance/2), rank es la
-        posicion en los resultados del VDB (0 = mas relevante), y
-        edge_weight es el numero de docs que mencionan la relacion. El
-        canal de chunk keywords no pondera por weight — no hay equivalente
-        de edge_weight para chunks (cada chunk es una unidad).
-
-        Diferencias con el paper (HKUDS/LightRAG operate.py):
-        - El paper usa un contador descendiente `order = N - i` para
-          decay por posicion; aqui usamos `1/(1+rank)` (inverse-rank).
-          Ambos producen el mismo efecto (posiciones altas dominan)
-          pero con curva de decay distinta: inverse-rank decae mas
-          rapido (1.0, 0.5, 0.33...) que lineal (N, N-1, N-2...).
-        - Las entidades no ponderan por weight porque el Entity VDB
-          no almacena un peso equivalente al edge_weight de relaciones.
-          len(entity.source_doc_ids) seria un proxy razonable (mas docs
-          = entidad mas relevante) pero el paper no lo hace
-          explicitamente para el canal de entidades.
+        Ver CLAUDE.md §LIGHT_RAG para la formula de scoring y la comparacion
+        con HKUDS/LightRAG operate.py (curva de decay distinta, entidades
+        sin ponderar por weight).
         """
         if self._kg is None:
             raise RuntimeError("_retrieve_via_kg llamado sin KnowledgeGraph")
@@ -952,10 +864,7 @@ class LightRAGRetriever(BaseRetriever):
         if use_global and high_level:
             resolved_relations = self._resolve_relations_for_context(high_level)
 
-        # Divergencia #10: canal de chunk keywords (solo paths que usan
-        # high-level: global/hybrid). Resuelve query.high_level contra la
-        # Chunk Keywords VDB. Si el flag esta off o la VDB no existe,
-        # resolved_chunk_matches queda vacio y no contribuye al scoring.
+        # divergencia #10
         resolved_chunk_matches: List[Tuple[str, float]] = []
         chunk_keywords_distance_filtered = 0
         if (
@@ -1001,7 +910,7 @@ class LightRAGRetriever(BaseRetriever):
                 for doc_id in rel_doc_ids:
                     doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + rel_score
 
-        # Divergencia #10: contribucion del canal de chunk keywords
+        # divergencia #10
         if resolved_chunk_matches:
             for rank, (doc_id, distance) in enumerate(resolved_chunk_matches):
                 similarity = max(0.0, 1.0 - distance / 2.0)
@@ -1183,7 +1092,6 @@ class LightRAGRetriever(BaseRetriever):
         if not self._extractor:
             return
 
-        # Filtrar queries ya cacheadas (acceso al cache bajo lock).
         with self._cache_lock:
             uncached = [q for q in queries if q not in self._query_keywords_cache]
         if not uncached:

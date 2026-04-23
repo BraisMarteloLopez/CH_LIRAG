@@ -1,8 +1,4 @@
-"""
-Retrieval executor: ejecuta retrieval + reranking opcional.
-
-Extraido de evaluator.py para reducir su tamano (Fase B descomposicion).
-"""
+"""Retrieval executor: retrieval + reranking opcional + formateo de contexto."""
 
 from __future__ import annotations
 
@@ -76,7 +72,6 @@ class RetrievalExecutor:
             retrieval_k = self._config.retrieval.retrieval_k
             configured_strategy = self._config.retrieval.strategy
 
-            # Seleccionar metodo de retrieval
             retriever = self._retriever  # narrowed: not None (guarded above)
             def _do_retrieve(top_k: int):
                 if query_vector is not None:
@@ -116,19 +111,16 @@ class RetrievalExecutor:
                 full_result = _do_retrieve(fetch_k)
                 _check_strategy(full_result)
 
-                # Metricas de retrieval: top RETRIEVAL_K del retriever (pre-rerank)
                 metric_doc_ids = full_result.doc_ids[:retrieval_k]
                 metric_contents = full_result.contents[:retrieval_k]
                 metric_scores = full_result.scores[:retrieval_k]
 
-                # Generacion: reranker reordena los candidatos completos
                 reranked = self._reranker.rerank(
                     query=query_text,
                     retrieval_result=full_result,
                     top_n=self._config.reranker.top_n,
                 )
 
-                # Detectar fallback silencioso del reranker.
                 reranked_ok = reranked.metadata.get("reranked", True)
                 if not reranked_ok:
                     self._rerank_failures += 1
@@ -146,20 +138,15 @@ class RetrievalExecutor:
                     retrieval_time_ms=reranked.retrieval_time_ms,
                     generation_doc_ids=reranked.doc_ids,
                     generation_contents=reranked.contents,
-                    # Almacenar IDs de candidatos pre-rerank para
-                    # trazabilidad post-hoc (~3KB/query).
                     pre_rerank_candidate_ids=full_result.doc_ids,
                     retrieval_metadata=full_result.metadata,
                 ), reranked_ok
             else:
-                # Sin reranker: retrieval_k docs para metricas.
                 result = _do_retrieve(retrieval_k)
                 _check_strategy(result)
 
-                # LIGHT_RAG: separar docs de generacion (top-N por KG score)
-                # de docs de metricas (todos retrieval_k). Analogo a
-                # reranker.top_n para SV: el KG scoring ya rankeo los chunks,
-                # seleccionamos los top-N para el LLM generador.
+                # LIGHT_RAG: gen_top_n es el analogo de reranker.top_n
+                # (separa docs para LLM vs docs para metricas).
                 gen_top_n = self._config.retrieval.lightrag_generation_top_n
                 if (
                     gen_top_n > 0

@@ -89,10 +89,7 @@ class ChromaVectorStore:
         self.embedding_model = embedding_model
         self.batch_size = config.get("EMBEDDING_BATCH_SIZE", 0)
 
-        # HNSW num_threads=1 reduce no-determinismo del grafo (elimina
-        # variabilidad de threading). ChromaDB 0.5-0.6 no expone
-        # hnsw:random_seed, por lo que la asignacion de niveles HNSW sigue
-        # siendo no-determinista entre runs (ver CLAUDE.md deuda #3).
+        # num_threads=1 reduce varianza de threading (ver CLAUDE.md dt-3).
         self._hnsw_num_threads = config.get("HNSW_NUM_THREADS", 1)
         self._hnsw_space = config.get("HNSW_SPACE")  # "cosine", "l2", or None (default l2)
         self._collection_metadata = {
@@ -261,22 +258,16 @@ class ChromaVectorStore:
             return {}
 
     def delete_all_documents(self) -> None:
-        """
-        Limpia la coleccion eliminandola y recreandola.
+        """Borra la coleccion y recrea el wrapper.
 
-        FIX: La version anterior solo reasignaba el wrapper Python,
-        sin eliminar los datos de la coleccion subyacente en Chroma.
-        Ahora se usa el cliente nativo para delete + recreate.
+        El `finally` recrea siempre para no dejar `_store` apuntando a una
+        coleccion inexistente si el delete fallo.
         """
         try:
             self._client.delete_collection(self.collection_name)
         except Exception as e:
             logger.error(f"Error eliminando coleccion: {e}")
         finally:
-            # Siempre recrear wrapper — si delete fallo, get_or_create
-            # internamente devuelve la coleccion existente; si tuvo exito,
-            # crea una nueva. Esto evita que _store apunte a una coleccion
-            # borrada si la recreacion fallaba en el bloque try anterior.
             chroma_kwargs = {
                 "client": self._client,
                 "collection_name": self.collection_name,

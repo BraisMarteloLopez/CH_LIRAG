@@ -1,8 +1,4 @@
-"""
-Embedding service: batch embedding de queries y context window detection.
-
-Extraido de evaluator.py para reducir su tamano (Fase B descomposicion).
-"""
+"""Embedding service: batch embedding de queries y deteccion del context window."""
 
 from __future__ import annotations
 
@@ -69,7 +65,6 @@ def resolve_max_context_chars(config: MTEBConfig) -> int:
     """
     fallback = 4000
 
-    # 1. Override manual
     if config.generation_max_context_chars > 0:
         logger.info(
             f"  Context chars: {config.generation_max_context_chars} "
@@ -77,7 +72,6 @@ def resolve_max_context_chars(config: MTEBConfig) -> int:
         )
         return config.generation_max_context_chars
 
-    # 2. Derivar del modelo
     max_model_len = query_model_context_window(config.infra.llm_base_url)
     if max_model_len is not None:
         available_tokens = max_model_len - _OVERHEAD_TOKENS
@@ -96,7 +90,6 @@ def resolve_max_context_chars(config: MTEBConfig) -> int:
         )
         return derived_chars
 
-    # 3. Fallback
     logger.info(f"  Context chars: {fallback} (fallback por defecto)")
     return fallback
 
@@ -137,11 +130,9 @@ def batch_embed_queries(
             "input": batch,
             "model": model_name,
         }
-        # Modelos asimetricos requieren input_type
         if model_type == "asymmetric":
             payload["input_type"] = "query"
 
-        # Retry por batch antes de abandonar todo el pre-embed.
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
@@ -153,11 +144,11 @@ def batch_embed_queries(
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
 
-                # Ordenar por index (la API puede devolver desordenado)
+                # La API puede devolver desordenado; reordenar por index.
                 items = sorted(data["data"], key=lambda x: x["index"])
                 for item in items:
                     all_vectors.append(item["embedding"])
-                break  # batch OK
+                break
 
             except Exception as e:
                 if attempt < max_retries:
@@ -174,10 +165,8 @@ def batch_embed_queries(
                         f"tras {max_retries + 1} intentos: {e}. "
                         "Descartando todos los vectores (pre-embed incompleto)."
                     )
-                    # Retornar los vectores parciales acumulados hasta aqui.
-                    # El caller detecta len(vectors) < n_queries y hace
-                    # fallback a retrieval sin pre-embed para TODAS las queries,
-                    # lo cual es consistente (no mezcla queries con/sin vector).
+                    # Parcial: caller detecta len<n y cae a retrieval sin pre-embed
+                    # para TODAS las queries (no mezcla queries con/sin vector).
                     return all_vectors
 
         batch_end = batch_start + len(batch)
