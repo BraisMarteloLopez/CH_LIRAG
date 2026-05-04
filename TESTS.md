@@ -71,13 +71,17 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | Test | Produccion | Tests | Que cubre |
 |------|-----------|-------|-----------|
 | test_metrics_reference_based.py | shared/metrics.py | 23 | normalize_text, f1_score, exact_match, accuracy, faithfulness context pass-through, _extract_score_fallback regex |
-| test_semantic_similarity.py | shared/metrics.py | 9 | semantic_similarity coseno, vector cero, empty input, numpy guard |
-| test_judge_fallback_tracker.py | shared/metrics.py, sandbox_mteb/evaluator.py | 19 | _JudgeFallbackTracker, get_judge_fallback_stats, max_judge_default_return_rate, _validate_judge_fallback_threshold |
-| test_llm.py | shared/llm.py | 16 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
-| test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | ~43 | CRUD, persistence, stats, eviction, co-occurrence, neighbors |
-| test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 36 | parsing, validation, batch, stats |
+| test_semantic_similarity.py | shared/metrics.py | 7 | semantic_similarity coseno, vector cero, empty input, numpy guard |
+| test_judge_fallback_tracker.py | shared/metrics.py, sandbox_mteb/evaluator.py | 15 | _JudgeFallbackTracker, get_judge_fallback_stats, max_judge_default_return_rate, _validate_judge_fallback_threshold |
+| test_llm.py | shared/llm.py | 19 | LLMMetrics, thinking tags, invoke_async, load_embedding_model, retry |
+| test_citation_parser.py | shared/citation_parser.py | 13 | parse_citation_refs: rangos validos/out_of_range, malformed, duplicados, distinct, n_valid_chunks=0 |
+| test_operational_tracker.py | shared/operational_tracker.py | 5 | record_operational_event, get_operational_stats, reset, contadores per-evento |
+| test_get_retriever_factory.py | shared/retrieval/__init__.py | 3 | get_retriever: SIMPLE_VECTOR, LIGHT_RAG, estrategia invalida |
+| test_knowledge_graph.py | shared/retrieval/lightrag/knowledge_graph.py | 53 | CRUD, persistence, stats, eviction, co-occurrence, neighbors |
+| test_triplet_extractor.py | shared/retrieval/lightrag/triplet_extractor.py | 44 | parsing, validation, batch, stats |
 | test_gleaning.py | shared/retrieval/lightrag/triplet_extractor.py | 6 | glean_from_doc_async |
-| test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | ~30 | _retrieve_via_kg, reference-count scoring, fingerprint, VDBs, modes, fallbacks |
+| test_lightrag_fusion.py | shared/retrieval/lightrag/retriever.py | 34 | _retrieve_via_kg, reference-count scoring, fingerprint, VDBs, modes, fallbacks |
+| test_chunk_keywords_retrieval.py | shared/retrieval/lightrag/retriever.py | 12 | Canal div #10 en _retrieve_via_kg: gating por modo, threshold de distance, dedup, metadata.kg_chunk_keyword_matches |
 | test_simple_vector_retriever.py | shared/retrieval/core.py | 10 | retrieve, retrieve_by_vector, index_documents, clear_index, get_documents_by_ids |
 | test_reranker.py | shared/retrieval/reranker.py | 9 | empty passthrough, ordering, top_n, vector_scores, identical scores, missing relevance_score, error fallback, metadata |
 | test_report.py | shared/report.py | 10 | to_json, export, LIGHT_RAG serialization |
@@ -85,26 +89,26 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_vector_store.py | shared/vector_store.py | 13 | add_documents batching, search, get_by_ids chunking, delete+recreate, error paths |
 | test_config_validation.py | shared/config_base.py | 11 | InfraConfig.validate(), RerankerConfig.validate() error paths |
 | test_retrieval_metrics_formulas.py | shared/types.py | 12 | NDCG, MRR, Hit@K, Recall@K, generation_hit/recall con valores exactos |
-| test_dtm17_generation_retrieval_metrics.py | shared/types.py | 10 | generation_recall/hit, to_dict serialization |
+| test_dtm17_generation_retrieval_metrics.py | shared/types.py | 12 | generation_recall/hit, to_dict serialization |
 
 ### sandbox_mteb/ (pipeline)
 
 | Test | Produccion | Tests | Que cubre |
 |------|-----------|-------|-----------|
-| test_evaluator.py | sandbox_mteb/evaluator.py | 9 | _init_components, _cleanup, _assemble_results, run validation |
+| test_evaluator.py | sandbox_mteb/evaluator.py | 15 | _init_components, _cleanup, _assemble_results, run validation |
 | test_dtm4_build_run_aggregation.py | sandbox_mteb/evaluator.py → result_builder.py | 18 | _build_run aggregation, config_snapshot |
 | test_embedding_service.py | sandbox_mteb/embedding_service.py | 8 | batch_embed_queries, resolve_max_context_chars |
 | test_format_context.py | sandbox_mteb/retrieval_executor.py | 9 | format_context truncation |
-| test_structured_context.py | sandbox_mteb/retrieval_executor.py | 6 | format_structured_context |
+| test_structured_context.py | sandbox_mteb/retrieval_executor.py | 25 | format_structured_context |
 | test_dt5_pre_rerank_traceability.py | sandbox_mteb/retrieval_executor.py | 3 | pre_rerank_candidate_ids |
 | test_dt7_05_06_rerank_status.py | sandbox_mteb/retrieval_executor.py | 2 | rerank success/failure |
 | test_dt7_07_no_reranker.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 1 | sin reranker path |
-| test_dtm38_strategy_guardrail.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 8 | strategy mismatch, config_snapshot |
+| test_dtm38_strategy_guardrail.py | sandbox_mteb/retrieval_executor.py, result_builder.py | 10 | strategy mismatch, config_snapshot |
 | test_dtm5_12_13_secondary_metric_errors.py | sandbox_mteb/generation_executor.py | 3 | secondary metric errors |
-| test_generation_executor.py | sandbox_mteb/generation_executor.py | 8 | generation async, metrics HYBRID, structured context, batch |
-| test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 13 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
-| test_run_cli.py | sandbox_mteb/run.py | 9 | parse_args, setup_logging, main (dry-run, full, errors) |
-| test_loader.py | sandbox_mteb/loader.py | 14 | check_connection, _populate_from_dataframes (queries/corpus/qrels, None/empty, answer_type inference, comparison auto-conversion, question_type metadata), load_dataset error |
+| test_generation_executor.py | sandbox_mteb/generation_executor.py | 20 | generation async, metrics HYBRID, structured context, batch |
+| test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 23 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
+| test_run_cli.py | sandbox_mteb/run.py | 10 | parse_args, setup_logging, main (dry-run, full, errors) |
+| test_loader.py | sandbox_mteb/loader.py | 12 | check_connection, _populate_from_dataframes (queries/corpus/qrels, None/empty, answer_type inference, comparison auto-conversion, question_type metadata), load_dataset error |
 
 ### E2E
 
@@ -117,6 +121,8 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | Modulo | Riesgo |
 |--------|--------|
 | shared/structured_logging.py | Bajo — utilidad de logging |
+| shared/constants.py | Bajo — constantes invariantes (CHARS_PER_TOKEN, batch sizes); cualquier cambio rompe tests downstream que asumen valores |
+| sandbox_mteb/config.py | Medio — `MTEBConfig.validate()` no tiene tests dedicados (sub-configs `InfraConfig`/`RerankerConfig` cubiertas via `test_config_validation.py`); regresiones en validacion de `judge_fallback_threshold`, `kg_synthesis_max_chars`, etc., quedan ciegas hasta el run |
 
 ## Gaps de cobertura conocidos
 
