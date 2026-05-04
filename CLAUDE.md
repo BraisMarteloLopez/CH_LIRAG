@@ -50,7 +50,7 @@ Ver [`README.md`](README.md) para setup, ejecucion y tests.
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
 - **Tests**: mocks siempre a nivel de funcion, nunca modulos enteros. Ver seccion "Test coverage"
 - **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
-- **Idioma**: codigo y comentarios en ingles/espanol mezclado (historico). Docstrings y variables en ingles
+- **Idioma**: identificadores (clases, funciones, variables) en ingles. Comentarios y docstrings mezclados ES/EN, aceptado como historico
 
 ## Estrategia LIGHT_RAG — como funciona
 
