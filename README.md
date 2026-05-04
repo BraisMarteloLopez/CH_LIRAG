@@ -20,7 +20,10 @@ shared/                          # Libreria core (motor)
   metrics.py                     # F1, ExactMatch, Accuracy, Faithfulness (LLM-judge)
   llm.py                         # AsyncLLMService (NIM client, async/sync bridge)
   config_base.py                 # InfraConfig, RerankerConfig, helpers _env_*
+  constants.py                   # Constantes invariantes del motor (CHARS_PER_TOKEN, batch sizes)
   vector_store.py                # ChromaVectorStore (wrapper ChromaDB)
+  citation_parser.py             # Parser [ref:N] para observable de citas (div #7)
+  operational_tracker.py         # Contadores de operational_stats (degradaciones silenciosas)
   report.py                      # RunExporter: JSON
   structured_logging.py          # Logging JSONL estructurado
   retrieval/
