@@ -50,7 +50,7 @@ Ver [`README.md`](README.md) para setup, ejecucion y tests.
 - **Enum en core.py**: `RetrievalStrategy` define las estrategias validas. `VALID_STRATEGIES` en `sandbox_mteb/config.py` debe coincidir
 - **Tests**: mocks siempre a nivel de funcion, nunca modulos enteros. Ver seccion "Test coverage"
 - **Logging**: JSONL estructurado via `shared/structured_logging.py`. Bare excepts tienen `logger.debug(...)` — no hay excepts silenciosos
-- **Idioma**: codigo y comentarios en ingles/espanol mezclado (historico). Docstrings y variables en ingles
+- **Idioma**: identificadores (clases, funciones, variables) en ingles. Comentarios y docstrings mezclados ES/EN, aceptado como historico
 
 ## Estrategia LIGHT_RAG — como funciona
 
@@ -107,6 +107,7 @@ IDs (`dt-N`) son navegables desde codigo: `# ver deuda #5` resuelve a `<a id="dt
 | <a id="dt-12"></a>12 | Tests acoplados a mensajes de error de `AsyncLLMService` | **BAJO** | Tests en `test_llm.py` usan regex laxa sobre `RuntimeError` porque no hay excepciones custom. Si cambia el texto, los tests fallan por regex, no por comportamiento | Refactor de excepciones en el proximo PR funcional a `shared/llm.py`. Sincronizar regex al tocar mensajes |
 | <a id="dt-17"></a>17 | Parametros fijos del canal de chunk keywords ([div #10](#div-10)) | **BAJO** | 3 parametros hardcoded en `triplet_extractor.py`/`retriever.py`: `MAX_CHUNK_KEYWORDS_PER_DOC=10`, `MIN/MAX_CHUNK_KEYWORD_LEN=2/80`, `_CHUNK_KEYWORDS_VDB_MAX_DISTANCE=0.8`. Solo `KG_CHUNK_KEYWORDS_ENABLED`/`_TOP_K` expuestos | Observables instrumentados: `chunk_keywords_{rejected_len,dropped_by_cap}` y `docs_chunk_keywords_capped` en stats del extractor; `kg_chunk_keywords_distance_filtered` per-query en `retrieval_metadata`. Thresholds para exponer al `.env`: `rejected_len / total_chunk_keywords > 5%`, `docs_chunk_keywords_capped / docs_with_keywords > 5%`, o mediana de `distance_filtered` per-query > 20% del total inspeccionado |
 | <a id="dt-18"></a>18 | Observable de citaciones [#7](#div-7) acoplado al prompt de synthesis | **BAJO** | Parser usa regex `\[ref:(\d+)\]` alineado con `KG_SYNTHESIS_SYSTEM_PROMPT`. Si alguien cambia formato (p.ej. `(ref N)` o `[ref:3,4,5]`), los 14 campos dejan de medir lo que dicen. Acoplamiento semantico, sin test automatico | Al tocar `KG_SYNTHESIS_SYSTEM_PROMPT`, revisar parser y actualizar regex `_VALID_RE`/`_CANDIDATE_RE` en sync |
+| <a id="dt-19"></a>19 | Modulos con cohesion media >500 lineas | **BAJO** | `retriever.py` (1224, KG build + 3 VDBs + retrieval orquestacion), `metrics.py` (985, text + judge tracker + embedding), `generation_executor.py` (678, `_KGSynthesisTracker` mezclado con `GenerationExecutor` — paralelo a `operational_tracker.py` que ya esta extraido). Layering correcto, sin violaciones; el tamano dificulta navegacion pero no introduce bugs | Sin accion inmediata. Disparadores que justificarian split: (a) dificultad demostrada para testear un path, (b) P3 embedibilidad pide reuso parcial del modulo, (c) refactor por requisito externo. Hacer split ahora es sobre-ingenieria sin disparador |
 
 ## Observabilidad de runs
 
@@ -160,16 +161,23 @@ jq '.config_snapshot._runtime.operational_stats' <run_export.json>
 
 ## Bare excepts tolerados (con criterio)
 
-Estos `except Exception as e:` logean el error y devuelven un fallback en vez de re-lanzar. El criterio para tolerarlos: estan en wrappers de infraestructura donde el run debe continuar ante errores operacionales puntuales (ChromaDB transitorio, NIM latencia), cada uno contabiliza el evento en stats (`kg_synthesis_stats`, `operational_stats`, `rerank_failures`) o loguea a `logger.warning`/`debug` para trazabilidad post-mortem, y el fallback es observable desde el JSON del run. Si un bare except no cumple las tres condiciones, es candidato a reclasificar:
+Estos `except Exception as e:` logean el error y devuelven un fallback en vez de re-lanzar. El criterio para tolerarlos: estan en wrappers de infraestructura donde el run debe continuar ante errores operacionales puntuales (ChromaDB transitorio, NIM latencia), cada uno **contabiliza el evento en stats** (`kg_synthesis_stats`, `operational_stats`, `rerank_failures`) y el fallback es observable desde el JSON del run. Si un bare except no cumple esas condiciones, es candidato a reclasificar.
+
+La tabla lista los sites con **contador observable**. Se referencian por funcion en lugar de numero de linea para evitar drift en cada refactor (los numeros driftan en cuanto se mueve codigo; los nombres de funcion son estables).
 
 | Ubicacion | Contexto | Contador |
 |---|---|---|
-| `reranker.py:147` | Reranking error — retorna fallback sin rerank | `rerank_failures` |
-| `vector_store.py:126, 142, 179, 232, 247` | Operaciones ChromaDB — retorna fallback (lista vacia, dict vacio, o continua cleanup) | — (log-only) |
-| `generation_executor.py` (`_synthesize_kg_context_async`) | `asyncio.TimeoutError` + `Exception` genericos durante synthesis KG — fallback al contexto estructurado | `kg_synthesis_stats.errors/timeouts` |
-| `retriever.py:204` (KG build), `retriever.py:404` (description synthesis), `retriever.py:703` (chunk keywords VDB), `retriever.py:930` (neighbor lookup) | Degradaciones del KG en indexacion/retrieval | `operational_stats.*` |
-| `triplet_extractor.py:397` (gleaning), `triplet_extractor.py:732` (keywords parse) | Extraccion LLM degradada | `operational_stats.*` |
-| `generation_executor.py:456` (generation) | Fallo LLM en generacion final | `operational_stats.generation_error` |
+| `reranker.py::CrossEncoderReranker.rerank` | Reranking error — retorna fallback sin rerank | `rerank_failures` |
+| `generation_executor.py::_synthesize_kg_context_async` | `asyncio.TimeoutError` + `Exception` genericos durante synthesis KG — fallback al contexto estructurado | `kg_synthesis_stats.errors/timeouts` |
+| `retriever.py::LightRAGRetriever.index_documents` (KG build) | Fallo construyendo el KG — fallback a vector puro | `operational_stats.retrieval_error` |
+| `retriever.py` synthesis de descripciones multi-doc | LLM merge de descripciones fallo — concatenacion plana | `operational_stats.description_synthesis_error` |
+| `retriever.py` query a Chunk Keywords VDB (div #10) | Keyword omitido en el canal | `operational_stats.chunk_keywords_vdb_error` |
+| `retriever.py` enrichment 1-hop (div #9) | Entidad sin vecinos | `operational_stats.neighbor_lookup_failure` |
+| `triplet_extractor.py` gleaning round | Sin tripletas extra | `operational_stats.gleaning_error` |
+| `triplet_extractor.py` parse JSON keywords | Keywords vacias para el doc | `operational_stats.keywords_parse_failure` |
+| `generation_executor.py` generacion LLM final | Respuesta con `[ERROR: ...]` | `operational_stats.generation_error` |
+
+**Bare excepts log-only** (sin contador, no listados): `vector_store.py` (5 sites de operaciones ChromaDB), `metrics.py` (LLM-judge fallback ya queda visible via `judge_fallback_stats.default_returns`), `core.py::SimpleVectorRetriever` (3 sites), `loader.py`, `evaluator.py` (cleanup, init reranker), `retrieval_executor.py`, `embedding_service.py` (retry + GET /v1/models), cleanup de VDBs en `retriever.py`, fallos de metricas primaria/secundaria en `generation_executor.py`. Todos cumplen log + fallback + run continua, pero degradan localmente sin senalizar al `config_snapshot._runtime`. Si en un debug post-run aparece comportamiento inesperado y nada en `operational_stats` lo explica, revisar logs de estos sites.
 
 ## Test coverage
 

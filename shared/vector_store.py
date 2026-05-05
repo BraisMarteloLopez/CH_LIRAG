@@ -3,9 +3,8 @@ Wrapper ChromaDB para evaluacion RAG.
 
 Contrato externo (ChromaDB PersistentClient, >=0.5):
   - Persistencia en `VECTOR_DB_DIR` (default `.chroma_db/`).
-  - Colecciones por run con prefijo `eval_<run_id>`; deuda
-    [#1](../CLAUDE.md#dt-1) — colecciones huerfanas si el proceso
-    muere antes de `_cleanup()`.
+  - Colecciones por run con prefijo `eval_<run_id>`; pueden quedar
+    huerfanas si el proceso muere antes de `_cleanup()`.
   - Espacios HNSW soportados: `cosine|l2|ip` (`HNSW_SPACE` en metadata
     de la coleccion). Default `cosine`.
   - No determinismo: ChromaDB 0.5-0.6 no expone `hnsw:random_seed`
