@@ -228,7 +228,7 @@ Tres condiciones cumplidas simultaneamente:
 2. **Ejecucion estable**: `kg_synthesis_stats.fallback_rate = 2.86%` (< 10% umbral), `judge.default_return_rate = 0%`, `retrieval_metadata.kg_fallback = null` en 35/35 queries, `queries_failed = 0`.
 3. **Funcionalidades extra documentadas**: cache de KG, fallbacks ante errores LLM/igraph, instrumentacion de timing (queue/LLM split) — adaptaciones operativas, no sustitutos de piezas del paper.
 
-**Config validada** para runs LIGHT_RAG en infra actual (defaults en `sandbox_mteb/env.example`, marcados `[PRE-P0 VALIDATED]`):
+**Config recomendada** para runs LIGHT_RAG en infra actual (defaults en `sandbox_mteb/env.example`):
 - `NIM_MAX_CONCURRENT_REQUESTS=32`
 - `KG_SYNTHESIS_MAX_CHARS=50000`
 - `KG_SYNTHESIS_TIMEOUT_S=180`
@@ -248,6 +248,14 @@ Tres condiciones cumplidas simultaneamente:
 **Criterio de exito**: delta `LIGHT_RAG > SIMPLE_VECTOR` en la metrica principal del benchmark, distinguible del ruido (seed×LLM), con signo consistente con el paper.
 
 **Criterio de fallo**: deltas dentro del ruido o invertidos → debug (¿synthesis llega al generador? ¿KG se construye? ¿indexacion falla silenciosamente?), no avance a P2/P3.
+
+**Runs en `./results/`** (estado factual, sin interpretacion):
+
+| Run ID | Estrategia | Archivos |
+|---|---|---|
+| `mteb_hotpotqa_20260507_095501` | `SIMPLE_VECTOR` | `results/mteb_hotpotqa_20260507_095501.json`, `results/console_log_simple_vector_20260507_095501.txt` |
+
+Pendiente: run gemelo `LIGHT_RAG` sobre la misma config para comparativa A/B. **No interpretar metricas en aislamiento** — cualquier numero de un run individual sin su contraparte es senal incompleta.
 
 ### P2 — Experimento 3: catalogo especializado · futuro, contingente a P0
 
