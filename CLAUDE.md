@@ -237,25 +237,45 @@ Tres condiciones cumplidas simultaneamente:
 
 ** Matiz sobre #10 (piggyback)**: la calidad del canal high-level **NO** esta validada empiricamente. Es **bloqueante antes de P2**, no de P0.
 
-### P0 — Revision Calidad: estrategia light_rag > simple_vector  · FASE ACTUAL
+### P0 — Argumentar valor de LIGHT_RAG vs SIMPLE_VECTOR en dominios especializados · FASE ACTUAL
 
-**Objetivo**: demostrar que sobre al menos un benchmark donde una run reporta `LIGHT_RAG > baseline vector`.
+**Objetivo (reframeado 2026-05-10)**: construir un **argumento razonado con evidencia empirica** de que LIGHT_RAG aporta valor frente a SIMPLE_VECTOR en escenarios de **dominio especifico y temas complejos**. NO se exige ganar a SIMPLE_VECTOR en HotpotQA (escenario saturado para vector); SI se exige demostrar que el motor opera completo y que el diferencial observable (chunks distintos, canales KG activos, citations sanas) sostiene la extrapolacion a P2.
 
-**Estado**: desbloqueado tras cierre de Pre-P0. Arquitectura completa y ejecucion estable; trabajo pendiente es seleccionar benchmark y correr la comparativa.
+**Por que el reframing**: la version anterior pedia "delta empirico LIGHT > SIMPLE en al menos un benchmark". En HotpotQA-DEV el vector satura el retrieval (Hit@5=1.0 con cosine puro sobre embedding moderno), por lo que LIGHT pierde por sustituir vector → KG-mediated, no por mala calidad del motor. La pregunta empirica directa no es respondible aqui; la deductiva si.
 
-**Trabajo necesario**: comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid con synthesis on.
+**Caveat arquitectonico (no documentado antes)**: el reranker esta **gated off para LIGHT_RAG** en `sandbox_mteb/retrieval_executor.py:101-106` con la justificacion "Paper LightRAG no usa reranker — el cross-encoder single-hop penalizaria los docs multi-hop que aporta el KG". Implicacion: las comparaciones SIMPLE vs LIGHT son **asimetricas** — SIMPLE tiene reranker, LIGHT no. Esta asimetria infla deltas a favor de SIMPLE en escenarios donde el vector satura.
 
-**Criterio de exito**: delta `LIGHT_RAG > SIMPLE_VECTOR` en la metrica principal del benchmark, distinguible del ruido (seed×LLM), con signo consistente con el paper.
+**Trabajo necesario**: comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid con synthesis on, con la salud operativa del motor LIGHT como prerequisito.
 
-**Criterio de fallo**: deltas dentro del ruido o invertidos → debug (¿synthesis llega al generador? ¿KG se construye? ¿indexacion falla silenciosamente?), no avance a P2/P3.
+**Criterio de cierre P0**:
+1. Operacional: run LIGHT_RAG con `kg_synthesis_stats.fallback_rate < 10%`, `judge_fallback_stats.default_return_rate < 2%`, `operational_stats` todos 0 o cuasi-0.
+2. Estructural: `graph_connected_components / num_docs < 0.5` (KG razonablemente conectado, no docs-isla).
+3. Argumental: identificar señal de diferenciacion (Compl. Recall@K alto en LIGHT, queries especificas donde LIGHT mejora) que sostenga la extrapolacion a P2.
 
 **Runs en `./results/`** (estado factual, sin interpretacion):
 
-| Run ID | Estrategia | Archivos |
-|---|---|---|
-| `mteb_hotpotqa_20260507_095501` | `SIMPLE_VECTOR` | `results/mteb_hotpotqa_20260507_095501.json`, `results/console_log_simple_vector_20260507_095501.txt` |
+| Run ID | Estrategia | Escala | Status |
+|---|---|---|---|
+| `mteb_hotpotqa_20260507_095501` | `SIMPLE_VECTOR` | DEV_MODE 25×400 | Preliminary diagnostic |
+| `mteb_hotpotqa_20260507_100145` | `LIGHT_RAG` | DEV_MODE 25×400 | Preliminary diagnostic (neighbors=0, gleaning=0) |
+| `mteb_hotpotqa_20260509_225913` | `LIGHT_RAG` | DEV_MODE 25×400 | Preliminary diagnostic (neighbors=5, gleaning=1, ~180 warnings empty-content, 4h25min) |
+| `mteb_hotpotqa_20260510_155134` | `SIMPLE_VECTOR` | DEV_MODE **200×4000** | Active baseline (escala nueva) |
+| `mteb_hotpotqa_2026MMDD_HHMMSS` | `LIGHT_RAG` | DEV_MODE **200×4000** | **PENDIENTE de upload a main** (config: batch=1, gleaning=1, ext_tokens=8192, neighbors=5) |
 
-Pendiente: run gemelo `LIGHT_RAG` sobre la misma config para comparativa A/B. **No interpretar metricas en aislamiento** — cualquier numero de un run individual sin su contraparte es senal incompleta.
+**Pendientes de analisis para la proxima sesion** (no hechos aun, requieren nueva sesion):
+1. **Salud operativa** del LIGHT@200×4000: verificar `kg_synthesis_stats`, `judge_fallback_stats`, `operational_stats`, y contar warnings `empty content after stripping reasoning tags` en el console log (esperado: muy inferior a los ~180 del run anterior).
+2. **Calidad estructural** del KG: `graph_connected_components` (mejora esperada vs 138 del run anterior), `kg_entities_with_neighbors > 0` per query.
+3. **A/B head-to-head** con SIMPLE@200×4000 sobre la misma escala (200 queries, 4000 docs): Hit@5, NDCG@5, F1, EM, Faithfulness, Compl. Recall@K.
+4. **Analisis per-query**: identificar el patron en queries donde LIGHT mejora vs SIMPLE (¿multi-hop? ¿entidades poco frecuentes? ¿temas que el embedding cosine no domina?).
+5. **Argumento deductivo** sobre P2: a partir de (1)-(4), construir el caso "en dominio especializado donde vector NO satura, los chunks que LIGHT trae diferenciados (`Compl. Recall@K`) serian los relevantes" — explicitar la extrapolacion y sus supuestos.
+6. **Limpieza de runs preliminares** (opcional, decision del usuario): los 3 runs `20260507_*` y `20260509_*` son diagnosticos del proceso de tuning; pueden eliminarse si se quieren limpiar historicos, o conservarse como referencia del progreso del motor. La instruccion previa "no historicos" aplica a referencias en codigo/config, no necesariamente a archivos en `./results/`.
+
+**Lecciones operativas confirmadas (aplican a runs futuros sobre nemotron-3-nano)**:
+- Thinking-mode burn: `KG_EXTRACTION_MAX_TOKENS=8192` + `KG_BATCH_DOCS_PER_CALL=1` reduce drasticamente los warnings de empty content vs los defaults (4096 + 5).
+- `KG_GLEANING_ROUNDS=1` con config limpia debe ser viable sin las catastrofes de tiempo del run `20260509_225913`.
+- Estimaciones de tiempo por claude_code para runs LIGHT_RAG con thinking-mode son poco fiables (error 13× registrado). El usuario debe asumir bandas amplias.
+
+**No interpretar metricas en aislamiento** — cualquier numero de un run individual sin su contraparte de escala matching es senal incompleta.
 
 ### P2 — Experimento 3: catalogo especializado · futuro, contingente a P0
 
