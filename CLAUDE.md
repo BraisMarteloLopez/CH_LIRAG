@@ -256,10 +256,7 @@ Tres condiciones cumplidas simultaneamente:
 
 | Run ID | Estrategia | Escala | Status |
 |---|---|---|---|
-| `mteb_hotpotqa_20260507_095501` | `SIMPLE_VECTOR` | DEV_MODE 25×400 | Preliminary diagnostic |
-| `mteb_hotpotqa_20260507_100145` | `LIGHT_RAG` | DEV_MODE 25×400 | Preliminary diagnostic (neighbors=0, gleaning=0) |
-| `mteb_hotpotqa_20260509_225913` | `LIGHT_RAG` | DEV_MODE 25×400 | Preliminary diagnostic (neighbors=5, gleaning=1, ~180 warnings empty-content, 4h25min) |
-| `mteb_hotpotqa_20260510_155134` | `SIMPLE_VECTOR` | DEV_MODE **200×4000** | Active baseline (escala nueva) |
+| `mteb_hotpotqa_20260510_155134` | `SIMPLE_VECTOR` | DEV_MODE **200×4000** | Active baseline |
 | `mteb_hotpotqa_2026MMDD_HHMMSS` | `LIGHT_RAG` | DEV_MODE **200×4000** | **PENDIENTE de upload a main** (config: batch=1, gleaning=1, ext_tokens=8192, neighbors=5) |
 
 **Pendientes de analisis para la proxima sesion** (no hechos aun, requieren nueva sesion):
@@ -268,7 +265,7 @@ Tres condiciones cumplidas simultaneamente:
 3. **A/B head-to-head** con SIMPLE@200×4000 sobre la misma escala (200 queries, 4000 docs): Hit@5, NDCG@5, F1, EM, Faithfulness, Compl. Recall@K.
 4. **Analisis per-query**: identificar el patron en queries donde LIGHT mejora vs SIMPLE (¿multi-hop? ¿entidades poco frecuentes? ¿temas que el embedding cosine no domina?).
 5. **Argumento deductivo** sobre P2: a partir de (1)-(4), construir el caso "en dominio especializado donde vector NO satura, los chunks que LIGHT trae diferenciados (`Compl. Recall@K`) serian los relevantes" — explicitar la extrapolacion y sus supuestos.
-6. **Limpieza de runs preliminares** (opcional, decision del usuario): los 3 runs `20260507_*` y `20260509_*` son diagnosticos del proceso de tuning; pueden eliminarse si se quieren limpiar historicos, o conservarse como referencia del progreso del motor. La instruccion previa "no historicos" aplica a referencias en codigo/config, no necesariamente a archivos en `./results/`.
+6. ~~Limpieza de runs preliminares~~ — hecho: los 4 archivos de los runs `20260507_*` (25×400 SIMPLE y LIGHT preliminares) se eliminaron del repo. Solo se conserva el active baseline `20260510_155134` y se espera el LIGHT@200×4000.
 
 **Lecciones operativas confirmadas (aplican a runs futuros sobre nemotron-3-nano)**:
 - Thinking-mode burn: `KG_EXTRACTION_MAX_TOKENS=8192` + `KG_BATCH_DOCS_PER_CALL=1` reduce drasticamente los warnings de empty content vs los defaults (4096 + 5).
