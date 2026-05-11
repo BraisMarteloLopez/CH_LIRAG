@@ -23,6 +23,7 @@ Flujo:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import threading
@@ -284,21 +285,48 @@ class LightRAGRetriever(BaseRetriever):
 
         # Gleaning: re-extraccion opcional para capturar entidades perdidas
         # (no re-extrae high_level_keywords; ver KG_GLEANING_ROUNDS en .env).
+        # Paraleliza via asyncio.gather respetando el semaforo del LLM service,
+        # igual que extract_batch_async. Las mutaciones del KG (add_triplets,
+        # add_entity_metadata) quedan fuera de las coroutines para preservar
+        # thread-safety del igraph subyacente.
         if self._kg_gleaning_rounds > 0 and self._extractor:
+            extractor = self._extractor
+            batch_sz = extractor._batch_size
+
+            async def _glean_one(
+                doc: Dict[str, Any],
+            ) -> Tuple[str, List[Any], List[KGRelation]]:
+                doc_id = doc.get("doc_id", "")
+                text = doc.get("content", "")
+                prev_entities = extraction_results.get(doc_id, ([], [], []))[0]
+                if not prev_entities:
+                    return doc_id, [], []
+                new_entities, new_relations = await extractor.glean_from_doc_async(
+                    doc_id, text, prev_entities,
+                )
+                return doc_id, new_entities, new_relations
+
+            async def _run_round() -> List[Any]:
+                collected: List[Any] = []
+                for start in range(0, len(documents), batch_sz):
+                    chunk = documents[start:start + batch_sz]
+                    tasks = [_glean_one(doc) for doc in chunk]
+                    chunk_results = await asyncio.gather(
+                        *tasks, return_exceptions=True
+                    )
+                    collected.extend(chunk_results)
+                return collected
+
             for gleaning_round in range(self._kg_gleaning_rounds):
                 t_glean = time.perf_counter()
                 gleaning_count = 0
-                for doc in documents:
-                    doc_id = doc.get("doc_id", "")
-                    text = doc.get("content", "")
-                    prev_entities = extraction_results.get(doc_id, ([], [], []))[0]
-                    if not prev_entities:
+                round_results = run_sync(_run_round())
+                for r in round_results:
+                    if isinstance(r, BaseException):
+                        logger.debug(f"Gleaning task exception: {r}")
+                        record_operational_event("gleaning_error")
                         continue
-                    new_entities, new_relations = run_sync(
-                        self._extractor.glean_from_doc_async(
-                            doc_id, text, prev_entities,
-                        )
-                    )
+                    doc_id, new_entities, new_relations = r
                     if new_relations:
                         added = self._kg.add_triplets(doc_id, new_relations)
                         total_triplets += added
