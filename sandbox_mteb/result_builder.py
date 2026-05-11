@@ -14,6 +14,7 @@ from shared.types import (
     QueryEvaluationResult,
     LoadedDataset,
 )
+from shared.llm import LLMPhaseStats, get_llm_invocation_stats
 from shared.metrics import JudgeMetricStats, get_judge_fallback_stats
 from shared.operational_tracker import OperationalStats, get_operational_stats
 from shared.retrieval import RetrievalStrategy
@@ -52,6 +53,7 @@ class RuntimeSnapshot(TypedDict):
     judge_fallback_stats: Dict[str, JudgeMetricStats]
     kg_synthesis_stats: KGSynthesisStats
     operational_stats: OperationalStats
+    llm_invocation_stats: Dict[str, LLMPhaseStats]
 
 
 def _serialize_config(config: MTEBConfig) -> Dict[str, Any]:
@@ -193,6 +195,10 @@ def build_run(
         # generation). Valores altos => degradacion del canal aunque el
         # run termine sin error fatal.
         "operational_stats": get_operational_stats(),
+        # llm_invocation_stats: timing per-fase de invocaciones LLM
+        # (queue_ms vs llm_ms). Permite diagnosticar saturacion: cola
+        # alta => subir concurrencia; llm_ms alto => modelo no escala.
+        "llm_invocation_stats": get_llm_invocation_stats(),
     }
     config_snapshot["_runtime"] = runtime_snapshot
 

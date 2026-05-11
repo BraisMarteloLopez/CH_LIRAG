@@ -32,8 +32,9 @@ import logging
 import re
 import threading
 import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Coroutine, Dict, Optional, TypedDict, TypeVar
+from typing import Any, Coroutine, Dict, List, Optional, TypedDict, TypeVar
 
 
 class InvokeTiming(TypedDict, total=False):
@@ -209,6 +210,116 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     "bound to a different event loop".
     """
     return _persistent_loop.run(coro)  # type: ignore[no-any-return]
+
+
+class LLMPhaseStats(TypedDict, total=False):
+    """Stats per fase del pipeline en `_LLMInvocationTracker.snapshot()`.
+
+    Los samples de timing pueden ser menos que `invocations` cuando una
+    invocacion cayo antes de poblar la clave correspondiente
+    (cancelacion mid-call, timeout antes de acquire, etc.).
+    """
+
+    invocations: int
+    n_queue_samples: int
+    p50_queue_ms: float
+    p95_queue_ms: float
+    max_queue_ms: float
+    n_llm_samples: int
+    p50_llm_ms: float
+    p95_llm_ms: float
+    max_llm_ms: float
+
+
+def _percentile(values: List[float], p: float) -> float:
+    """Percentile inclusivo indexado a la baja. Devuelve 0.0 si vacio."""
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    idx = min(len(sorted_vals) - 1, int(p * len(sorted_vals)))
+    return sorted_vals[idx]
+
+
+class _LLMInvocationTracker:
+    """Contador + timing per-fase de invocaciones a `AsyncLLMService.invoke_async`.
+
+    Diagnostica saturacion del pipeline a nivel LLM: por cada `phase`
+    (extraction, gleaning, kg_synthesis, generation, query_keywords,
+    judge, ...) acumula listas paralelas de `queue_ms` (espera al
+    semaforo) y `llm_ms` (llamada al servidor NIM tras acquire).
+
+    Permite separar cuello-de-botella de cola (`queue_ms` alto =>
+    concurrencia saturada, subir `nim_max_concurrent` o bajar paralelismo
+    del caller) de cuello-de-botella del modelo (`llm_ms` alto => NIM no
+    escala mas; bajar concurrencia o cambiar modelo).
+
+    `phase` se pasa via keyword en cada llamada. Llamadas que omiten el
+    keyword caen al bucket "unknown".
+
+    Thread-safe via lock; snapshot/reset son atomicos.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._invocations: Counter = Counter()
+        self._queue_ms: Dict[str, List[float]] = defaultdict(list)
+        self._llm_ms: Dict[str, List[float]] = defaultdict(list)
+
+    def record(
+        self,
+        phase: str,
+        queue_ms: Optional[float],
+        llm_ms: Optional[float],
+    ) -> None:
+        """Registra una invocacion. `None` en queue_ms/llm_ms indica que
+        la metrica no se llego a poblar (cancelacion, timeout, etc.)."""
+        with self._lock:
+            self._invocations[phase] += 1
+            if queue_ms is not None:
+                self._queue_ms[phase].append(queue_ms)
+            if llm_ms is not None:
+                self._llm_ms[phase].append(llm_ms)
+
+    def snapshot(self) -> Dict[str, LLMPhaseStats]:
+        """Snapshot ordenado alfabeticamente por phase para diff estable
+        entre runs (jq, dashboards). Solo aparecen fases con >= 1
+        invocacion registrada."""
+        with self._lock:
+            result: Dict[str, LLMPhaseStats] = {}
+            for phase in sorted(self._invocations.keys()):
+                queue = self._queue_ms.get(phase, [])
+                llm = self._llm_ms.get(phase, [])
+                result[phase] = LLMPhaseStats(
+                    invocations=self._invocations[phase],
+                    n_queue_samples=len(queue),
+                    p50_queue_ms=round(_percentile(queue, 0.50), 1),
+                    p95_queue_ms=round(_percentile(queue, 0.95), 1),
+                    max_queue_ms=round(max(queue) if queue else 0.0, 1),
+                    n_llm_samples=len(llm),
+                    p50_llm_ms=round(_percentile(llm, 0.50), 1),
+                    p95_llm_ms=round(_percentile(llm, 0.95), 1),
+                    max_llm_ms=round(max(llm) if llm else 0.0, 1),
+                )
+            return result
+
+    def reset(self) -> None:
+        with self._lock:
+            self._invocations.clear()
+            self._queue_ms.clear()
+            self._llm_ms.clear()
+
+
+_llm_invocation_tracker = _LLMInvocationTracker()
+
+
+def get_llm_invocation_stats() -> Dict[str, LLMPhaseStats]:
+    """Snapshot per-fase de invocaciones LLM. Ver `_LLMInvocationTracker`."""
+    return _llm_invocation_tracker.snapshot()
+
+
+def reset_llm_invocation_stats() -> None:
+    """Reset del tracker; llamar al inicio de cada run."""
+    _llm_invocation_tracker.reset()
 
 
 class AsyncLLMService:
@@ -389,6 +500,7 @@ class AsyncLLMService:
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
         timing_out: Optional[InvokeTiming] = None,
+        phase: str = "unknown",
     ) -> str:
         """API async principal.
 
@@ -396,14 +508,37 @@ class AsyncLLMService:
         `queue_wait_ms` y `llm_ms` del ultimo intento completado
         (ver `_invoke_with_retry` para semantica exacta bajo cancelaciones
         y reintentos).
+
+        `phase`: tag de la fase del pipeline (extraction, gleaning,
+        kg_synthesis, generation, query_keywords, judge, ...). Se
+        registra en `_llm_invocation_tracker` para diagnostico de
+        saturacion per-fase (cola del semaforo vs servidor NIM). Las
+        llamadas que omiten el keyword caen al bucket "unknown".
         """
         messages = []
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))
         messages.append(HumanMessage(content=prompt))
-        return await self._invoke_with_retry(
-            messages, max_tokens, timing_out=timing_out,
+
+        # Captura local del timing aun si el caller no pidio `timing_out`,
+        # para alimentar el tracker. Si paso su propio dict, lo usamos
+        # directamente (preservamos referencia y comportamiento previo).
+        effective_timing: InvokeTiming = (
+            timing_out if timing_out is not None else {}
         )
+        try:
+            return await self._invoke_with_retry(
+                messages, max_tokens, timing_out=effective_timing,
+            )
+        finally:
+            # Registrar siempre — en exito, fallo total, o cancelacion.
+            # `record()` acepta None en queue_ms/llm_ms cuando no se
+            # alcanzaron a poblar.
+            _llm_invocation_tracker.record(
+                phase=phase,
+                queue_ms=effective_timing.get("queue_wait_ms"),
+                llm_ms=effective_timing.get("llm_ms"),
+            )
 
     def invoke(
         self,

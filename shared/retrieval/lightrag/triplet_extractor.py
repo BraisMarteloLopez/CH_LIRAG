@@ -337,6 +337,7 @@ class TripletExtractor:
                 prompt,
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
                 max_tokens=self._extraction_max_tokens,
+                phase="extraction",
             )
             entities, relations, chunk_keywords = self._parse_extraction_json(raw, doc_id)
             self._stats["docs_success"] += 1
@@ -390,6 +391,7 @@ class TripletExtractor:
                 prompt,
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
                 max_tokens=self._extraction_max_tokens,
+                phase="gleaning",
             )
             entities, relations, _ = self._parse_extraction_json(raw, doc_id)
             return entities, relations
@@ -551,6 +553,7 @@ class TripletExtractor:
                 prompt,
                 system_prompt=TRIPLET_EXTRACTION_SYSTEM,
                 max_tokens=max_tokens,
+                phase="extraction",
             )
 
             batch_results = self._parse_batch_extraction_json(raw, non_empty)
@@ -748,6 +751,7 @@ class TripletExtractor:
                 prompt,
                 system_prompt=QUERY_KEYWORDS_SYSTEM,
                 max_tokens=self._keyword_max_tokens,
+                phase="query_keywords",
             )
             return self._parse_keywords_json(raw)
         except Exception as e:

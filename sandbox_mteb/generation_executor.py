@@ -466,7 +466,8 @@ class GenerationExecutor:
 
         try:
             response = await self._llm_service.invoke_async(
-                user_prompt, system_prompt=prompts["system"]
+                user_prompt, system_prompt=prompts["system"],
+                phase="generation",
             )
             return GenerationResult(
                 generated_response=str(response).strip(),
@@ -531,6 +532,7 @@ class GenerationExecutor:
                     user_prompt,
                     system_prompt=system_prompt,
                     timing_out=timing_out,
+                    phase="kg_synthesis",
                 ),
                 timeout=self._kg_synthesis_timeout_s,
             )

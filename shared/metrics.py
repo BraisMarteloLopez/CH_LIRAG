@@ -582,7 +582,8 @@ async def _invoke_judge_async(
     _judge_fallback_tracker.record_invocation(metric_type)
     try:
         response = await llm_judge.invoke_async(
-            user_prompt, system_prompt=system_prompt
+            user_prompt, system_prompt=system_prompt,
+            phase="judge",
         )
         response_text = str(response).strip()
         return _parse_judge_result(response_text, metric_type)
