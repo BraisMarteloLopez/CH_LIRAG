@@ -174,7 +174,9 @@ class _MockJudge:
         self.call_count += 1
         return '{"score": 0.8, "justification": "test"}'
 
-    async def invoke_async(self, user_prompt, system_prompt=None):
+    async def invoke_async(self, user_prompt, system_prompt=None, **kwargs):
+        # Acepta kwargs adicionales (phase, timing_out, max_tokens, ...)
+        # introducidos por la firma de AsyncLLMService.invoke_async.
         self.captured_prompt = user_prompt
         self.call_count += 1
         return '{"score": 0.8, "justification": "test"}'

@@ -36,6 +36,7 @@ from shared.metrics import (
     max_judge_default_return_rate,
     reset_judge_fallback_stats,
 )
+from shared.llm import reset_llm_invocation_stats
 from shared.operational_tracker import reset_operational_stats
 from shared.retrieval import get_retriever, RetrievalStrategy
 from shared.retrieval.core import BaseRetriever
@@ -109,6 +110,9 @@ class MTEBEvaluator:
         # Reset del tracker de eventos operacionales (operational_stats):
         # contadores de degradaciones silenciosas en 7 puntos del pipeline.
         reset_operational_stats()
+        # Reset del tracker de invocaciones LLM (llm_invocation_stats):
+        # timing per-fase queue_ms / llm_ms para diagnostico de saturacion.
+        reset_llm_invocation_stats()
 
         try:
             self._init_components()
