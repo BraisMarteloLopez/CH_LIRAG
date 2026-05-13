@@ -1,0 +1,287 @@
+=== MTEB Sandbox Config ===
+  Dataset:    hotpotqa
+  Embedding:  llama-embed-nemotron-8b (asymmetric)
+  Strategy:   LIGHT_RAG
+  Reranker:   ON
+  Generation: ON
+  DEV_MODE:   ON (200 queries, 800 corpus, gold docs garantizados)
+  KG mode:    hybrid
+  KG tokens:  extraction=8192, keyword=4096
+  KG batch:   1 docs/call
+  KG synth:   ON (max_chars=50000, timeout=600.0s)
+  WARNING:    LIGHT_RAG requiere ~1 llamada LLM por documento para construir el knowledge graph (concurrencia=8)
+  Shuffle:    seed=42
+  MinIO:      http://172.30.79.110:9000/lakehouse
+  Results:    data/results
+Console log: data/results/console_log_light_rag_20260513_091337.txt
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator: ============================================================
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator: MTEB EVALUATION RUN
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator:   Run ID:     mteb_hotpotqa_20260513_091337
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator:   Dataset:    hotpotqa
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator:   Embedding:  llama-embed-nemotron-8b
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator:   Strategy:   LIGHT_RAG
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator:   Mode:       DEV_MODE (200 queries, 800 corpus)
+2026-05-13 09:13:37,091 INFO sandbox_mteb.evaluator: ============================================================
+2026-05-13 09:13:37,091 INFO shared.structured_logging: [run_start] run_id=mteb_hotpotqa_20260513_091337, dataset=hotpotqa, embedding=llama-embed-nemotron-8b, strategy=LIGHT_RAG, dev_mode=True
+2026-05-13 09:13:37,091 INFO shared.llm: Cargando embedding NIM: llama-embed-nemotron-8b @ http://172.30.79.103:8000/v1 [tipo=asymmetric]
+2026-05-13 09:13:37,092 INFO sandbox_mteb.evaluator:   Embedding cargado: llama-embed-nemotron-8b
+2026-05-13 09:13:37,092 INFO shared.llm: AsyncLLMService: nvidia/Qwen3-32B-NVFP4 @ http://172.30.79.122:8000/v1 (max_concurrent=8)
+2026-05-13 09:13:37,092 WARNING sandbox_mteb.evaluator:   Reranker habilitado en .env pero estrategia es LIGHT_RAG; omitiendo inicializacion (LightRAG no usa reranker).
+2026-05-13 09:13:37,100 INFO sandbox_mteb.embedding_service:   LLM context window: 16384 tokens (modelo: nvidia/Qwen3-32B-NVFP4)
+2026-05-13 09:13:37,100 INFO sandbox_mteb.embedding_service:   Context chars: 61440 (derivado: 16384 tokens - 1024 overhead = 15360 tokens * 4.0 chars/token)
+2026-05-13 09:13:37,220 INFO sandbox_mteb.loader: MinIOLoader: http://172.30.79.110:9000/lakehouse/datasets/evaluation
+2026-05-13 09:13:40,832 INFO sandbox_mteb.loader: Dataset 'hotpotqa' cargado desde cache
+2026-05-13 09:13:40,832 INFO sandbox_mteb.evaluator:   DEV_MODE activo, ignorando EVAL_MAX_QUERIES/EVAL_MAX_CORPUS
+2026-05-13 09:13:40,851 INFO sandbox_mteb.evaluator:   Usando 200 queries, 800 docs
+2026-05-13 09:13:40,851 INFO shared.retrieval: Factory: creando retriever LIGHT_RAG
+2026-05-13 09:13:40,852 WARNING sandbox_mteb.evaluator:   LIGHT_RAG: indexacion hara ~800 llamadas LLM para extraccion de tripletas. Estimacion: ~3 min (800 docs, 8 concurrentes, ~2s/llamada). Tip: configura KG_CACHE_DIR para persistir el grafo entre runs.
+2026-05-13 09:13:40,852 INFO sandbox_mteb.evaluator:   Indexando 800 documentos...
+2026-05-13 09:13:40,852 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: indexando 800 documentos...
+2026-05-13 09:13:41,145 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 09:13:41,152 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 09:14:02,290 INFO shared.retrieval.core: Indexados 800 documentos en 'eval_mteb_hotpotqa_20260513_091337'
+2026-05-13 12:16:27,369 INFO shared.retrieval.lightrag.triplet_extractor: TripletExtractor: batch 800 docs en 10945076ms. 5698 entidades, 4969 relaciones, 3822 chunk keywords (797 docs con keywords). | 0 fallidos, 0 input vacio, 3 resultado vacio
+2026-05-13 13:46:50,367 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: gleaning round 1 en 5422756ms, +2747 tripletas
+2026-05-13 13:46:51,860 INFO shared.retrieval.lightrag.knowledge_graph: KnowledgeGraph: 7270 co-occurrence edges added, 168 connected components
+2026-05-13 13:46:51,861 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: 7270 co-occurrence edges creadas
+2026-05-13 13:46:51,863 INFO shared.retrieval.lightrag.knowledge_graph: KnowledgeGraph: descripciones mergeadas para 767 entidades (multi-doc)
+2026-05-13 13:46:51,863 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: 767 entidades con descripciones consolidadas
+2026-05-13 13:46:51,864 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:46:51,865 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:47:46,103 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: entity VDB construido en 54240ms (6750 entidades indexadas)
+2026-05-13 13:47:46,132 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:47:46,133 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:50:00,958 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: relationship VDB construido en 134827ms (14840 relaciones indexadas)
+2026-05-13 13:50:00,964 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:50:00,965 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:50:06,802 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: chunk keywords VDB construida en 5839ms (797 docs indexados)
+2026-05-13 13:50:06,802 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: KG construido en 16564511ms. 7716 tripletas de 800 docs.
+2026-05-13 13:50:06,810 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: indexacion 16585953ms. Graph: True. KG stats: {'num_entities': 6750, 'num_relations': 14503, 'num_docs_with_entities': 796, 'avg_entities_per_doc': 9.969849246231156, 'graph_connected_components': 168, 'entities_dropped': 0, 'entities_evicted': 0, 'triplets_dropped_by_cap': 0, 'max_entities': 100000, 'approx_memory_mb': 2.84, 'num_docs_with_keywords': 797, 'total_chunk_keywords': 3822}
+2026-05-13 13:50:06,810 INFO sandbox_mteb.evaluator:   Indexacion completada
+2026-05-13 13:50:06,810 INFO sandbox_mteb.embedding_service:   Pre-embedding 200 queries (batch=5, type=asymmetric)...
+2026-05-13 13:50:10,055 INFO sandbox_mteb.embedding_service:   Queries embebidas: 200/200
+2026-05-13 13:50:10,056 INFO sandbox_mteb.embedding_service:   Pre-embedding completado: 200 queries en 3.2s (62 queries/s)
+2026-05-13 13:50:10,056 INFO sandbox_mteb.evaluator:   Pre-extrayendo keywords de 200 queries (batch LLM)...
+2026-05-13 13:50:10,056 INFO shared.retrieval.lightrag.retriever: LightRAGRetriever: pre-extrayendo keywords de 200 queries...
+2026-05-13 13:53:05,408 INFO shared.retrieval.lightrag.triplet_extractor: TripletExtractor: query keywords batch 200 queries (200 unicas) en 175352ms
+2026-05-13 13:53:05,409 INFO sandbox_mteb.evaluator:   Keywords pre-extraidas en 175.4s
+2026-05-13 13:53:05,409 INFO sandbox_mteb.evaluator:   Chunk 1: queries 1-50/200 (50 queries)
+2026-05-13 13:53:05,448 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:53:05,579 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:53:05,669 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:53:05,719 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_1547: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_2054: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_478: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_3245: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_1119: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_3575: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_978: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_1668: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_6149: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,244 WARNING sandbox_mteb.evaluator:   Error async query q_4237: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_1106: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_6953: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_2375: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_5129: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_4491: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_720: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_1205: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_5136: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_4151: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_4456: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_6054: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_7110: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_4166: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_1564: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_6694: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_3802: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_7043: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_4109: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_4368: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_150: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_6058: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,245 WARNING sandbox_mteb.evaluator:   Error async query q_1653: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_4619: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_2179: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_6444: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_3882: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_2951: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_224: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_902: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_1009: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_6856: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_7251: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_654: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_6395: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_1979: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_2395: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_3048: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_4120: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_5848: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,246 WARNING sandbox_mteb.evaluator:   Error async query q_2923: TimeoutError: TimeoutError()
+2026-05-13 13:58:20,247 INFO sandbox_mteb.evaluator:   Chunk 2: queries 51-100/200 (50 queries)
+2026-05-13 14:03:34,977 WARNING sandbox_mteb.evaluator:   Error async query q_4913: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,977 WARNING sandbox_mteb.evaluator:   Error async query q_6818: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_680: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_37: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_3201: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_6650: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_1606: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_6481: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_6982: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_4536: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_5693: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_4568: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_4128: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_3340: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_7365: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,978 WARNING sandbox_mteb.evaluator:   Error async query q_6623: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_2667: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_2980: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_1833: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_6508: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_4032: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_6771: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_5203: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_6280: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_176: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_1712: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_3388: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_2543: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_2893: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_6613: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_854: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,979 WARNING sandbox_mteb.evaluator:   Error async query q_4865: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_102: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_3235: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_5498: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_1666: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_4240: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_4787: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_3042: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_3620: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_1611: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_4233: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_5948: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_1011: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_754: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_592: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_5683: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,980 WARNING sandbox_mteb.evaluator:   Error async query q_3681: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,981 WARNING sandbox_mteb.evaluator:   Error async query q_2703: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,981 WARNING sandbox_mteb.evaluator:   Error async query q_1419: TimeoutError: TimeoutError()
+2026-05-13 14:03:34,981 INFO sandbox_mteb.evaluator:   Chunk 3: queries 101-150/200 (50 queries)
+2026-05-13 14:03:35,293 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 14:08:49,761 WARNING sandbox_mteb.evaluator:   Error async query q_7382: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_626: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_2806: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_4502: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_41: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_6937: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_2778: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_4589: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_2724: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,762 WARNING sandbox_mteb.evaluator:   Error async query q_5148: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_4438: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_5597: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_4851: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_6672: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_1654: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_3696: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_797: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_4993: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_1260: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_1865: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,763 WARNING sandbox_mteb.evaluator:   Error async query q_2907: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_3859: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_3222: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_2022: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_350: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_3962: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_6087: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_3352: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_7331: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_2877: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_6795: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_6536: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,764 WARNING sandbox_mteb.evaluator:   Error async query q_502: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_1770: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_6681: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_682: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_4084: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_283: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_6498: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_4440: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_1930: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_6096: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_6380: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,765 WARNING sandbox_mteb.evaluator:   Error async query q_1090: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 WARNING sandbox_mteb.evaluator:   Error async query q_2203: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 WARNING sandbox_mteb.evaluator:   Error async query q_6698: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 WARNING sandbox_mteb.evaluator:   Error async query q_2078: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 WARNING sandbox_mteb.evaluator:   Error async query q_2262: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 WARNING sandbox_mteb.evaluator:   Error async query q_4157: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 WARNING sandbox_mteb.evaluator:   Error async query q_4544: TimeoutError: TimeoutError()
+2026-05-13 14:08:49,766 INFO sandbox_mteb.evaluator:   Chunk 4: queries 151-200/200 (50 queries)
+2026-05-13 14:14:05,622 WARNING sandbox_mteb.evaluator:   Error async query q_752: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_1368: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_779: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_7306: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_6038: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_3284: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_7386: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_3246: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_4947: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_6111: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_5135: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_1498: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,623 WARNING sandbox_mteb.evaluator:   Error async query q_98: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_27: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_3507: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_5286: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_5110: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_5189: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_5969: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_1316: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_6905: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_2919: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_5368: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_4767: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_995: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_567: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_400: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_1834: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,624 WARNING sandbox_mteb.evaluator:   Error async query q_7336: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_3411: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_4183: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_7203: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_7215: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_1710: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_1597: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_1249: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_3192: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_1660: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_686: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_6326: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_4230: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_3229: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_4056: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_2481: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,625 WARNING sandbox_mteb.evaluator:   Error async query q_1724: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,626 WARNING sandbox_mteb.evaluator:   Error async query q_6656: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,626 WARNING sandbox_mteb.evaluator:   Error async query q_1484: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,626 WARNING sandbox_mteb.evaluator:   Error async query q_3153: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,626 WARNING sandbox_mteb.evaluator:   Error async query q_5760: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,626 WARNING sandbox_mteb.evaluator:   Error async query q_4970: TimeoutError: TimeoutError()
+2026-05-13 14:14:05,626 WARNING sandbox_mteb.evaluator:   Queries: 0 completadas, 200 fallidas
+2026-05-13 14:14:05,639 INFO sandbox_mteb.evaluator: RUN COMPLETADO en 18028.5s | Hit@5=0.0000 | MRR=0.0000
+2026-05-13 14:14:05,639 INFO sandbox_mteb.evaluator:   KG synthesis: invocations=200, successes=29, errors=0, empty=0, truncations=0, timeouts=0, fallback_rate=0.00%
+2026-05-13 14:14:05,639 INFO shared.structured_logging: [run_complete] run_id=mteb_hotpotqa_20260513_091337, elapsed_s=18028.55, queries_evaluated=0, queries_failed=200, hit_at_5=0.0, mrr=0.0, avg_generation_score=None, judge_fallback_stats={}, kg_synthesis_stats={'invocations': 200, 'successes': 29, 'errors': 0, 'empty_returns': 0, 'truncations': 0, 'timeouts': 0, 'fallback_rate': 0.0, 'p50_total_ms': 186422.3, 'p95_total_ms': 290857.9, 'max_total_ms': 295641.4, 'n_total_samples': 29, 'p50_queue_ms': 0.0, 'p95_queue_ms': 155617.2, 'max_queue_ms': 193865.9, 'n_queue_samples': 29, 'p50_llm_ms': 171874.9, 'p95_llm_ms': 280249.9, 'max_llm_ms': 295641.2, 'n_llm_samples': 29}
+2026-05-13 14:14:05,660 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 14:14:05,784 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 14:14:05,993 ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-05-13 14:14:06,112 INFO shared.report: Run mteb_hotpotqa_20260513_091337 exportado a data/results: mteb_hotpotqa_20260513_091337.json
+
+Resultados exportados:
+  json: data/results/mteb_hotpotqa_20260513_091337.json
