@@ -361,6 +361,31 @@ class AsyncLLMService:
             model=model_name,
             temperature=temperature,
         )
+
+        # Workaround a langchain-nvidia-ai-endpoints 0.3.19:
+        # `_create_async_session()` construye `aiohttp.ClientSession` sin
+        # `timeout`, cayendo al default de aiohttp (`total=300s`). Cualquier
+        # llamada que exceda 300s se cancela en silencio aunque
+        # NIM_REQUEST_TIMEOUT este en 800 — esto produjo el cap exacto de
+        # 300 000 ms en `kg_synthesis.queue_ms` del run 20260513_091337
+        # (200x800 Qwen3-32B en SPARK, donde p50_llm de synth = 172s y
+        # p95 = 280s superaban el default sin levantarlo nadie).
+        # Sobreescribimos `get_async_session_fn` para inyectar nuestro
+        # timeout preservando el SSL context que el factory original
+        # construye. Si upstream renombra `_build_ssl_context` o
+        # `get_async_session_fn`, este patch deja de operar silenciosamente
+        # (no rompe el run, solo deja de aplicar el timeout). Pin en
+        # requirements.lock (langchain-nvidia-ai-endpoints==0.3.19) mitiga;
+        # ver deuda dt-20 en CLAUDE.md.
+        def _async_session_with_timeout() -> Any:
+            import aiohttp  # lazy: solo se importa en runs reales con NIM
+            ssl_ctx = self._client._build_ssl_context()
+            return aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(ssl=ssl_ctx),
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            )
+        self._client.get_async_session_fn = _async_session_with_timeout
+
         self.metrics = LLMMetrics()
 
         logger.info(
