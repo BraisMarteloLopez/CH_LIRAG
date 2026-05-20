@@ -108,7 +108,7 @@ Tres archivos importan simbolos con prefijo `_` directamente desde produccion. S
 | test_generation_executor.py | sandbox_mteb/generation_executor.py | 20 | generation async, metrics HYBRID, structured context, batch |
 | test_kg_synthesis.py | sandbox_mteb/generation_executor.py | 23 | _synthesize_kg_context_async gating, faithfulness-against-structured, graceful fallback (error/empty/oversized/timeout), _KGSynthesisTracker |
 | test_run_cli.py | sandbox_mteb/run.py | 10 | parse_args, setup_logging, main (dry-run, full, errors) |
-| test_loader.py | sandbox_mteb/loader.py | 12 | check_connection, _populate_from_dataframes (queries/corpus/qrels, None/empty, answer_type inference, comparison auto-conversion, question_type metadata), load_dataset error |
+| test_loader.py | sandbox_mteb/loader.py | 35 | check_connection, _populate_from_dataframes (eval: queries/corpus/qrels, None/empty, answer_type inference, comparison auto-conversion, question_type metadata), load_dataset error; load_collection (INGESTION_CONTRACT: validacion de manifest, filas-por-part, char cap, unicidad chunk_id, mapeo a metadata) |
 
 ### E2E
 
