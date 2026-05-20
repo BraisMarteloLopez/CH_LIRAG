@@ -242,7 +242,8 @@ def _make_collection_loader(manifest, parts_by_path):
     from tests.helpers import make_loader
     loader = make_loader()
     loader._download_json = MagicMock(return_value=manifest)
-    loader._download_parquet = MagicMock(side_effect=lambda key: parts_by_path.get(key))
+    loader._download_parquet = MagicMock(
+        side_effect=lambda key, prefix=None: parts_by_path.get(key))
     return loader
 
 
@@ -352,6 +353,15 @@ def test_load_collection_bad_chunk_raises(bad_row, match):
     parts = {"col1/chunks/docA.parquet": _MockDataFrame([bad_row])}
     with pytest.raises(ValueError, match=match):
         _make_collection_loader(manifest, parts).load_collection("col1")
+
+
+def test_load_collection_uses_collections_prefix():
+    """Lee del prefijo de colecciones (S3_COLLECTIONS_PREFIX), no del de datasets."""
+    loader = _make_collection_loader(None, {})
+    with pytest.raises(ValueError):
+        loader.load_collection("col1")
+    _, kwargs = loader._download_json.call_args
+    assert kwargs.get("prefix") == "admin/collections"
 
 
 def test_load_collection_optional_columns_absent_ok():

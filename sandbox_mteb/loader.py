@@ -85,6 +85,7 @@ class MinIOLoader:
         self.endpoint = endpoint
         self.bucket = storage_config.minio_bucket
         self.prefix = storage_config.s3_datasets_prefix
+        self.collections_prefix = storage_config.s3_collections_prefix
         self.cache_dir = storage_config.datasets_cache_dir
 
         self.client = boto3.client(
@@ -191,11 +192,13 @@ class MinIOLoader:
         (columnas requisito, unicidad de chunk_id, text > cap, filas-por-part,
         num_chunks), para no quemar compute indexando datos rotos.
         """
-        manifest = self._download_json(f"{collection_id}/collection.json")
+        manifest = self._download_json(
+            f"{collection_id}/collection.json", prefix=self.collections_prefix
+        )
         if manifest is None:
             raise ValueError(
                 f"Coleccion '{collection_id}': no se encontro collection.json en "
-                f"{self.prefix}/{collection_id}/"
+                f"{self.collections_prefix}/{collection_id}/"
             )
         self._validate_manifest(manifest, collection_id)
 
@@ -212,7 +215,9 @@ class MinIOLoader:
         total_rows = 0
         for part in manifest["parts"]:
             part_path = _safe_str(part.get("path"))
-            chunks_df = self._download_parquet(f"{collection_id}/{part_path}")
+            chunks_df = self._download_parquet(
+                f"{collection_id}/{part_path}", prefix=self.collections_prefix
+            )
             if chunks_df is None:
                 raise ValueError(
                     f"Coleccion '{collection_id}': part del manifest no "
@@ -435,10 +440,10 @@ class MinIOLoader:
             logger.warning(f"No se encontro manifest: {e}")
             return {"datasets": [], "error": str(e)}
 
-    def _download_parquet(self, key: str):
+    def _download_parquet(self, key: str, prefix: Optional[str] = None):
         import pandas as pd
 
-        full_key = f"{self.prefix}/{key}"
+        full_key = f"{prefix or self.prefix}/{key}"
         try:
             resp = self.client.get_object(Bucket=self.bucket, Key=full_key)
             data = resp["Body"].read()
@@ -447,8 +452,8 @@ class MinIOLoader:
             logger.warning(f"No se pudo descargar {full_key}: {e}")
             return None
 
-    def _download_json(self, key: str) -> Optional[Dict]:
-        full_key = f"{self.prefix}/{key}"
+    def _download_json(self, key: str, prefix: Optional[str] = None) -> Optional[Dict]:
+        full_key = f"{prefix or self.prefix}/{key}"
         try:
             resp = self.client.get_object(Bucket=self.bucket, Key=full_key)
             data = json.loads(resp["Body"].read().decode("utf-8"))

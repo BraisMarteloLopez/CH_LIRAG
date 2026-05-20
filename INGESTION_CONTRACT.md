@@ -37,7 +37,7 @@ Refinamientos aportados por CH_LIRAG:
   ocr/{stem}/text.jsonl        # admin-internal: IGNORADO
 ```
 
-- El motor configura `S3_DATASETS_PREFIX = {ADMIN_ROOT_PREFIX}/collections` (default admin: `admin/collections`); `MINIO_BUCKET_NAME` compartido.
+- El motor configura `S3_COLLECTIONS_PREFIX = {ADMIN_ROOT_PREFIX}/collections` (default `admin/collections`), **independiente** de `S3_DATASETS_PREFIX` (modo eval HotpotQA) para que ambos modos convivan sin pisarse; `MINIO_BUCKET_NAME` compartido.
 - `{collection_id}` (formato `col_{YYYYMMDDHHMMSS}_{hex8}`) es el selector de coleccion.
 - El motor **solo** lee `collection.json` y las parts que este enumera. Los artefactos admin-internal quedan fuera del contrato por construccion.
 

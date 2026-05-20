@@ -159,6 +159,7 @@ def make_loader(mock_client=None):
     loader.endpoint = "http://fake:9000"
     loader.bucket = "test-bucket"
     loader.prefix = "datasets/eval"
+    loader.collections_prefix = "admin/collections"
     loader.cache_dir = Path("/tmp/test_cache")
     loader.client = mock_client or MagicMock()
     loader._manifest = None

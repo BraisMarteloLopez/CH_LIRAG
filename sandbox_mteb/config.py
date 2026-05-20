@@ -41,6 +41,7 @@ class MinIOStorageConfig:
     minio_secret_key: str = ""
     minio_bucket: str = ""
     s3_datasets_prefix: str = "datasets/evaluation"
+    s3_collections_prefix: str = "admin/collections"
     datasets_cache_dir: Path = Path("./data/datasets_cache")
     evaluation_results_dir: Path = Path("./data/results")
     vector_db_dir: Path = Path("./data/vector_db")
@@ -53,6 +54,7 @@ class MinIOStorageConfig:
             minio_secret_key=_env("MINIO_SECRET_KEY", ""),
             minio_bucket=_env("MINIO_BUCKET_NAME", ""),
             s3_datasets_prefix=_env("S3_DATASETS_PREFIX", "datasets/evaluation"),
+            s3_collections_prefix=_env("S3_COLLECTIONS_PREFIX", "admin/collections"),
             datasets_cache_dir=_env_path("DATASETS_CACHE_DIR", "./data/datasets_cache"),
             evaluation_results_dir=_env_path("EVALUATION_RESULTS_DIR", "./data/results"),
             vector_db_dir=_env_path("VECTOR_DB_DIR", "./data/vector_db"),
