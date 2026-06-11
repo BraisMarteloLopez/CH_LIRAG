@@ -19,13 +19,15 @@ import io
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import boto3
 from botocore.exceptions import ClientError
 
 from shared.types import (
+    DatasetType,
     LoadedDataset,
+    MetricType,
     NormalizedQuery,
     NormalizedDocument,
     get_dataset_config,
@@ -34,6 +36,37 @@ from shared.types import (
 from .config import MinIOStorageConfig
 
 logger = logging.getLogger(__name__)
+
+# Campos obligatorios del manifest collection.json (INGESTION_CONTRACT.md §4).
+_REQUIRED_MANIFEST_KEYS = ("collection_id", "num_chunks", "max_chunk_chars", "parts")
+
+
+def _safe_str(val: object, default: str = "") -> str:
+    """Convierte a str, tratando None y NaN como default."""
+    if val is None:
+        return default
+    try:
+        if val != val:  # NaN != NaN
+            return default
+    except (TypeError, ValueError):
+        pass
+    s = str(val)
+    return default if s in ("None", "nan") else s
+
+
+def _coerce_int(val: object) -> Optional[int]:
+    """Convierte a int; None/NaN/no-numerico -> None."""
+    if val is None:
+        return None
+    try:
+        if val != val:  # NaN
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
 
 
 class MinIOLoader:
@@ -52,6 +85,7 @@ class MinIOLoader:
         self.endpoint = endpoint
         self.bucket = storage_config.minio_bucket
         self.prefix = storage_config.s3_datasets_prefix
+        self.collections_prefix = storage_config.s3_collections_prefix
         self.cache_dir = storage_config.datasets_cache_dir
 
         self.client = boto3.client(
@@ -143,6 +177,90 @@ class MinIOLoader:
             result.error_message = str(e)
             return result
 
+    def load_collection(self, collection_id: str) -> LoadedDataset:
+        """
+        Carga una coleccion de chunks producida por LI_AD (INGESTION_CONTRACT.md).
+
+        A diferencia de load_dataset (modo eval: queries + corpus + qrels), aqui
+        se ingesta solo el corpus de chunks de produccion:
+          - Entrada por el manifest `collection.json` (no glob de directorio).
+          - Una coleccion = N parts (un Parquet por documento) listadas en el manifest.
+          - Mapea cada chunk a NormalizedDocument (chunk_id->doc_id, text->content,
+            procedencia->metadata).
+
+        Valida el contrato y FALLA TEMPRANO (ValueError) ante incoherencias
+        (columnas requisito, unicidad de chunk_id, text > cap, filas-por-part,
+        num_chunks), para no quemar compute indexando datos rotos.
+        """
+        manifest = self._download_json(
+            f"{collection_id}/collection.json", prefix=self.collections_prefix
+        )
+        if manifest is None:
+            raise ValueError(
+                f"Coleccion '{collection_id}': no se encontro collection.json en "
+                f"{self.collections_prefix}/{collection_id}/"
+            )
+        self._validate_manifest(manifest, collection_id)
+
+        max_chunk_chars = int(manifest["max_chunk_chars"])
+
+        result = LoadedDataset(
+            name=collection_id,
+            dataset_type=DatasetType.RETRIEVAL_ONLY,
+            primary_metric=MetricType.FAITHFULNESS,
+            secondary_metrics=[],
+        )
+
+        seen_ids: Set[str] = set()
+        total_rows = 0
+        for part in manifest["parts"]:
+            part_path = _safe_str(part.get("path"))
+            chunks_df = self._download_parquet(
+                f"{collection_id}/{part_path}", prefix=self.collections_prefix
+            )
+            if chunks_df is None:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': part del manifest no "
+                    f"descargable: '{part_path}'"
+                )
+            n_rows = len(chunks_df)
+            declared = _coerce_int(part.get("num_rows"))
+            if declared is not None and n_rows != declared:
+                raise ValueError(
+                    f"Coleccion '{collection_id}', part '{part_path}': {n_rows} "
+                    f"filas != {declared} declaradas en el manifest (posible "
+                    f"lectura a mitad de re-chunk; reintentar tras releer manifest)"
+                )
+            total_rows += n_rows
+            self._populate_chunks_from_dataframe(
+                result, chunks_df, collection_id, max_chunk_chars, seen_ids
+            )
+
+        declared_chunks = _coerce_int(manifest.get("num_chunks"))
+        if declared_chunks is not None and total_rows != declared_chunks:
+            raise ValueError(
+                f"Coleccion '{collection_id}': {total_rows} filas totales != "
+                f"num_chunks={declared_chunks} del manifest"
+            )
+
+        result.total_corpus = len(result.corpus)
+        result.metadata = {
+            "collection_id": collection_id,
+            "generation": manifest.get("generation"),
+            "chunking_fingerprint": manifest.get("chunking_fingerprint"),
+            "contract_version": manifest.get("contract_version"),
+            "schema_version": manifest.get("schema_version"),
+            "max_chunk_chars": max_chunk_chars,
+            "num_documents": manifest.get("num_documents"),
+            "chunking": manifest.get("chunking"),
+        }
+        result.load_status = "success"
+        logger.info(
+            f"Coleccion '{collection_id}' cargada: {len(result.corpus)} chunks "
+            f"(generation={manifest.get('generation')})"
+        )
+        return result
+
     # -----------------------------------------------------------------
     # PRIVATE: DataFrame -> LoadedDataset
     # -----------------------------------------------------------------
@@ -160,19 +278,6 @@ class MinIOLoader:
         Extraido de load_dataset() y _load_from_cache() para eliminar
         duplicacion (~50 lineas identicas).
         """
-        def _safe_str(val: object, default: str = "") -> str:
-            """Convierte a str, tratando None y NaN como default."""
-            if val is None:
-                return default
-            try:
-                # pandas NaN check
-                if val != val:  # NaN != NaN
-                    return default
-            except (TypeError, ValueError):
-                pass
-            s = str(val)
-            return default if s in ("None", "nan") else s
-
         qrels: Dict[str, List[str]] = {}
 
         if queries_df is not None:
@@ -218,6 +323,105 @@ class MinIOLoader:
         for query in result.queries:
             query.relevant_doc_ids = qrels.get(query.query_id, [])
 
+    @staticmethod
+    def _validate_manifest(manifest: object, collection_id: str) -> None:
+        """Valida collection.json contra INGESTION_CONTRACT.md §4/§7.
+
+        Falla con ValueError claro (no status silencioso): el manifest es el
+        punto de entrada y un drift aqui debe parar antes de indexar.
+        """
+        if not isinstance(manifest, dict):
+            raise ValueError(
+                f"Coleccion '{collection_id}': collection.json no es un objeto JSON"
+            )
+        missing = [k for k in _REQUIRED_MANIFEST_KEYS if k not in manifest]
+        if missing:
+            raise ValueError(
+                f"Coleccion '{collection_id}': manifest sin campos requeridos: {missing}"
+            )
+        if _safe_str(manifest.get("collection_id")) != collection_id:
+            raise ValueError(
+                f"Coleccion '{collection_id}': manifest.collection_id="
+                f"'{_safe_str(manifest.get('collection_id'))}' no coincide con el solicitado"
+            )
+        parts = manifest.get("parts")
+        if not isinstance(parts, list) or not parts:
+            raise ValueError(
+                f"Coleccion '{collection_id}': manifest.parts vacio o no es lista"
+            )
+        for i, part in enumerate(parts):
+            if not isinstance(part, dict) or "path" not in part or "num_rows" not in part:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': parts[{i}] sin 'path'/'num_rows'"
+                )
+        mcc = _coerce_int(manifest.get("max_chunk_chars"))
+        if mcc is None or mcc <= 0:
+            raise ValueError(
+                f"Coleccion '{collection_id}': max_chunk_chars invalido: "
+                f"{manifest.get('max_chunk_chars')!r}"
+            )
+
+    @staticmethod
+    def _populate_chunks_from_dataframe(
+        result: LoadedDataset,
+        chunks_df,
+        collection_id: str,
+        max_chunk_chars: int,
+        seen_ids: Set[str],
+    ) -> None:
+        """Mapea rows de un chunks.parquet a NormalizedDocument validando el contrato.
+
+        Clave de indexacion: chunk_id (con collection_id constante por coleccion).
+        Procedencia (document_id, chunk_index, source_file, page_*, token_count) va
+        a metadata; source_file NO se usa como title para no sesgar el embedding.
+        """
+        for _, row in chunks_df.iterrows():
+            chunk_id = _safe_str(row.get("chunk_id", ""))
+            if not chunk_id:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': chunk con chunk_id vacio/ausente"
+                )
+            if chunk_id in seen_ids:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': chunk_id duplicado: '{chunk_id}'"
+                )
+            seen_ids.add(chunk_id)
+
+            row_cid = _safe_str(row.get("collection_id", ""))
+            if row_cid and row_cid != collection_id:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': chunk '{chunk_id}' con "
+                    f"collection_id='{row_cid}' ajeno a la coleccion"
+                )
+
+            text = _safe_str(row.get("text", ""))
+            if not text:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': chunk '{chunk_id}' con text vacio"
+                )
+            if len(text) > max_chunk_chars:
+                raise ValueError(
+                    f"Coleccion '{collection_id}': chunk '{chunk_id}' text de "
+                    f"{len(text)} chars > max_chunk_chars={max_chunk_chars}"
+                )
+
+            metadata: Dict[str, object] = {"collection_id": collection_id}
+            for col in ("document_id", "source_file"):
+                v = _safe_str(row.get(col, ""))
+                if v:
+                    metadata[col] = v
+            for col in ("chunk_index", "page_start", "page_end", "token_count"):
+                iv = _coerce_int(row.get(col, None))
+                if iv is not None:
+                    metadata[col] = iv
+
+            result.corpus[chunk_id] = NormalizedDocument(
+                doc_id=chunk_id,
+                content=text,
+                title=None,
+                metadata=metadata,
+            )
+
     # -----------------------------------------------------------------
     # PRIVATE: S3
     # -----------------------------------------------------------------
@@ -236,10 +440,10 @@ class MinIOLoader:
             logger.warning(f"No se encontro manifest: {e}")
             return {"datasets": [], "error": str(e)}
 
-    def _download_parquet(self, key: str):
+    def _download_parquet(self, key: str, prefix: Optional[str] = None):
         import pandas as pd
 
-        full_key = f"{self.prefix}/{key}"
+        full_key = f"{prefix or self.prefix}/{key}"
         try:
             resp = self.client.get_object(Bucket=self.bucket, Key=full_key)
             data = resp["Body"].read()
@@ -248,8 +452,8 @@ class MinIOLoader:
             logger.warning(f"No se pudo descargar {full_key}: {e}")
             return None
 
-    def _download_json(self, key: str) -> Optional[Dict]:
-        full_key = f"{self.prefix}/{key}"
+    def _download_json(self, key: str, prefix: Optional[str] = None) -> Optional[Dict]:
+        full_key = f"{prefix or self.prefix}/{key}"
         try:
             resp = self.client.get_object(Bucket=self.bucket, Key=full_key)
             data = json.loads(resp["Body"].read().decode("utf-8"))

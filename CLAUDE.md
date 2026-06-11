@@ -8,15 +8,17 @@ El harness en `sandbox_mteb/` (datasets MTEB/BeIR) es **instrumento de verificac
 
 ## Contexto del producto
 
-**Vision a largo plazo**: este motor se integrara en un sistema administrador de colecciones de datos (versionado de KGs, multi-tenant, ciclo de vida de corpus). Contrato compartido: MinIO + Parquet — la integracion es apuntar a otro prefijo, no rediseñar la ingesta. **Condicionada a que P0 cierre con exito**; sin replicacion del paper, solo SIMPLE_VECTOR es integrable y el trabajo sobre KG se vuelve inutil.
+**Vision a largo plazo**: este motor se integra en un sistema administrador de colecciones de datos (**LI_AD**: versionado de KGs, multi-tenant, ciclo de vida de corpus). Contrato compartido: MinIO + Parquet — la integracion es apuntar a otro prefijo, no rediseñar la ingesta.
+
+**Hito (2026-05-20)**: la **construccion de grafos esta probada** — el motor LIGHT_RAG construye KGs de forma estable sobre corpus arbitrarios (evidencia en `./results/`). A partir de aqui **se abandona la comparacion empirica LIGHT_RAG vs SIMPLE_VECTOR** como objetivo activo (en HotpotQA el vector satura el retrieval; la pregunta no es respondible en este harness) y el foco pasa al **contrato de ingesta** con LI_AD.
 
 **Escenario objetivo**: colecciones de tamaño moderado de dominio especializado con terminologia/entidades fuera del pre-entrenamiento del embedding. Es el caso donde se espera que el KG aporta diferencial. (HotpotQA NO es ese escenario — es harness de verificacion previa).
 
-**Implicacion de diseño**: las decisiones favorecen la embedibilidad futura (config declarativa, interfaces claras, sin side-effects globales, corpus arbitrarios, muy alta calidad de generacion). Mientras P0 no este verde, la embedibilidad es objetivo de diseño, no trabajo activo.
+**Implicacion de diseño**: las decisiones favorecen la embedibilidad (config declarativa, interfaces claras, sin side-effects globales, corpus arbitrarios, muy alta calidad de generacion). Con la construccion de grafos probada, la embedibilidad y la ingesta dejan de ser solo objetivo de diseño y pasan a ser **trabajo activo** (ver fase actual).
 
-**Fase actual**: P0, detalles en la seccion ["Proximos pasos"](#proximos-pasos).
+**Fase actual**: definir y cerrar el **contrato de ingesta** con LI_AD — el esquema MinIO/Parquet (chunks por documento + manifest) que LI_AD produce y el motor consume. Contrato vivo en [`INGESTION_CONTRACT.md`](INGESTION_CONTRACT.md) (negociado con la sesion de LI_AD). Detalles en ["Proximos pasos"](#proximos-pasos).
 
-**Export de KG (P3)**: cuando LIGHT_RAG sea produccion, los KGs deberan persistirse para versionado, reuso entre runs y multi-tenant. Hoy efimero (igraph + ChromaDB en memoria).
+**Export de KG (reciproco, futuro)**: LI_AD necesita leer el grafo para su UI (su Fase 2). El schema de export propuesto vive en [`KG_CONTRACT.md`](KG_CONTRACT.md). Hoy el KG es efimero (igraph + ChromaDB en memoria, descartado en `_cleanup()`); la implementacion del export es trabajo P3 nuestro, aun no construido.
 
 **Auditoria iterativa**: ver [`audit.md`](audit.md). Es el estado cross-session de la auditoria de codigo/comentarios/estructura. Antes de abrir hallazgos nuevos, leer el protocolo y la fase activa en ese archivo.
 
@@ -71,7 +73,7 @@ Contenido real fetcheado por `get_documents_by_ids`. Fallback a vector directo s
 
 **Synthesis del contexto (value-add del proyecto)**: `GenerationExecutor._synthesize_kg_context_async()` reescribe las 3 secciones como narrativa coherente via LLM antes de la generacion final, con citas `[ref:N]` inline (prompt en `sandbox_mteb/config.py:KG_SYNTHESIS_SYSTEM_PROMPT`). **Faithfulness se evalua contra el contexto estructurado original**, no contra la narrativa — control anti-fabricacion para penalizar alucinacion de la propia synthesis. Degradacion graceful: error/vacio/timeout → fallback al contexto estructurado.
 
-**Fallback global**: sin igraph o sin LLM → SimpleVectorRetriever puro y el run nunca se rompe, **NO DESEADO** no debe estar en P0 (KG deberia funcionar).
+**Fallback global**: sin igraph o sin LLM → SimpleVectorRetriever puro y el run nunca se rompe, **NO DESEADO** (el KG deberia funcionar; este fallback enmascara fallos del motor).
 
 <a id="divergencias"></a>
 ## Divergencias con el paper original
@@ -103,7 +105,7 @@ IDs (`dt-N`) son navegables desde codigo: `# ver deuda #5` resuelve a `<a id="dt
 | <a id="dt-3"></a>3 | HNSW no es determinista | **MEDIO** | ChromaDB no expone `hnsw:random_seed` — dos runs con misma config producen rankings con ~2-5% varianza | Ejecutar 2-3 veces y promediar, o aceptar varianza |
 | <a id="dt-5"></a>5 | Context window fallback silencioso | **BAJO** | `embedding_service.py:resolve_max_context_chars()` — si `GET /v1/models` falla, fallback 4000 chars (presupuesto TOTAL de contexto, no truncado del doc; ~4-8 chunks). Riesgo: dejar senal en la mesa si el modelo soporta mucho mas (p.ej. 192K). Loguea INFO (no WARNING) → puede pasar desapercibido | Configurar `GENERATION_MAX_CONTEXT_CHARS` explicito en `.env`. Auditar `config_snapshot._runtime.max_context_chars` antes de aceptar un run |
 | <a id="dt-9"></a>9 | Lock-in a NVIDIA NIM | **BAJO** | Embeddings, LLM y reranker estan acoplados a NIM sin abstraccion de provider. Para un sistema de evaluacion, esto limita la reproducibilidad — nadie sin acceso a NIM puede ejecutar ni validar resultados | Abstraer detras de interfaces (ya existen Protocols en types.py pero no se usan para desacoplar el provider) |
-| <a id="dt-10"></a>10 | Sin indexacion incremental del KG | **MEDIO** | `LightRAGRetriever.index_documents()` siempre rebuild completo o carga de cache. No hay `append_documents()` para integrar docs nuevos sin reconstruir. El paper soporta `insert()` incremental. Para PDFs en tandas (escenario administrador), obliga a re-indexar todo | Cache de disco mitiga re-extraccion LLM pero no rebuild del grafo ni VDBs. P3 lo requiere |
+| <a id="dt-10"></a>10 | Sin indexacion incremental del KG | **MEDIO** | `LightRAGRetriever.index_documents()` siempre rebuild completo o carga de cache. No hay `append_documents()` para integrar docs nuevos sin reconstruir. El paper soporta `insert()` incremental. Para PDFs en tandas (escenario administrador), obliga a re-indexar todo | Cache de disco mitiga re-extraccion LLM pero no rebuild del grafo ni VDBs. El contrato de ingesta aporta la señal de invalidacion (`generation`/`chunking_fingerprint`, ver `INGESTION_CONTRACT.md`), pero el rebuild sigue siendo completo por generacion; el append incremental sigue pendiente (P3) |
 | <a id="dt-12"></a>12 | Tests acoplados a mensajes de error de `AsyncLLMService` | **BAJO** | Tests en `test_llm.py` usan regex laxa sobre `RuntimeError` porque no hay excepciones custom. Si cambia el texto, los tests fallan por regex, no por comportamiento | Refactor de excepciones en el proximo PR funcional a `shared/llm.py`. Sincronizar regex al tocar mensajes |
 | <a id="dt-17"></a>17 | Parametros fijos del canal de chunk keywords ([div #10](#div-10)) | **BAJO** | 3 parametros hardcoded en `triplet_extractor.py`/`retriever.py`: `MAX_CHUNK_KEYWORDS_PER_DOC=10`, `MIN/MAX_CHUNK_KEYWORD_LEN=2/80`, `_CHUNK_KEYWORDS_VDB_MAX_DISTANCE=0.8`. Solo `KG_CHUNK_KEYWORDS_ENABLED`/`_TOP_K` expuestos | Observables instrumentados: `chunk_keywords_{rejected_len,dropped_by_cap}` y `docs_chunk_keywords_capped` en stats del extractor; `kg_chunk_keywords_distance_filtered` per-query en `retrieval_metadata`. Thresholds para exponer al `.env`: `rejected_len / total_chunk_keywords > 5%`, `docs_chunk_keywords_capped / docs_with_keywords > 5%`, o mediana de `distance_filtered` per-query > 20% del total inspeccionado |
 | <a id="dt-18"></a>18 | Observable de citaciones [#7](#div-7) acoplado al prompt de synthesis | **BAJO** | Parser usa regex `\[ref:(\d+)\]` alineado con `KG_SYNTHESIS_SYSTEM_PROMPT`. Si alguien cambia formato (p.ej. `(ref N)` o `[ref:3,4,5]`), los 14 campos dejan de medir lo que dicen. Acoplamiento semantico, sin test automatico | Al tocar `KG_SYNTHESIS_SYSTEM_PROMPT`, revisar parser y actualizar regex `_VALID_RE`/`_CANDIDATE_RE` en sync |
@@ -207,18 +209,64 @@ La tabla lista los sites con **contador observable**. Se referencian por funcion
 3. **Parametros que dependen del LLM** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
 4. **Tests unitarios adversariales** para todo cambio que afecte el contexto que ve el LLM: estresar el budget, no solo el caso holgado.
 
+## Despliegue alternativo: JupyterLab + OpenWebUI
+
+Ademas del entorno principal (Linux Zen5+H100 con NIM internos), el motor se
+despliega como modulo experimental en un pod **JupyterLab** con disco persistente
+(NFS bajo `/home/jovyan`) y **B200 MIG 3g.90gb** (89 GB, CUDA 13.2).
+
+**LLM y embeddings via OpenWebUI sin cambios de codigo**. El dialecto
+OpenAI-compatible de OpenWebUI es suficiente para que `ChatNVIDIA` y
+`NVIDIAEmbeddings` (`langchain-nvidia-ai-endpoints==0.3.19`) funcionen apuntados
+a `https://open-webui.ia.labia.tics/api`. Verificado por smoke test: chat sync
++ async + embeddings + fallback `langchain-openai`, los cuatro caminos verde.
+La api_key va en `NVIDIA_API_KEY` del `.env`; `langchain-nvidia` la lee
+automaticamente.
+
+- **Chat**: `coding-qwen3-coder-next` (32K ctx, sin thinking-mode, ~1 s por
+  extraccion de tripletas sobre chunks de ~5K chars).
+- **Embeddings**: `demo-bge-m3` (1024 dims, ~60 ms, vectores bit-identicos
+  entre `NVIDIAEmbeddings` y `OpenAIEmbeddings`).
+
+**Particularidades del entorno** (relevantes para tunear `.env`):
+
+- `/opt/conda` esta en overlay (**no persiste**); venv, datos MinIO, cache KG
+  y repo van en `/home/jovyan` (NFS 1 TB).
+- **GitHub bloqueado** por proxy corporativo → traer el repo via GitLab interno
+  (mirror) o tarball por la UI de JupyterLab.
+- **`dl.min.io` bloqueado** → el binario de MinIO se sube una vez por la UI
+  (≈110 MB, queda en NFS).
+- `tmux`/`screen` no disponibles → procesos en background con `nohup`. Los
+  datos persisten en NFS pero **los procesos mueren al reiniciar el pod**
+  (relanzar MinIO manualmente).
+- **OpenWebUI no expone `/v1/models` en formato NIM** → la autodeteccion de
+  context window (deuda #5) cae al fallback silencioso de 4000 chars. Fijar
+  `GENERATION_MAX_CONTEXT_CHARS` explicito en el `.env`.
+- **Sin NIM de rerank** en el pod → `RERANKER_ENABLED=false` (LIGHT_RAG ya lo
+  tiene gated off para indexacion; lo apagamos tambien para que la validacion
+  de config no exija la URL).
+
+**Plantilla `.env`**: [`sandbox_mteb/env.example.jupyter`](sandbox_mteb/env.example.jupyter).
+**Scripts de bootstrap**: [`scripts/jupyter/`](scripts/jupyter/) (venv, MinIO,
+bucket). Ver su `README.md` para el orden exacto.
+**Estado**: smoke test de provider verde; despliegue MinIO + carga de
+coleccion + indexacion siguen pendientes (ver `FAST_NOTES.md`).
+
 ## Proximos pasos
 
 ### Orden de prioridades
 
 ```
-Pre-P0 (completitud arquitectural + ejecucion estable)  <-- GATE CERRADO (2026-04-19)
+Pre-P0 (completitud arquitectural + ejecucion estable)   <-- GATE CERRADO (2026-04-19)
   |
-P0 (replicacion empirica del paper)                     <-- FASE ACTUAL
+Construccion de KG: PROBADA                              <-- HITO (2026-05-20)
   |
-  +-- P2 (experimento 3: catalogo especializado)        <-- SOLO si P0 pasa + riesgo piggyback #10 resuelto
+INTEGRACION (contrato de ingesta con LI_AD)              <-- FASE ACTUAL
+  |   (rebanada de ingesta de P3, adelantada)
   |
-  +-- P3 (embedibilidad + export KG + integracion)      <-- SOLO si P2 pasa
+  +-- P0  comparacion empirica LIGHT_RAG vs SIMPLE_VECTOR   <-- EN PAUSA (no se persigue)
+  +-- P2  experimento 3: catalogo especializado             <-- EN PAUSA
+  +-- P3  embedibilidad + export de KG (resto)              <-- futuro
 ```
 
 ### Pre-P0 — GATE CERRADO (2026-04-19)
@@ -238,61 +286,65 @@ Tres condiciones cumplidas simultaneamente:
 
 ** Matiz sobre #10 (piggyback)**: la calidad del canal high-level **NO** esta validada empiricamente. Es **bloqueante antes de P2**, no de P0.
 
-### P0 — Argumentar valor de LIGHT_RAG vs SIMPLE_VECTOR en dominios especializados · FASE ACTUAL
+### Construccion de KG — PROBADA (HITO 2026-05-20)
 
-**Objetivo (reframeado 2026-05-10)**: construir un **argumento razonado con evidencia empirica** de que LIGHT_RAG aporta valor frente a SIMPLE_VECTOR en escenarios de **dominio especifico y temas complejos**. NO se exige ganar a SIMPLE_VECTOR en HotpotQA (escenario saturado para vector); SI se exige demostrar que el motor opera completo y que el diferencial observable (chunks distintos, canales KG activos, citations sanas) sostiene la extrapolacion a P2.
+La construccion de grafos esta probada: el motor LIGHT_RAG construye KGs de forma estable y completa sobre corpus arbitrarios. A partir de este hito **se abandona la comparacion empirica LIGHT_RAG vs SIMPLE_VECTOR** (P0, ahora en pausa — ver mas abajo) y el foco pasa a la integracion con LI_AD.
 
-**Por que el reframing**: la version anterior pedia "delta empirico LIGHT > SIMPLE en al menos un benchmark". En HotpotQA-DEV el vector satura el retrieval (Hit@5=1.0 con cosine puro sobre embedding moderno), por lo que LIGHT pierde por sustituir vector → KG-mediated, no por mala calidad del motor. La pregunta empirica directa no es respondible aqui; la deductiva si.
+**Evidencia — runs en `./results/`** (clasificados por experimento; estado factual, la salud per-run vive en cada JSON para inspeccion humana):
 
-**Caveat arquitectonico (no documentado antes)**: el reranker esta **gated off para LIGHT_RAG** en `sandbox_mteb/retrieval_executor.py:101-106` con la justificacion "Paper LightRAG no usa reranker — el cross-encoder single-hop penalizaria los docs multi-hop que aporta el KG". Implicacion: las comparaciones SIMPLE vs LIGHT son **asimetricas** — SIMPLE tiene reranker, LIGHT no. Esta asimetria infla deltas a favor de SIMPLE en escenarios donde el vector satura.
-
-**Trabajo necesario**: comparativa SIMPLE_VECTOR vs LIGHT_RAG hybrid con synthesis on, con la salud operativa del motor LIGHT como prerequisito.
-
-**Criterio de cierre P0**:
-1. Operacional: run LIGHT_RAG con `kg_synthesis_stats.fallback_rate < 10%`, `judge_fallback_stats.default_return_rate < 2%`, `operational_stats` todos 0 o cuasi-0.
-2. Estructural: `graph_connected_components / num_docs < 0.5` (KG razonablemente conectado, no docs-isla).
-3. Argumental: identificar señal de diferenciacion (Compl. Recall@K alto en LIGHT, queries especificas donde LIGHT mejora) que sostenga la extrapolacion a P2.
-
-**Runs en `./results/`** (estado factual, sin interpretacion):
-
-| Run ID | Estrategia | Escala | Status |
+| Carpeta | Run | Infra / config | Status |
 |---|---|---|---|
-| `mteb_hotpotqa_20260510_155134` | `SIMPLE_VECTOR` | DEV_MODE **200×4000** | Active baseline |
-| `mteb_hotpotqa_2026MMDD_HHMMSS` | `LIGHT_RAG` | DEV_MODE **200×4000** | **PENDIENTE de upload a main** (config: batch=1, gleaning=1, ext_tokens=8192, neighbors=5) |
+| `01_..._pre-parallelization_baseline` | `light_rag_20260510_172854` | nemotron-3-nano | baseline pre-paralelizacion |
+| `02_..._post-parallelization_pr71` | `light_rag_20260511_103950` | nemotron-3-nano + gleaning paralelo (PR #71) | OK |
+| `03_..._tracker-active_pr72` | `light_rag_20260511_125710` | nemotron-3-nano + tracker per-fase (PR #72) | OK |
+| `04_qwen3-32b-nvfp4_dgx-spark_sanity-check` | `light_rag_20260512_084530` | Qwen3-32B NVFP4 en DGX Spark | sanity-check OK |
+| `05_..._INVALID-endpoint-died-during-queries` | `light_rag_20260513_091337` | Qwen3-32B NVFP4 en DGX Spark | **INVALID** (endpoint cayo durante queries) |
 
-**Pendientes de analisis para la proxima sesion** (no hechos aun, requieren nueva sesion):
-1. **Salud operativa** del LIGHT@200×4000: verificar `kg_synthesis_stats`, `judge_fallback_stats`, `operational_stats`, y contar warnings `empty content after stripping reasoning tags` en el console log (esperado: muy inferior a los ~180 del run anterior).
-2. **Calidad estructural** del KG: `graph_connected_components` (mejora esperada vs 138 del run anterior), `kg_entities_with_neighbors > 0` per query.
-3. **A/B head-to-head** con SIMPLE@200×4000 sobre la misma escala (200 queries, 4000 docs): Hit@5, NDCG@5, F1, EM, Faithfulness, Compl. Recall@K.
-4. **Analisis per-query**: identificar el patron en queries donde LIGHT mejora vs SIMPLE (¿multi-hop? ¿entidades poco frecuentes? ¿temas que el embedding cosine no domina?).
-5. **Argumento deductivo** sobre P2: a partir de (1)-(4), construir el caso "en dominio especializado donde vector NO satura, los chunks que LIGHT trae diferenciados (`Compl. Recall@K`) serian los relevantes" — explicitar la extrapolacion y sus supuestos.
-6. ~~Limpieza de runs preliminares~~ — hecho: los 4 archivos de los runs `20260507_*` (25×400 SIMPLE y LIGHT preliminares) se eliminaron del repo. Solo se conserva el active baseline `20260510_155134` y se espera el LIGHT@200×4000.
+Todos los runs conservados son `LIGHT_RAG`; el baseline `SIMPLE_VECTOR` previo (`20260510_155134`) se elimino del repo al dejar de perseguirse la comparacion.
 
-**Lecciones operativas confirmadas (aplican a runs futuros sobre nemotron-3-nano)**:
+**Lecciones operativas confirmadas (aplican a futuros runs de indexacion sobre nemotron-3-nano)**:
 - Thinking-mode burn: `KG_EXTRACTION_MAX_TOKENS=8192` + `KG_BATCH_DOCS_PER_CALL=1` reduce drasticamente los warnings de empty content vs los defaults (4096 + 5).
-- `KG_GLEANING_ROUNDS=1` con config limpia debe ser viable sin las catastrofes de tiempo del run `20260509_225913`.
-- Estimaciones de tiempo por claude_code para runs LIGHT_RAG con thinking-mode son poco fiables (error 13× registrado). El usuario debe asumir bandas amplias.
+- `KG_GLEANING_ROUNDS=1` con config limpia es viable sin las catastrofes de tiempo de runs antiguos.
+- Estimaciones de tiempo por claude_code para runs LIGHT_RAG con thinking-mode son poco fiables (error 13x registrado). Asumir bandas amplias.
 
-**No interpretar metricas en aislamiento** — cualquier numero de un run individual sin su contraparte de escala matching es senal incompleta.
+### INTEGRACION — Contrato de ingesta con LI_AD · FASE ACTUAL
 
-### P2 — Experimento 3: catalogo especializado · futuro, contingente a P0
+**Objetivo**: cerrar el **contrato de ingesta** — el esquema MinIO/Parquet que LI_AD (productor) escribe y el motor (consumidor) lee — y adaptar el loader para consumirlo. El transporte no cambia (MinIO + Parquet leido por `sandbox_mteb/loader.py`); cambia el **esquema**: de los pasajes HotpotQA (`doc_id`/`title`/`text`) a chunks de PDFs con procedencia.
 
-**No empezar sin P0 verde.** Sobre un catalogo privado de 10-50 PDFs especializados (upstream del sistema administrador), LIGHT_RAG vs SIMPLE_VECTOR se evalua en dos ejes:
+**Contrato vivo**: [`INGESTION_CONTRACT.md`](INGESTION_CONTRACT.md). Negociado con la sesion de LI_AD (v0 nuestro -> respuesta de LI_AD -> v1). Puntos acordados:
+- **Layout**: `{prefix}/collections/{collection_id}/` con `chunks/{stem}.parquet` (un Parquet por documento) + `collection.json` (manifest).
+- **Manifest-as-entrypoint**: el loader entra por `collection.json` (lista de parts + filas por part + `generation` + `chunking_fingerprint`), no por glob de directorio.
+- **Esquema chunks**: `chunk_id`, `collection_id`, `text` (requisito); `document_id`, `chunk_index` como columnas (no se parsea el id); `source_file`/`page_*`/`token_count` (procedencia).
+- **Clave de indexacion**: `(collection_id, chunk_id)`; el motor carga una coleccion por indice.
+- **Char cap (Refinamiento B)**: `max_chunk_chars` en el manifest; el motor valida cada `text` <= su cap y fija `KG_MAX_TEXT_CHARS >= max_chunk_chars`. Acordado **5000 chars**.
+- **Invalidacion de cache**: `(collection_id, generation, chunking_fingerprint)` + params de extraccion del motor reemplazan el hash de contenido de `_corpus_fingerprint`; rebuild solo si avanza `generation` (completo por generacion; append incremental = deuda #10).
+- **Consistencia (Refinamiento A, prioridad baja)**: validar filas-por-part contra el manifest para detectar lectura a mitad de re-chunk; blindaje para concurrencia futura, no bloquea v1.
 
-- **Eje 1 — Precision/calidad**: se espera delta LIGHT_RAG > SIMPLE_VECTOR >3-5pp en gen score, >5-10pp en Recall@K, porque el embedding no ha visto el dominio y el KG se construye del propio corpus.
-- **Eje 2 — Resistencia a alucinacion**: el KG aporta grounding explicito que deberia reducir la tasa de fabricacion cuando el retrieval devuelve chunks poco relevantes. Se mide via `faithfulness` (LLM-judge); la fiabilidad depende de que `judge_fallback_stats` reporte tasas sanas.
+**Trabajo de codigo**: hecho — `loader.py::MinIOLoader.load_collection(collection_id)` entra por el manifest, lee las parts, mapea cada chunk a `NormalizedDocument` (`chunk_id`->`doc_id`, `text`->`content`, procedencia->`metadata`) y valida el contrato pre-carga (columnas requisito, unicidad de `chunk_id`, `text` <= `max_chunk_chars`, filas-por-part, `num_chunks`), fallando temprano con `ValueError`. Lee del prefijo dedicado `S3_COLLECTIONS_PREFIX` (default `admin/collections`), independiente de `S3_DATASETS_PREFIX` (eval) para que ingesta y HotpotQA convivan. Cubierto por tests unitarios en `tests/test_loader.py` (fixtures sinteticos). **Pendiente**: (1) validar contra un `collection.json` + `chunks/*.parquet` reales de LI_AD; (2) cablear `load_collection` en el flujo run/evaluator (selector de coleccion + modo ingesta vs eval); (3) integrar `(collection_id, generation, chunking_fingerprint)` en la invalidacion de cache del KG (`_corpus_fingerprint` en `retriever.py`). (2) y (3) tocan paths que solo se validan con runs reales (ver "Limitaciones de claude_code").
 
-**Criterio de decision**: validar cualquiera de los dos ejes (idealmente ambos) → LIGHT_RAG pasa a estrategia default. Ninguno → reconsiderar el rol de LIGHT_RAG en el producto.
+**Export reciproco del KG**: LI_AD depende de leer el grafo para su UI (su Fase 2). Schema propuesto en [`KG_CONTRACT.md`](KG_CONTRACT.md); implementacion P3 (KG hoy efimero).
 
-**Bloqueado por**: P0 verde + disponibilidad del catalogo upstream + cierre del riesgo piggyback #10.
+### P0 — Comparacion empirica LIGHT_RAG vs SIMPLE_VECTOR · EN PAUSA
 
-### P3 — Embedibilidad + export de KG + integracion · futuro lejano, contingente a P2
+**Estado**: en pausa, no se persigue. Se conserva el contexto por si se retoma.
 
-**No empezar sin P0 y P2 verdes.** Trabajo de producto, no de investigacion:
+**Por que no es respondible en este harness**: en HotpotQA-DEV el vector satura el retrieval (Hit@5 ~ 1.0 con cosine puro sobre embedding moderno), por lo que LIGHT pierde por sustituir vector -> KG-mediated, no por mala calidad del motor. Ademas el reranker esta **gated off para LIGHT_RAG** (`sandbox_mteb/retrieval_executor.py`; justificacion: el cross-encoder single-hop penalizaria los docs multi-hop del KG), lo que hace la comparacion **asimetrica** (SIMPLE con reranker, LIGHT sin el) e infla deltas a favor de SIMPLE donde el vector satura. La pregunta directa "LIGHT > SIMPLE en HotpotQA" no es respondible; quedaba como argumento deductivo hacia P2.
+
+### P2 — Experimento 3: catalogo especializado · EN PAUSA
+
+**Estado**: en pausa (decision de producto, posterior a la integracion). Sobre un catalogo privado de 10-50 PDFs especializados (upstream de LI_AD), LIGHT_RAG vs SIMPLE_VECTOR en dos ejes:
+
+- **Eje 1 — Precision/calidad**: delta esperado LIGHT_RAG > SIMPLE_VECTOR (>3-5pp gen score, >5-10pp Recall@K) porque el embedding no ha visto el dominio y el KG se construye del propio corpus.
+- **Eje 2 — Resistencia a alucinacion**: el KG aporta grounding explicito que deberia reducir la fabricacion cuando el retrieval devuelve chunks poco relevantes. Se mide via `faithfulness` (LLM-judge); fiable solo si `judge_fallback_stats` reporta tasas sanas.
+
+**Bloqueado ademas por** el riesgo piggyback [#10](#div-10) (calidad del canal high-level no validada).
+
+### P3 — Embedibilidad + export de KG · futuro
+
+La **rebanada de ingesta/contrato** de P3 se adelanto a la fase activa (ver "INTEGRACION", arriba). El resto queda como futuro:
 
 - **Embedibilidad**: configuracion via dict inyectado (no solo `.env` global), corpus en memoria, separar "cargar/indexar" de "evaluar" para reusar indices entre runs, sin asunciones sobre el filesystem excepto `EVALUATION_RESULTS_DIR` explicito.
-- **Export de KG a MinIO/Parquet**: serializador `KnowledgeGraph` → Parquet (nodos + aristas + pesos + metadatos de co-ocurrencia) + VDBs. Schema a acordar con el administrador. Hoy el KG es efimero (igraph + ChromaDB en memoria, descartado en `_cleanup()`). Sin export, multi-tenant y versionado son imposibles.
-- **Contract testing con el administrador**: validar el schema Parquet upstream contra `DATASET_CONFIG` antes de cargar el dataset (schema drift del contrato upstream produce fallos horas despues en `_populate_from_dataframes()`, quemando compute).
+- **Export de KG a MinIO/Parquet**: serializador `KnowledgeGraph` -> Parquet (nodos + aristas + pesos + metadatos de co-ocurrencia) + VDBs. Schema reciproco propuesto en [`KG_CONTRACT.md`](KG_CONTRACT.md) (lo necesita LI_AD para su Fase 2). Hoy el KG es efimero (igraph + ChromaDB en memoria, descartado en `_cleanup()`). Sin export, multi-tenant y versionado son imposibles.
 
 ### Limitaciones conocidas (no accionables)
 

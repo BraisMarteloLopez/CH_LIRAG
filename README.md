@@ -11,6 +11,7 @@ El harness en `sandbox_mteb/` (datasets MTEB/BeIR) es **instrumento de verificac
 
 **Documentacion tecnica y guia de desarrollo**: [`CLAUDE.md`](CLAUDE.md) (fuente unica para convenciones, divergencias con el paper, deuda tecnica, fases del proyecto, observabilidad, configuracion).
 **Referencia de tests**: [`TESTS.md`](TESTS.md).
+**Contratos de integracion** (con la plataforma de administracion LI_AD): [`INGESTION_CONTRACT.md`](INGESTION_CONTRACT.md) (esquema MinIO/Parquet de ingesta de chunks, v1) y [`KG_CONTRACT.md`](KG_CONTRACT.md) (export reciproco del grafo, borrador). Fase actual del proyecto; ver `CLAUDE.md` "Proximos pasos".
 
 ## Estructura
 
