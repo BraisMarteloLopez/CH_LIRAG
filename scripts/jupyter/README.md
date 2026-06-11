@@ -27,7 +27,21 @@ contexto completo.
   persisten en NFS pero **los procesos mueren al reiniciar el pod** (relanzar
   MinIO manualmente).
 
-## Orden de pasos
+## Arranque diario (el pod se redespliega cada dia)
+
+El pod JupyterLab se recrea a diario: los **procesos** y `/opt/conda` se
+pierden; `/home/jovyan` (NFS) persiste. Al abrir el entorno, lanzar:
+
+```
+bash /home/jovyan/lirag/scripts/jupyter/00_daily_start.sh
+```
+
+Es idempotente: verifica GPU, venv, MinIO (lo relanza si esta caido),
+OpenWebUI alcanzable y `.env` presente. Si todo esta verde, imprime el
+comando de activacion del venv. Si algo falta, dice exactamente que script
+ejecutar para arreglarlo.
+
+## Setup inicial (una sola vez)
 
 1. **Repo en `/home/jovyan/lirag`** — `git clone` desde GitLab interno o
    tarball por la UI.
@@ -49,19 +63,41 @@ contexto completo.
    `lakehouse` (idempotente).
 6. **`.env`** — `cp sandbox_mteb/env.example.jupyter sandbox_mteb/.env` y pega
    la `NVIDIA_API_KEY` (no commitear: `.env` está en `.gitignore`).
-7. **Colocar la colección de LI_AD** en `lakehouse/admin/collections/{collection_id}/`.
-   Como el MinIO de producción no es alcanzable desde Jupyter, hay que
-   exportar la colección a tarball en tu Linux, subirla por la UI y replicarla
-   al MinIO local con `boto3`. Script pendiente.
-8. **`probe.py`** contra la colección colocada (snippet en `FAST_NOTES.md` §D).
-9. **Indexación**: mini-script que llama a `load_collection` +
-   `LightRAGRetriever.index_documents`. Pendiente.
+
+## Traer e indexar una coleccion
+
+7. **Exportar del MinIO de produccion** (corre en el ENTORNO LINUX, no en
+   Jupyter — desde el pod ese MinIO no es ruteable):
+   ```
+   python scripts/jupyter/04_export_collection.py <collection_id>
+   ```
+   Produce `collection_export/<collection_id>.tgz`. Subirlo a `/home/jovyan/`
+   por la UI de JupyterLab.
+8. **Importar al MinIO local** (en Jupyter, venv activo):
+   ```
+   python scripts/jupyter/05_import_collection.py /home/jovyan/<collection_id>.tgz
+   ```
+   Sube las parts primero y `collection.json` el ultimo (manifest-as-commit,
+   misma semantica que LI_AD).
+9. **Indexar / construir el KG** (en Jupyter, venv activo, desde la raiz del
+   repo):
+   ```
+   python scripts/jupyter/06_index_collection.py <collection_id> [--query "..."]
+   ```
+   Carga via `load_collection` (valida el contrato), construye el KG +
+   3 VDBs, imprime stats (KGStats + extractor) y, con `--query`, hace un
+   retrieval de sanidad. No borra indices al salir: el KG cache
+   (`KG_CACHE_DIR`) queda reutilizable.
 
 ## Lo que NO está automatizado y por qué
 
 - **Descarga del binario MinIO**: `dl.min.io` bloqueado. Upload UI manual,
   una sola vez (queda en NFS).
 - **Transferencia de la colección**: MinIO de producción no alcanzable desde
-  Jupyter. Tarball + upload UI hasta que el flujo se automatice.
-- **Recuperación tras reinicio del pod**: relanzar `02_minio_run.sh`
-  manualmente. Los datos persisten, el proceso no.
+  Jupyter → export (Linux) + upload UI + import (Jupyter), scripts 04/05.
+- **Arranque tras redespliegue del pod**: `00_daily_start.sh` manual al abrir
+  el entorno (no hay hook de arranque del pod a nuestro alcance).
+
+> Estos scripts se validan solo en el entorno del usuario (claude_code no
+> tiene acceso a Jupyter/MinIO/OpenWebUI). Si un script falla, pegar la
+> salida completa en la sesion para diagnostico.
