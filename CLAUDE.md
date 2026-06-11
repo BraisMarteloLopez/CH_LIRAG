@@ -209,6 +209,49 @@ La tabla lista los sites con **contador observable**. Se referencian por funcion
 3. **Parametros que dependen del LLM** (timeouts, contexto, concurrencia) van al `.env`, no a `constants.py`. `constants.py` solo para cosas que nunca deberian tocarse (p.ej. `CHARS_PER_TOKEN`).
 4. **Tests unitarios adversariales** para todo cambio que afecte el contexto que ve el LLM: estresar el budget, no solo el caso holgado.
 
+## Despliegue alternativo: JupyterLab + OpenWebUI
+
+Ademas del entorno principal (Linux Zen5+H100 con NIM internos), el motor se
+despliega como modulo experimental en un pod **JupyterLab** con disco persistente
+(NFS bajo `/home/jovyan`) y **B200 MIG 3g.90gb** (89 GB, CUDA 13.2).
+
+**LLM y embeddings via OpenWebUI sin cambios de codigo**. El dialecto
+OpenAI-compatible de OpenWebUI es suficiente para que `ChatNVIDIA` y
+`NVIDIAEmbeddings` (`langchain-nvidia-ai-endpoints==0.3.19`) funcionen apuntados
+a `https://open-webui.ia.labia.tics/api`. Verificado por smoke test: chat sync
++ async + embeddings + fallback `langchain-openai`, los cuatro caminos verde.
+La api_key va en `NVIDIA_API_KEY` del `.env`; `langchain-nvidia` la lee
+automaticamente.
+
+- **Chat**: `coding-qwen3-coder-next` (32K ctx, sin thinking-mode, ~1 s por
+  extraccion de tripletas sobre chunks de ~5K chars).
+- **Embeddings**: `demo-bge-m3` (1024 dims, ~60 ms, vectores bit-identicos
+  entre `NVIDIAEmbeddings` y `OpenAIEmbeddings`).
+
+**Particularidades del entorno** (relevantes para tunear `.env`):
+
+- `/opt/conda` esta en overlay (**no persiste**); venv, datos MinIO, cache KG
+  y repo van en `/home/jovyan` (NFS 1 TB).
+- **GitHub bloqueado** por proxy corporativo → traer el repo via GitLab interno
+  (mirror) o tarball por la UI de JupyterLab.
+- **`dl.min.io` bloqueado** → el binario de MinIO se sube una vez por la UI
+  (≈110 MB, queda en NFS).
+- `tmux`/`screen` no disponibles → procesos en background con `nohup`. Los
+  datos persisten en NFS pero **los procesos mueren al reiniciar el pod**
+  (relanzar MinIO manualmente).
+- **OpenWebUI no expone `/v1/models` en formato NIM** → la autodeteccion de
+  context window (deuda #5) cae al fallback silencioso de 4000 chars. Fijar
+  `GENERATION_MAX_CONTEXT_CHARS` explicito en el `.env`.
+- **Sin NIM de rerank** en el pod → `RERANKER_ENABLED=false` (LIGHT_RAG ya lo
+  tiene gated off para indexacion; lo apagamos tambien para que la validacion
+  de config no exija la URL).
+
+**Plantilla `.env`**: [`sandbox_mteb/env.example.jupyter`](sandbox_mteb/env.example.jupyter).
+**Scripts de bootstrap**: [`scripts/jupyter/`](scripts/jupyter/) (venv, MinIO,
+bucket). Ver su `README.md` para el orden exacto.
+**Estado**: smoke test de provider verde; despliegue MinIO + carga de
+coleccion + indexacion siguen pendientes (ver `FAST_NOTES.md`).
+
 ## Proximos pasos
 
 ### Orden de prioridades
