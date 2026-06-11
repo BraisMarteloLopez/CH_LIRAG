@@ -39,24 +39,30 @@ Sigue **gated** por la generacion de prueba real. Sin acceso a MinIO desde claud
 
 ### B. Bootstrap operativo en Jupyter (entorno B200 + OpenWebUI)
 
-Smoke test de provider hecho. Falta el despliegue, en orden:
+**B1-B6 COMPLETADOS** (2026-06-11): repo clonado via GitLab interno
+(`sim/CH_LIRAG`, sync manual Windows: `git pull origin main && git push gitlab main`
+desde `~/lirag-sync`), venv completo (`igraph: True`), MinIO local arriba,
+bucket `lakehouse` creado, `.env` con api_key, `--dry-run` valido.
 
-1. **Repo en `/home/jovyan/lirag`**: GitLab interno (mirror desde GitHub, que
-   esta bloqueado en el pod) o tarball por la UI.
-2. **Venv + deps**: `bash scripts/jupyter/01_setup_venv.sh` -> crea
-   `/home/jovyan/lirag_venv` (NFS persistente).
-3. **Binario MinIO**: descarga manual + upload UI a `/home/jovyan/`, luego
-   `mv ... /home/jovyan/bin/minio && chmod +x`. Una sola vez (queda en NFS).
-4. **MinIO arriba**: `bash scripts/jupyter/02_minio_run.sh`.
-5. **Bucket**: `python scripts/jupyter/03_create_bucket.py`.
-6. **`.env`**: `cp sandbox_mteb/env.example.jupyter sandbox_mteb/.env` y pega
-   `NVIDIA_API_KEY` (la api_key de OpenWebUI).
-7. **Transferencia de la coleccion**: tarball desde el MinIO de produccion
-   (no alcanzable desde Jupyter) -> upload UI -> boto3 upload al MinIO local.
-   **Script pendiente.**
-8. **`probe.py`** contra la coleccion local.
-9. **Mini-script de indexacion**: `load_collection` + `LightRAGRetriever.index_documents`.
-   **Script pendiente.**
+**Arranque diario**: el pod se redespliega cada dia (procesos y /opt/conda se
+pierden; NFS persiste). Al abrir el entorno:
+`bash /home/jovyan/lirag/scripts/jupyter/00_daily_start.sh` (idempotente:
+GPU, venv, MinIO relaunch, OpenWebUI, .env).
+
+Pendiente del bucle de coleccion (scripts ya en `scripts/jupyter/`):
+
+7. **Exportar la coleccion** del MinIO de produccion (corre en el LINUX):
+   `python scripts/jupyter/04_export_collection.py <collection_id>` -> tgz
+   -> subir a `/home/jovyan/` por la UI. **Requiere que LI_AD haya colocado
+   la generacion de prueba en produccion.**
+8. **Importar al MinIO local** (Jupyter):
+   `python scripts/jupyter/05_import_collection.py /home/jovyan/<cid>.tgz`
+   (parts primero, manifest el ultimo — manifest-as-commit).
+9. **Indexar / construir el KG** (Jupyter, raiz del repo):
+   `python scripts/jupyter/06_index_collection.py <cid> [--query "..."]`
+   — valida contrato via `load_collection`, construye KG + VDBs, imprime
+   KGStats/extractor stats, retrieval de sanidad opcional. Primer KG sobre
+   B200 + OpenWebUI.
 
 ### C. Trabajo de codigo del motor — gated por A o B verdes
 
