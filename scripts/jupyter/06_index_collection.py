@@ -58,10 +58,17 @@ def main() -> int:
           f"generation={md.get('generation')} | "
           f"fingerprint={str(md.get('chunking_fingerprint'))[:24]}... | "
           f"max_chunk_chars={md.get('max_chunk_chars')}")
-    if config.retrieval.kg_max_text_chars < int(md.get("max_chunk_chars") or 0):
-        print(f"AVISO: KG_MAX_TEXT_CHARS={config.retrieval.kg_max_text_chars} < "
-              f"max_chunk_chars={md.get('max_chunk_chars')} — la extraccion "
-              f"truncara chunks en silencio. Sube KG_MAX_TEXT_CHARS en el .env.")
+    # Opcion A del contrato (2026-06-11): max_chunk_chars del manifest es la
+    # cota verdadera del dato (max(5000, observado)). El motor exige
+    # KG_MAX_TEXT_CHARS >= ese valor; si no, RECHAZA (fail-fast, nunca
+    # truncado silencioso del extractor).
+    manifest_cap = int(md.get("max_chunk_chars") or 0)
+    if manifest_cap > config.retrieval.kg_max_text_chars:
+        print(f"CONTRATO/CONFIG: max_chunk_chars={manifest_cap} de la coleccion "
+              f"supera KG_MAX_TEXT_CHARS={config.retrieval.kg_max_text_chars} "
+              f"del motor — la extraccion truncaria en silencio. "
+              f"Sube KG_MAX_TEXT_CHARS a >= {manifest_cap} en {args.env} y relanza.")
+        return 2
 
     # --- 2) Providers ---
     embedding = load_embedding_model(

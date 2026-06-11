@@ -23,7 +23,7 @@ LI_AD respondio al v0 con contrapropuestas; CH_LIRAG las evaluo (verificado cont
 
 Refinamientos aportados por CH_LIRAG:
 
-- **B (firme)**: `max_chunk_chars = 5000`. El motor valida cada `text` <= cap al cargar y fija `KG_MAX_TEXT_CHARS >= 5000`. Justificacion verificada: `triplet_extractor.py` hace `text[:max_text_chars]` y **trunca en silencio** lo que exceda; el cap de chars es el guard real, no `token_count`.
+- **B (firme, semantica cerrada como "opcion A" el 2026-06-11)**: el manifest emite `max_chunk_chars = max(5000, max(len(text)) observado)` — **cota verdadera del dato**, no techo fijo; LI_AD **no** hace hard-split (cortar a 5000 romperia unidades semanticas de su chunker estructural, justo el insumo del KG). El motor: (1) valida cada `text <= max_chunk_chars` al cargar; (2) exige `KG_MAX_TEXT_CHARS >= max_chunk_chars` y **rechaza la coleccion con error claro** si no se cumple (fail-fast; nunca truncado silencioso — verificado: `triplet_extractor.py` hace `text[:max_text_chars]`). La alternativa B (hard-split a 5000 en el chunker, ~medio dia de LI_AD) queda disponible si el futuro lo exige.
 - **A (prioridad baja)**: validar filas-por-part contra el manifest para detectar lectura a mitad de re-chunk. Solo muerde con lectura y re-chunk **concurrentes** (no en single-operador). No bloquea v1; ver §6.
 
 ## 1. Layout MinIO
@@ -62,7 +62,7 @@ El loader: lee `collection.json` -> obtiene `generation`, `chunking_fingerprint`
 
 **Clave**: `(collection_id, chunk_id)`, unica por construccion (sin prefijar). El motor carga una coleccion por indice -> indexa por `chunk_id`.
 
-**Invariante de chars (Refinamiento B)**: `len(text) <= max_chunk_chars` (= 5000). El motor lo valida al cargar (§7) y fija `KG_MAX_TEXT_CHARS >= max_chunk_chars`. `token_count`/`target_tokens` son trazabilidad, no contrato.
+**Invariante de chars (Refinamiento B, semantica "opcion A")**: `max_chunk_chars = max(5000, max(len(text)))` — cota verdadera del dato emitida por LI_AD (sin hard-split en el chunker). El motor valida `len(text) <= max_chunk_chars` al cargar (§7) y **rechaza la coleccion** si `max_chunk_chars > KG_MAX_TEXT_CHARS` (fail-fast con mensaje accionable, nunca truncado silencioso). `token_count`/`target_tokens` son trazabilidad, no contrato.
 
 ## 4. Manifest `collection.json`
 
@@ -96,7 +96,7 @@ El loader: lee `collection.json` -> obtiene `generation`, `chunking_fingerprint`
 - `generation` (int) sube en cada (re)chunk -> señal de invalidacion barata para el motor.
 - `chunking_fingerprint` = hash sobre {version del chunker, tokenizer, target, overlap, config de filtros}; el motor invalida cache **solo si** cambia.
 - `num_chunks` = suma de `num_rows` de `parts` (chequeo de integridad).
-- `max_chunk_chars` = cota superior garantizada de `len(text)`.
+- `max_chunk_chars` = cota superior **verdadera** de `len(text)` en la coleccion: `max(5000, max observado)`. Crece con el dato; el motor debe leerla del manifest (no asumir 5000) y exigir `KG_MAX_TEXT_CHARS >=` este valor.
 
 ## 5. Que NO produce LI_AD
 
@@ -114,7 +114,8 @@ Antes de indexar, el motor valida y **falla temprano y claro** si:
 
 1. Faltan columnas REQUISITO (`chunk_id`, `collection_id`, `text`) o hay nulos en ellas.
 2. `(collection_id, chunk_id)` no es unico.
-3. Algun `len(text) > max_chunk_chars` (guard anti-truncado silencioso, Refinamiento B).
+3. Algun `len(text) > max_chunk_chars` (coherencia interna manifest-dato, Refinamiento B).
+3b. (En indexacion) `max_chunk_chars > KG_MAX_TEXT_CHARS` del motor — la coleccion se rechaza con mensaje accionable ("sube KG_MAX_TEXT_CHARS a >= N") en vez de truncar en silencio.
 4. La suma de `num_rows` de `parts` no es `num_chunks`, o el `num_rows` real de una part no cuadra con el manifest (Refinamiento A).
 5. (En indexacion) `generation`/`chunking_fingerprint` incoherentes con lo ya indexado.
 

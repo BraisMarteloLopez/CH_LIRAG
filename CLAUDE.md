@@ -316,7 +316,7 @@ Todos los runs conservados son `LIGHT_RAG`; el baseline `SIMPLE_VECTOR` previo (
 - **Manifest-as-entrypoint**: el loader entra por `collection.json` (lista de parts + filas por part + `generation` + `chunking_fingerprint`), no por glob de directorio.
 - **Esquema chunks**: `chunk_id`, `collection_id`, `text` (requisito); `document_id`, `chunk_index` como columnas (no se parsea el id); `source_file`/`page_*`/`token_count` (procedencia).
 - **Clave de indexacion**: `(collection_id, chunk_id)`; el motor carga una coleccion por indice.
-- **Char cap (Refinamiento B)**: `max_chunk_chars` en el manifest; el motor valida cada `text` <= su cap y fija `KG_MAX_TEXT_CHARS >= max_chunk_chars`. Acordado **5000 chars**.
+- **Char cap (Refinamiento B, opcion A cerrada 2026-06-11)**: el manifest emite `max_chunk_chars = max(5000, max observado)` (cota verdadera, sin hard-split en el chunker de LI_AD). El motor valida `text <= max_chunk_chars` al cargar y **rechaza la coleccion** si `max_chunk_chars > KG_MAX_TEXT_CHARS` (fail-fast en `06_index_collection.py`; nunca truncado silencioso).
 - **Invalidacion de cache**: `(collection_id, generation, chunking_fingerprint)` + params de extraccion del motor reemplazan el hash de contenido de `_corpus_fingerprint`; rebuild solo si avanza `generation` (completo por generacion; append incremental = deuda #10).
 - **Consistencia (Refinamiento A, prioridad baja)**: validar filas-por-part contra el manifest para detectar lectura a mitad de re-chunk; blindaje para concurrencia futura, no bloquea v1.
 
